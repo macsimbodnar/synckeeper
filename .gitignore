@@ -1,0 +1,6 @@
+dist/
+*.db
+*.db-wal
+*.db-shm
+token.json
+.DS_Store
