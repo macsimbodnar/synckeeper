@@ -2,13 +2,13 @@
 
 **Goal:** repo compiles for all targets, `init` authenticates against Drive and persists everything later phases need, `status` proves it.
 **Exit criterion:** authenticate and list the Drive folder on the dev machine; `make build-all` produces all four binaries.
-**Status:** in progress — code complete 2026-07-06; remaining: Google Cloud prerequisites + live OAuth verification (manual, user)
+**Status:** done 2026-07-07 — live OAuth verified on macOS dev machine; Drive folder id stored, all four binaries build
 
 ## Prerequisites (manual, outside the repo)
 
-- [ ] Create Google Cloud project; enable the Drive API.
-- [ ] Create OAuth client of type **Desktop app**; note client id/secret.
-- [ ] Publish the consent screen to **Production** (leave unverified). Do NOT leave it in Testing — refresh tokens would expire after 7 days.
+- [x] Create Google Cloud project; enable the Drive API.
+- [x] Create OAuth client of type **Desktop app**; note client id/secret.
+- [x] Publish the consent screen to **Production** (leave unverified). Do NOT leave it in Testing — refresh tokens would expire after 7 days. (Testing status initially caused `Error 403: access_denied` at login; publishing fixed it.)
 
 ## Tasks
 
@@ -63,4 +63,4 @@
 - [x] `make build-all` → four binaries in `dist/` (2026-07-06, CGO_ENABLED=0).
 - [x] `go test ./...` green (2026-07-06).
 - [x] Smoke: `status` reports uninitialized state cleanly; `init` without credentials fails with instructions; stubs exit non-zero.
-- [ ] On dev machine: `synckeeper init` completes OAuth, creates the Drive folder; `synckeeper status` shows folder id and empty DB; a debug command or test lists the folder contents via the real client. **← blocked on the manual prerequisites above (user).**
+- [x] On dev machine: `synckeeper init` completes OAuth, creates the Drive folder; `synckeeper status` shows folder id and empty DB; folder discovery listed Drive root via the real client (2026-07-07, macOS).

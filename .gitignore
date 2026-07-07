@@ -4,3 +4,4 @@ dist/
 *.db-shm
 token.json
 .DS_Store
+.vscode

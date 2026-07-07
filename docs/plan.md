@@ -6,7 +6,7 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 
 | Phase | Doc | Goal | Exit criterion | Status |
 |---|---|---|---|---|
-| 0 | [phase-0.md](phase-0.md) | Skeleton: auth + plumbing | Authenticate and list the Drive folder; all four binaries build | in progress — code complete 2026-07-06, live OAuth verification pending (user) |
+| 0 | [phase-0.md](phase-0.md) | Skeleton: auth + plumbing | Authenticate and list the Drive folder; all four binaries build | done 2026-07-07 |
 | 1 | [phase-1.md](phase-1.md) | One-shot bidirectional sync | Scenario tests S1–S8 pass | not started |
 | 2 | [phase-2.md](phase-2.md) | Safety hardening | Fault tests F1–F5 pass | not started |
 | 3 | [phase-3.md](phase-3.md) | Continuous mode (`watch` + services) | 2-hour soak with random edits on both sides, no divergence | not started |

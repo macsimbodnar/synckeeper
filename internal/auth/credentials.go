@@ -10,6 +10,6 @@ package auth
 //	go build -ldflags "-X github.com/macsimbodnar/synckeeper/internal/auth.ClientID=... \
 //	                   -X github.com/macsimbodnar/synckeeper/internal/auth.ClientSecret=..."
 var (
-	ClientID     = ""
-	ClientSecret = ""
+	ClientID     = "REDACTED_CLIENT_ID"
+	ClientSecret = "REDACTED_CLIENT_SECRET"
 )
