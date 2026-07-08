@@ -15,13 +15,13 @@ import (
 // FakeRootID is the id of the fake's Drive root ("My Drive").
 const FakeRootID = "root"
 
-// Fake is an in-memory Client used by tests. Phase 0 ships the structural
-// operations (list/get/mkdir/trash/upload/download/move); full changes-feed
-// semantics land in phase 1 with the sync engine.
+// Fake is an in-memory Client used by tests: ids, versions, md5, trash,
+// and a changes feed. Page tokens are integer offsets into the change log.
 type Fake struct {
 	mu     sync.Mutex
 	nextID int
 	files  map[string]*fakeFile
+	log    []Change
 }
 
 type fakeFile struct {
@@ -49,6 +49,13 @@ func (f *Fake) get(id string) (*fakeFile, error) {
 		return nil, fmt.Errorf("fake drive: no file %s", id)
 	}
 	return file, nil
+}
+
+// logChange appends the file's current state to the changes feed.
+// Callers must hold f.mu.
+func (f *Fake) logChange(file *fakeFile) {
+	snapshot := file.File
+	f.log = append(f.log, Change{FileID: snapshot.ID, File: &snapshot})
 }
 
 func (f *Fake) List(_ context.Context, parentID string) ([]File, error) {
@@ -84,12 +91,24 @@ func (f *Fake) Get(_ context.Context, fileID string) (File, error) {
 }
 
 func (f *Fake) StartPageToken(_ context.Context) (string, error) {
-	return "fake-token-1", nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strconv.Itoa(len(f.log)), nil
 }
 
 func (f *Fake) Changes(_ context.Context, pageToken string) (ChangePage, error) {
-	// Full changes-feed semantics arrive in phase 1.
-	return ChangePage{NewStartToken: pageToken}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	offset, err := strconv.Atoi(pageToken)
+	if err != nil || offset < 0 || offset > len(f.log) {
+		return ChangePage{}, fmt.Errorf("fake drive: bad page token %q", pageToken)
+	}
+	page := ChangePage{NewStartToken: strconv.Itoa(len(f.log))}
+	for _, c := range f.log[offset:] {
+		snapshot := *c.File
+		page.Changes = append(page.Changes, Change{FileID: c.FileID, Removed: c.Removed, File: &snapshot})
+	}
+	return page, nil
 }
 
 func (f *Fake) Upload(_ context.Context, parentID, name string, content io.Reader, _ int64) (File, error) {
@@ -116,6 +135,7 @@ func (f *Fake) Upload(_ context.Context, parentID, name string, content io.Reade
 		content: data,
 	}
 	f.files[file.ID] = file
+	f.logChange(file)
 	return file.File, nil
 }
 
@@ -135,6 +155,7 @@ func (f *Fake) Update(_ context.Context, fileID string, content io.Reader, _ int
 	file.MD5 = hex.EncodeToString(sum[:])
 	file.Size = int64(len(data))
 	file.Version++
+	f.logChange(file)
 	return file.File, nil
 }
 
@@ -160,6 +181,7 @@ func (f *Fake) Trash(_ context.Context, fileID string) error {
 	}
 	file.Trashed = true
 	file.Version++
+	f.logChange(file)
 	return nil
 }
 
@@ -177,6 +199,7 @@ func (f *Fake) Mkdir(_ context.Context, parentID, name string) (File, error) {
 		Parents:  []string{parentID},
 	}}
 	f.files[file.ID] = file
+	f.logChange(file)
 	return file.File, nil
 }
 
@@ -193,5 +216,6 @@ func (f *Fake) Move(_ context.Context, fileID, newParentID, newName string) (Fil
 	file.Name = newName
 	file.Parents = []string{newParentID}
 	file.Version++
+	f.logChange(file)
 	return file.File, nil
 }

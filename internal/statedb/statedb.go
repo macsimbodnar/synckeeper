@@ -61,6 +61,19 @@ var migrations = []string{
 	  state         text not null default 'planned'
 	);
 	`,
+	// v1 -> v2: remote_nodes, the cached Drive metadata fed by changes.list.
+	`
+	create table remote_nodes (
+	  file_id   text primary key,
+	  parent_id text not null,
+	  name      text not null,
+	  mime_type text not null,
+	  md5       text not null default '',
+	  size      integer not null default 0,
+	  version   integer not null default 0,
+	  trashed   integer not null default 0
+	);
+	`,
 }
 
 // Path returns the state DB path inside the given config dir.

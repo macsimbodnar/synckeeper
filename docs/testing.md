@@ -10,20 +10,20 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | Suite | Status |
 |---|---|
-| `internal/reconcile` decision matrix | todo |
+| `internal/reconcile` decision matrix | passing (2026-07-08) |
 
 ## Scenario tests (phase 1)
 
 | ID | Scenario | Status |
 |---|---|---|
-| S1 | Create local → appears remote and on machine B (second DB + sync dir against same fake drive) | todo |
-| S2 | Create remote → appears local | todo |
-| S3 | Edit local / edit remote sequentially, both directions | todo |
-| S4 | Concurrent divergent edit → conflicted copy on all machines, no version lost | todo |
-| S5 | Delete local → trashed remote; delete remote → local quarantined | todo |
-| S6 | Delete vs edit, both orders → edited version survives | todo |
-| S7 | Rename/move local and remote, including move out of tree | todo |
-| S8 | Nested folders, deep tree, empty folders | todo |
+| S1 | Create local → appears remote and on machine B (second DB + sync dir against same fake drive) | passing (2026-07-08) |
+| S2 | Create remote → appears local | passing (2026-07-08) |
+| S3 | Edit local / edit remote sequentially, both directions | passing (2026-07-08) |
+| S4 | Concurrent divergent edit → conflicted copy on all machines, no version lost | passing (2026-07-08) |
+| S5 | Delete local → trashed remote; delete remote → local quarantined | passing (2026-07-08) |
+| S6 | Delete vs edit, both orders → edited version survives | passing (2026-07-08) |
+| S7 | Rename/move local and remote, including move out of tree | passing (2026-07-08) |
+| S8 | Nested folders, deep tree, empty folders | passing (2026-07-08) |
 
 ## Fault tests (phase 2) — kill at checkpoint, then rerun sync
 
@@ -39,8 +39,8 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | ID | Guard | Expected | Status |
 |---|---|---|---|
-| G1 | Delete 50% of files | Blocked without `--confirm-deletes` | todo |
-| G2 | Empty local dir with populated DB | Hard error | todo |
+| G1 | Delete 50% of files | Blocked without `--confirm-deletes` | passing (2026-07-08, unit level; scenario-level test in phase 2) |
+| G2 | Empty local dir with populated DB | Hard error | passing (2026-07-08, unit level; scenario-level test in phase 2) |
 
 ## Multi-machine matrix (phase 4)
 
@@ -72,4 +72,4 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | Case | Status |
 |---|---|
-| `SYNCKEEPER_LIVE_TEST=1` round-trip against real Drive (upload/download/trash/changes) | todo |
+| `SYNCKEEPER_LIVE_TEST=1` round-trip against real Drive (upload/download/trash/changes) | passing (2026-07-08, macOS) |

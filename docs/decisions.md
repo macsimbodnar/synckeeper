@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-07-08 — Phase 1 implementation decisions
+
+**Context:** building the sync engine surfaced choices the spec left open.
+
+- **`internal/engine` package added** (not in the spec's repo layout): orchestrates one sync cycle (guards → remote delta → scan → reconcile → execute) so `sync`, phase-3 `watch`, and the scenario tests share one pipeline. `executor` stays limited to applying plans, per its spec role.
+- **`remote_nodes` cache table (schema v2) stores all Drive changes, not just in-tree ones.** `changes.list` has no folder filter; tree membership is decided at snapshot time by walking parent links from the root folder. Costs a few rows per Drive file; personal-scale fine. Out-of-tree moves fall out naturally (parent chain breaks → remote delete).
+- **Crash resume is discard-and-replan, not op resumption.** Stale pending_ops are dropped and orphan temps deleted at sync start; the fresh plan self-heals partial effects (an uploaded-but-uncommitted file reappears as both-new-same-md5 → adopt). pending_ops still journals every action, so phase 2's fault tests can verify the model and add targeted repair if F1–F3 reveal gaps.
+- **Subtree deletes trash each file/folder individually, bottom-up** rather than trashing the top folder in one call: uniform op model and per-item journaling, at the cost of more Drive-trash entries. Restore-from-trash is a manual rescue path anyway.
+- **Guards G1/G2 landed in phase 1** (spec put them in phase 2): once deletes propagate, running without the mass-delete and empty-dir guards was too risky even for daily personal use.
+- **Deleting the last tracked file requires a non-empty dir**: G2 counts all directory entries, so an empty-dir-after-legitimate-delete is indistinguishable from an unmount and errors. Workaround: any other file (even an ignored one) in the dir. Revisit in phase 2 if it annoys.
+- **Real Drive bumps a file's version shortly after upload** (post-processing), so the sync after an upload does one `record` row refresh with no transfer. Benign and self-limiting; noted so nobody chases it as a bug.
+
 ## 2026-07-06 — Baseline decisions inherited from the spec
 
 Recorded here so future deviations have something to deviate from:

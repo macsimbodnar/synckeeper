@@ -34,7 +34,7 @@ func main() {
 	root.AddCommand(
 		newInitCmd(),
 		newStatusCmd(),
-		stubCmd("sync", "Run a one-shot bidirectional sync", 1),
+		newSyncCmd(),
 		stubCmd("watch", "Run continuously, watching for local and remote changes", 3),
 		stubCmd("doctor", "Cross-check state DB against disk and Drive", 2),
 	)
