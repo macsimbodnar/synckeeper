@@ -13,6 +13,15 @@ Format:
 
 ---
 
+## 2026-07-08 — Phase 2 implementation decisions
+
+**Context:** hardening surfaced how to simulate crashes and what repair may touch.
+
+- **Fault injection aborts ops via error, not panic/exit.** A panic inside a transfer-pool goroutine would kill the test binary. Error-abort leaves the identical on-disk/remote/DB state as a crash at that checkpoint, except deferred temp cleanup — covered separately by planting orphan temps. A genuine `kill -9` mid-upload was run manually against real Drive and repaired cleanly.
+- **`doctor --repair` only ever adds.** It restores meta (folder id by configured name, machine id, fresh page token), force-rebuilds the remote cache, and adopts md5-equal local/remote pairs into the baseline. It never trashes, quarantines, or overwrites: after a lost DB, one-sided files become plain uploads/downloads on the next sync, and deletions are structurally impossible (baseline ⊆ matched pairs).
+- **Quarantine purge runs only after a fully successful sync** and only removes synckeeper's own dated folders (`YYYY-MM-DD`); anything else in the quarantine dir is left alone.
+- **`cmd` grew a shared `appEnv` helper** (lock + config + DB + lazy Drive client) used by `sync` and `doctor`; `init` keeps its special flow.
+
 ## 2026-07-08 — Phase 1 implementation decisions
 
 **Context:** building the sync engine surfaced choices the spec left open.

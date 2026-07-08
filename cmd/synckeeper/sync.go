@@ -8,11 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/macsimbodnar/synckeeper/internal/auth"
-	"github.com/macsimbodnar/synckeeper/internal/config"
-	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
-	"github.com/macsimbodnar/synckeeper/internal/guards"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
@@ -26,49 +22,26 @@ func newSyncCmd() *cobra.Command {
 			if ctx == nil {
 				ctx = context.Background()
 			}
+			env, err := openAppEnv()
+			if err != nil {
+				return err
+			}
+			defer env.close()
 
-			configDir, err := config.Dir()
-			if err != nil {
-				return err
-			}
-			lock, err := guards.AcquireInstanceLock(configDir)
-			if err != nil {
-				return err
-			}
-			defer lock.Unlock()
-
-			cfg, err := config.Load(configDir)
-			if err != nil {
-				return err
-			}
-			syncDir, err := cfg.SyncDir()
-			if err != nil {
-				return err
-			}
-			db, err := statedb.Open(statedb.Path(configDir))
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-			rootID, err := db.GetMeta(statedb.MetaRootFolderID)
+			rootID, err := env.db.GetMeta(statedb.MetaRootFolderID)
 			if errors.Is(err, statedb.ErrNotFound) {
 				return errors.New("not initialized: run `synckeeper init` first")
 			} else if err != nil {
 				return err
 			}
-
-			ts, err := auth.TokenSource(ctx, configDir)
-			if err != nil {
-				return err
-			}
-			client, err := driveclient.New(ctx, ts)
+			client, err := env.driveClient(ctx)
 			if err != nil {
 				return err
 			}
 
 			eng := &engine.Engine{
-				DB: db, Client: client, Cfg: cfg, SyncDir: syncDir,
-				QuarantineDir: filepath.Join(configDir, "quarantine"), RootID: rootID,
+				DB: env.db, Client: client, Cfg: env.cfg, SyncDir: env.syncDir,
+				QuarantineDir: filepath.Join(env.configDir, "quarantine"), RootID: rootID,
 			}
 			res, err := eng.Sync(ctx, engine.Options{DryRun: dryRun, ConfirmDeletes: confirmDeletes})
 			if res != nil {

@@ -8,7 +8,7 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 |---|---|---|---|---|
 | 0 | [phase-0.md](phase-0.md) | Skeleton: auth + plumbing | Authenticate and list the Drive folder; all four binaries build | done 2026-07-07 |
 | 1 | [phase-1.md](phase-1.md) | One-shot bidirectional sync | Scenario tests S1–S8 pass | done 2026-07-08 |
-| 2 | [phase-2.md](phase-2.md) | Safety hardening | Fault tests F1–F5 pass | not started |
+| 2 | [phase-2.md](phase-2.md) | Safety hardening | Fault tests F1–F5 pass | done 2026-07-08 |
 | 3 | [phase-3.md](phase-3.md) | Continuous mode (`watch` + services) | 2-hour soak with random edits on both sides, no divergence | not started |
 | 4 | [phase-4.md](phase-4.md) | Multi-machine rollout (`init --adopt`) | 3 machines, offline concurrent edit matrix passes | not started |
 | 5 | [phase-5.md](phase-5.md) | Cross-platform hardening | Full test suite green on Linux, macOS, Windows | not started |

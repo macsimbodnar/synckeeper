@@ -35,8 +35,8 @@ func main() {
 		newInitCmd(),
 		newStatusCmd(),
 		newSyncCmd(),
+		newDoctorCmd(),
 		stubCmd("watch", "Run continuously, watching for local and remote changes", 3),
-		stubCmd("doctor", "Cross-check state DB against disk and Drive", 2),
 	)
 
 	if err := root.Execute(); err != nil {

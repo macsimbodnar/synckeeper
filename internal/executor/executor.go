@@ -28,6 +28,26 @@ import (
 
 const transferWorkers = 4
 
+// Fault-injection checkpoints (fault tests F1–F3). FaultHook, when set by a
+// test, runs at each named checkpoint; returning an error aborts the op
+// right there, leaving exactly the state a crash at that point would leave
+// (minus in-process cleanup that a real crash would skip — the planted-state
+// tests cover those paths). Always nil in production.
+var FaultHook func(checkpoint string) error
+
+const (
+	CPUploadBeforeCommit   = "upload_before_commit"   // remote has the file, DB does not
+	CPDownloadTempWritten  = "download_temp_written"  // temp complete, target untouched
+	CPDownloadBeforeCommit = "download_before_commit" // target replaced, DB row still old
+)
+
+func checkpoint(name string) error {
+	if FaultHook != nil {
+		return FaultHook(name)
+	}
+	return nil
+}
+
 // Executor applies plans for one sync run.
 type Executor struct {
 	DB            *statedb.DB
@@ -366,6 +386,9 @@ func (x *Executor) updateRemote(ctx context.Context, opID int64, a reconcile.Act
 // If the file changed mid-upload we commit the pre-upload stat so the next
 // scan sees it dirty and re-uploads.
 func (x *Executor) commitUpload(opID int64, rel, abs, hash string, pre os.FileInfo, remote driveclient.File) error {
+	if err := checkpoint(CPUploadBeforeCommit); err != nil {
+		return err
+	}
 	if remote.MD5 != hash {
 		return fmt.Errorf("drive reported md5 %s but local content hashed %s (file changed mid-upload?); will retry next run", remote.MD5, hash)
 	}
@@ -415,10 +438,16 @@ func (x *Executor) download(ctx context.Context, opID int64, a reconcile.Action)
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if err := checkpoint(CPDownloadTempWritten); err != nil {
+		return err
+	}
 	if err := os.Rename(tmpName, target); err != nil {
 		return err
 	}
 	fsyncDir(dir)
+	if err := checkpoint(CPDownloadBeforeCommit); err != nil {
+		return err
+	}
 	info, err := os.Stat(target)
 	if err != nil {
 		return err

@@ -29,18 +29,18 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | ID | Fault | Expected | Status |
 |---|---|---|---|
-| F1 | Crash after upload, before DB commit | No duplicate, row adopted | todo |
-| F2 | Crash mid-download temp file | Temp cleaned, retried, target never half-written | todo |
-| F3 | Crash between rename and DB commit | Repaired via pending_ops replay | todo |
-| F4 | DB deleted entirely | `doctor --repair` rebuilds baseline by md5 match, no deletes propagated | todo |
-| F5 | Sync dir unmounted | Hard error, remote untouched | todo |
+| F1 | Crash after upload, before DB commit | No duplicate, row adopted | passing (2026-07-08) |
+| F2 | Crash mid-download temp file | Temp cleaned, retried, target never half-written | passing (2026-07-08) |
+| F3 | Crash between rename and DB commit | Repaired via pending_ops replay | passing (2026-07-08) |
+| F4 | DB deleted entirely | `doctor --repair` rebuilds baseline by md5 match, no deletes propagated | passing (2026-07-08) |
+| F5 | Sync dir unmounted | Hard error, remote untouched | passing (2026-07-08) |
 
 ## Guard tests (phase 2)
 
 | ID | Guard | Expected | Status |
 |---|---|---|---|
-| G1 | Delete 50% of files | Blocked without `--confirm-deletes` | passing (2026-07-08, unit level; scenario-level test in phase 2) |
-| G2 | Empty local dir with populated DB | Hard error | passing (2026-07-08, unit level; scenario-level test in phase 2) |
+| G1 | Delete 50% of files | Blocked without `--confirm-deletes` | passing (2026-07-08, unit + scenario level) |
+| G2 | Empty local dir with populated DB | Hard error | passing (2026-07-08, unit + scenario level) |
 
 ## Multi-machine matrix (phase 4)
 

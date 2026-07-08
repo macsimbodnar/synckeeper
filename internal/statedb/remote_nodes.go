@@ -37,6 +37,14 @@ func (d *DB) DeleteRemoteNode(fileID string) error {
 	return err
 }
 
+// ClearRemoteNodes empties the cache (before a forced full walk).
+func (d *DB) ClearRemoteNodes() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, err := d.sql.Exec(`delete from remote_nodes`)
+	return err
+}
+
 // AllRemoteNodes returns the whole cache.
 func (d *DB) AllRemoteNodes() ([]RemoteNode, error) {
 	rows, err := d.sql.Query(`select file_id, parent_id, name, mime_type, md5, size, version, trashed

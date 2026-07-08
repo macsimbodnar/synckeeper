@@ -2,7 +2,7 @@
 
 Personal bidirectional sync between one local folder (`~/Synckeeper`) and one Google Drive folder. Written in Go; single static binary per platform (Linux, macOS, Windows). Multiple machines sync independently against Drive as the hub. Built for one user — no GUI, no installer — but with strict durability guarantees: three-way reconcile against a local SQLite baseline, atomic writes, trash/quarantine instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable operations.
 
-**Status:** phase 1 done — `synckeeper sync` performs full three-way bidirectional sync (verified against real Drive) and is usable daily via cron/launchd. `watch` and `doctor` are stubs (phases 3 and 2). See [docs/plan.md](docs/plan.md) for phase status.
+**Status:** phase 2 done — `sync` is crash-safe (fault tests F1–F5), guarded against mass deletes and unmounted dirs, and `doctor [--repair]` can rebuild a lost state DB without propagating deletions. Only `watch` (phase 3) remains a stub. See [docs/plan.md](docs/plan.md) for phase status.
 
 ## Documentation
 

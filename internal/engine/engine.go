@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/macsimbodnar/synckeeper/internal/config"
@@ -112,7 +115,38 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	if skipJSON, err := json.Marshal(res.Skips); err == nil {
 		e.DB.SetMeta(MetaLastSkipped, string(skipJSON))
 	}
+	if res.Failed == 0 {
+		purgeQuarantine(e.QuarantineDir, e.Cfg.Engine.QuarantineRetentionDays)
+	}
 	return res, nil
+}
+
+// purgeQuarantine removes dated quarantine folders older than the retention
+// window. Runs only after a fully successful sync; failures are logged, not
+// fatal (quarantine is a rescue path, purging it is best-effort).
+func purgeQuarantine(dir string, retentionDays int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // no quarantine yet
+	}
+	cutoff := nowFunc().AddDate(0, 0, -retentionDays)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		day, err := time.Parse("2006-01-02", e.Name())
+		if err != nil {
+			continue // not one of ours
+		}
+		if day.Before(cutoff) {
+			path := filepath.Join(dir, e.Name())
+			if err := os.RemoveAll(path); err != nil {
+				slog.Warn("purge quarantine entry", "path", path, "err", err)
+			} else {
+				slog.Info("purged expired quarantine entries", "path", path)
+			}
+		}
+	}
 }
 
 // nowFunc is swappable in tests that need deterministic conflict names.

@@ -37,6 +37,27 @@ func Refresh(ctx context.Context, client driveclient.Client, db *statedb.DB, roo
 	return consumeChanges(ctx, client, db)
 }
 
+// ForceFullWalk rebuilds the cache from scratch and resets the page token,
+// used by `doctor --repair` when the DB (or its metadata) was lost. The
+// token is fetched before walking so changes racing the walk are replayed
+// by the next consume (idempotent upserts).
+func ForceFullWalk(ctx context.Context, client driveclient.Client, db *statedb.DB, rootID string) error {
+	token, err := client.StartPageToken(ctx)
+	if err != nil {
+		return err
+	}
+	if err := db.ClearRemoteNodes(); err != nil {
+		return err
+	}
+	if err := fullWalk(ctx, client, db, rootID); err != nil {
+		return err
+	}
+	if err := db.SetMeta(statedb.MetaPageToken, token); err != nil {
+		return err
+	}
+	return db.SetMeta(metaWalkDone, "1")
+}
+
 func fullWalk(ctx context.Context, client driveclient.Client, db *statedb.DB, rootID string) error {
 	queue := []string{rootID}
 	for len(queue) > 0 {
