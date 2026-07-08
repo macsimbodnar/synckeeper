@@ -13,6 +13,15 @@ Format:
 
 ---
 
+## 2026-07-08 — Phase 3 implementation decisions
+
+**Context:** continuous mode could have grown a second, incremental sync path; it deliberately didn't.
+
+- **Every watch trigger runs a full `engine.Sync`** (full local scan + changes poll) instead of the spec's targeted subtree rescans. At personal scale a full scan costs milliseconds, and one code path means watch mode can't behave differently from manual sync. Consequences: the spec's hourly full rescan is subsumed (every cycle is one), and dropped fsnotify events are recovered within one poll interval. Revisit only if the tree grows past ~100k files.
+- **The watcher syncs once at startup**, catching changes made while the daemon was down — no event will ever fire for those.
+- **Guard errors do not kill the daemon.** A tripped mass-delete or empty-dir guard logs loudly and keeps retrying with backoff; the human resolves it (e.g. `sync --confirm-deletes`) while watch keeps the machine otherwise in sync. The daemon never self-confirms deletions.
+- **Soak is time-gated by `SYNCKEEPER_SOAK_SECONDS`** (7200 = the 2-hour exit gate) so the normal test suite stays fast; soak machines run with mass_delete_threshold=1.0 because chaos deletes freely and the guard is aimed at humans.
+
 ## 2026-07-08 — Phase 2 implementation decisions
 
 **Context:** hardening surfaced how to simulate crashes and what repair may touch.

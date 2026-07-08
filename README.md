@@ -2,7 +2,7 @@
 
 Personal bidirectional sync between one local folder (`~/Synckeeper`) and one Google Drive folder. Written in Go; single static binary per platform (Linux, macOS, Windows). Multiple machines sync independently against Drive as the hub. Built for one user — no GUI, no installer — but with strict durability guarantees: three-way reconcile against a local SQLite baseline, atomic writes, trash/quarantine instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable operations.
 
-**Status:** phase 2 done — `sync` is crash-safe (fault tests F1–F5), guarded against mass deletes and unmounted dirs, and `doctor [--repair]` can rebuild a lost state DB without propagating deletions. Only `watch` (phase 3) remains a stub. See [docs/plan.md](docs/plan.md) for phase status.
+**Status:** phase 3 — all commands implemented: crash-safe `sync`, continuous `watch` (fsnotify + polling), `doctor [--repair]`, and `service install` login-service wrappers for all three platforms. See [docs/plan.md](docs/plan.md) for phase status.
 
 ## Documentation
 
@@ -33,6 +33,7 @@ synckeeper sync --dry-run   # print the plan, change nothing
 synckeeper watch            # continuous mode (fsnotify + remote polling)
 synckeeper status           # config, folder ids, item counts, skipped items, quarantine
 synckeeper doctor [--repair]
+synckeeper service install|uninstall   # run watch as a login service (launchd/systemd/Task Scheduler)
 ```
 
 Config lives at the platform config dir (`~/.config/synckeeper` on Linux, `~/Library/Application Support/synckeeper` on macOS, `%AppData%\synckeeper` on Windows): `config.toml`, `state.db`, `token.json`, `quarantine/`.
@@ -44,6 +45,7 @@ First-time setup needs a personal Google Cloud project with the Drive API enable
 ```sh
 make test                             # go test ./... — all offline, uses in-memory Drive fake
 SYNCKEEPER_LIVE_TEST=1 go test ./...  # additionally runs live smoke tests against a throwaway Drive folder
+SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h   # 2-hour chaos soak
 ```
 
 ---

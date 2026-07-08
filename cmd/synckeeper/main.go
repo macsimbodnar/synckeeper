@@ -36,21 +36,12 @@ func main() {
 		newStatusCmd(),
 		newSyncCmd(),
 		newDoctorCmd(),
-		stubCmd("watch", "Run continuously, watching for local and remote changes", 3),
+		newWatchCmd(),
+		newServiceCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
-	}
-}
-
-func stubCmd(name, short string, phase int) *cobra.Command {
-	return &cobra.Command{
-		Use:   name,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("%s is not implemented yet (phase %d; see docs/plan.md)", name, phase)
-		},
 	}
 }
