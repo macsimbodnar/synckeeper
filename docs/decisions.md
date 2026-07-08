@@ -13,6 +13,16 @@ Format:
 
 ---
 
+## 2026-07-08 — Soak-discovered bug: fsnotify fd exhaustion on macOS
+
+**Context:** the first 2-hour soak died after ~1 h with `too many open files`; the daemon degraded gracefully (logged, backed off) but could not recover because fsnotify held the descriptors.
+
+**Cause:** fsnotify's kqueue backend (macOS/BSD) opens one fd per watched *file*, not just per directory — and those fds leak outright when files are deleted faster than their delete events are processed (an unlinked file's fd never returns).
+
+**Decision:** two mitigations in `watch`: (1) raise `RLIMIT_NOFILE` soft → hard at startup (darwin fallback to OPEN_MAX); (2) rebuild the fsnotify watcher every 500 sync cycles — `Close()` releases every fd it holds and the full-scan poll covers the swap window. Watch-registration failures degrade to polling with an aggregate warning instead of failing.
+
+**Consequences:** the macOS fd cost still scales with tree size (~1 fd per file while watched); fine to ~tens of thousands of files. Linux (inotify) and Windows (ReadDirectoryChangesW) don't have the per-file cost. This is exactly the class of bug the soak exists to catch — keep the soak in the release ritual.
+
 ## 2026-07-08 — Phase 3 implementation decisions
 
 **Context:** continuous mode could have grown a second, incremental sync path; it deliberately didn't.
