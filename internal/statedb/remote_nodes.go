@@ -1,5 +1,10 @@
 package statedb
 
+import (
+	"database/sql"
+	"errors"
+)
+
 // RemoteNode is the cached metadata of one Drive file, maintained by
 // internal/remotedelta from the changes feed. The tree snapshot is derived
 // by walking parent links from the root folder, so nodes outside the synced
@@ -43,6 +48,16 @@ func (d *DB) ClearRemoteNodes() error {
 	defer d.mu.Unlock()
 	_, err := d.sql.Exec(`delete from remote_nodes`)
 	return err
+}
+
+// HasRemoteNode reports whether a cached node exists for the file id.
+func (d *DB) HasRemoteNode(fileID string) (bool, error) {
+	var one int
+	err := d.sql.QueryRow(`select 1 from remote_nodes where file_id = ?`, fileID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // AllRemoteNodes returns the whole cache.

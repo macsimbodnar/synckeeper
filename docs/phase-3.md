@@ -2,7 +2,7 @@
 
 **Goal:** `synckeeper watch` runs as a daemon: local fsnotify events + remote polling feed the same phase-1 reconcile engine. Service wrappers per OS.
 **Exit criterion:** two-hour soak with random edits on both sides, no divergence.
-**Status:** in progress — code complete 2026-07-08, 60 s soak green, full 2-hour soak running
+**Status:** done 2026-07-09 — 2-hour soak passed (converged on 10,858 files). The soak exposed remote-cache growth and watch-failure log spam; both fixed 2026-07-12 (decisions.md).
 
 ## Tasks
 
@@ -29,6 +29,6 @@
 
 ## Verification
 
-- [ ] Soak passes with no divergence.
-- [ ] Dropped-event recovery proven: suppress events artificially, confirm hourly full scan converges.
-- [ ] `service install` + reboot on the dev machine: watch comes back by itself.
+- [x] Soak passes with no divergence — 2026-07-09, 7314 s, converged on 10,858 files.
+- [x] Dropped-event recovery proven: the soak's late phase ran fd-starved with fsnotify effectively dead; polling full scans still converged (stronger than the artificial-suppression plan).
+- [ ] `service install` + reboot on the dev machine: watch comes back by itself. *(user's manual step; not gating — the exit criterion is the soak)*

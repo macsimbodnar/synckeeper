@@ -13,6 +13,16 @@ Format:
 
 ---
 
+## 2026-07-12 — Post-soak fixes: remote-cache pruning and a polling-only latch
+
+**Context:** the full 2-hour soak passed (converged on 10,858 files) but surfaced two long-run resource problems. First, `remote_nodes` grew monotonically: the changes feed is drive-wide, trashed files were cached as tombstone rows forever, and children of a trashed folder became permanently unreachable garbage — all loaded into memory every cycle by `AllRemoteNodes`. Second, when the tree outgrew the fd limit (~10k files per watcher on kqueue), watch re-registration failed and logged an error every cycle, forever.
+
+**Decision (cache):** three coordinated changes in `remotedelta`. (1) A trashed change *deletes* the cache row instead of upserting a tombstone. (2) After each changes batch, a prune pass deletes every row unreachable from the root folder (orphans of deleted folders, out-of-tree files, legacy tombstones). (3) To keep "folder moved/restored into the tree" correct now that out-of-tree rows are pruned, a change for a *folder we have never cached* whose parent is in-tree triggers a one-time subtree walk (`files.list` BFS) before the page token is persisted. Drive emits no change events for the descendants of a moved folder, so without the walk a pruned subtree would sync in empty — this also fixes the pre-existing gap for folders created before `init` and for restore-from-trash of a folder.
+
+**Decision (watch):** three consecutive cycles with watch-registration failures latch the daemon into polling-only mode: the fsnotify watcher is closed outright (releasing every fd, so the scanner stops starving), one warning is logged, and file watching is retried at the existing rebuild cadence (every 500 cycles), restoring event-driven sync automatically if the pressure clears.
+
+**Consequences:** the cache now tracks only the synced tree, so per-cycle memory is proportional to tree size, not Drive history; out-of-tree folder creations cost one extra `files.list` each before being pruned. A latched daemon has poll-interval latency instead of sub-second reactivity — correct by design, since polling full-syncs everything. Regression tests in `internal/remotedelta` (trash-drop, orphan prune, out-of-tree prune, move-in walk) and `internal/watch` (latch counter); 90 s soak re-run green.
+
 ## 2026-07-08 — Soak-discovered bug: fsnotify fd exhaustion on macOS
 
 **Context:** the first 2-hour soak died after ~1 h with `too many open files`; the daemon degraded gracefully (logged, backed off) but could not recover because fsnotify held the descriptors.

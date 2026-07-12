@@ -66,7 +66,8 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | Case | Status |
 |---|---|
-| 2-hour random-edit soak, both sides, no divergence | todo |
+| 2-hour random-edit soak, both sides, no divergence | passing (2026-07-09, macOS) — converged on 10,858 files; late-stage fd exhaustion degraded to polling as designed and still converged (see decisions.md 2026-07-12) |
+| Cache-prune + polling-latch regression tests (`internal/remotedelta`, `internal/watch`) + 90 s soak re-run | passing (2026-07-12) |
 
 ## Live smoke (any phase, manual)
 

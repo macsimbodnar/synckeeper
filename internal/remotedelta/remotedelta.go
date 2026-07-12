@@ -21,8 +21,9 @@ import (
 const metaWalkDone = "initial_walk_done"
 
 // Refresh brings the remote_nodes cache up to date: a full walk on the
-// first sync, then incremental changes. The page token is persisted only
-// after its batch is fully applied (re-applying a batch is idempotent).
+// first sync, then incremental changes, then a prune of unreachable rows.
+// The page token is persisted only after its batch is fully applied
+// (re-applying a batch is idempotent).
 func Refresh(ctx context.Context, client driveclient.Client, db *statedb.DB, rootID string) error {
 	if _, err := db.GetMeta(metaWalkDone); errors.Is(err, statedb.ErrNotFound) {
 		if err := fullWalk(ctx, client, db, rootID); err != nil {
@@ -34,7 +35,10 @@ func Refresh(ctx context.Context, client driveclient.Client, db *statedb.DB, roo
 	} else if err != nil {
 		return err
 	}
-	return consumeChanges(ctx, client, db)
+	if err := consumeChanges(ctx, client, db, rootID); err != nil {
+		return err
+	}
+	return prune(db, rootID)
 }
 
 // ForceFullWalk rebuilds the cache from scratch and resets the page token,
@@ -79,7 +83,7 @@ func fullWalk(ctx context.Context, client driveclient.Client, db *statedb.DB, ro
 	return nil
 }
 
-func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.DB) error {
+func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.DB, rootID string) error {
 	token, err := db.GetMeta(statedb.MetaPageToken)
 	if err != nil {
 		return fmt.Errorf("no changes page token stored; run `synckeeper init`: %w", err)
@@ -89,9 +93,12 @@ func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.
 		if err != nil {
 			return err
 		}
+		var walks []string
 		for _, c := range page.Changes {
 			switch {
-			case c.Removed || c.File == nil:
+			case c.Removed || c.File == nil || c.File.Trashed:
+				// Trashed rows would only ever be filtered out again, so
+				// they are dropped here rather than cached as tombstones.
 				if err := db.DeleteRemoteNode(c.FileID); err != nil {
 					return err
 				}
@@ -100,9 +107,34 @@ func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.
 				if len(c.File.Parents) > 0 {
 					parent = c.File.Parents[0]
 				}
+				// A folder we have never seen, attached to a known parent,
+				// may carry a whole subtree for which no change events will
+				// ever arrive (moved or restored into the tree): walk it.
+				if c.File.IsDir() {
+					known, err := db.HasRemoteNode(c.File.ID)
+					if err != nil {
+						return err
+					}
+					parentKnown := parent == rootID
+					if !parentKnown && parent != "" {
+						if parentKnown, err = db.HasRemoteNode(parent); err != nil {
+							return err
+						}
+					}
+					if !known && parentKnown {
+						walks = append(walks, c.File.ID)
+					}
+				}
 				if err := db.UpsertRemoteNode(toNode(*c.File, parent)); err != nil {
 					return err
 				}
+			}
+		}
+		// Walk before the token is persisted: a failed walk is replayed
+		// with its batch on the next refresh (upserts are idempotent).
+		for _, id := range walks {
+			if err := fullWalk(ctx, client, db, id); err != nil {
+				return err
 			}
 		}
 		switch {
@@ -114,6 +146,45 @@ func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.
 			return errors.New("changes feed returned neither next page nor new start token")
 		}
 	}
+}
+
+// prune drops cache rows unreachable from the root folder: children of
+// deleted folders, out-of-tree files the drive-wide changes feed dragged in,
+// and legacy trashed tombstones. Without it the cache grows monotonically
+// with all Drive activity, and every sync cycle loads the whole table. A
+// pruned subtree that later re-enters the tree is restored by the
+// unknown-folder walk in consumeChanges.
+func prune(db *statedb.DB, rootID string) error {
+	nodes, err := db.AllRemoteNodes()
+	if err != nil {
+		return err
+	}
+	children := map[string][]string{}
+	for _, n := range nodes {
+		if !n.Trashed {
+			children[n.ParentID] = append(children[n.ParentID], n.FileID)
+		}
+	}
+	reachable := map[string]bool{}
+	queue := []string{rootID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		for _, child := range children[id] {
+			if !reachable[child] {
+				reachable[child] = true
+				queue = append(queue, child)
+			}
+		}
+	}
+	for _, n := range nodes {
+		if !reachable[n.FileID] {
+			if err := db.DeleteRemoteNode(n.FileID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func toNode(f driveclient.File, parent string) statedb.RemoteNode {

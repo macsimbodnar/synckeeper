@@ -53,11 +53,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 	debounce := time.AfterFunc(time.Hour, kick)
 	debounce.Stop()
 
-	fw, err := w.startNotifier(ctx, debounce)
+	var latch failureLatch
+	pollingOnly := false
+	fw, failed, err := w.startNotifier(ctx, debounce)
 	if err != nil {
 		return err
 	}
-	defer func() { fw.Close() }()
+	defer func() {
+		if fw != nil {
+			fw.Close()
+		}
+	}()
+	pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
 
 	ticker := time.NewTicker(w.Poll)
 	defer ticker.Stop()
@@ -98,27 +105,61 @@ func (w *Watcher) Run(ctx context.Context) error {
 			} else {
 				slog.Debug("sync cycle: no changes")
 			}
-			if cycle%rebuildEvery == 0 {
+			switch {
+			case pollingOnly:
+				if cycle%rebuildEvery != 0 {
+					break // stay on polling; retry only at rebuild cadence
+				}
+				nfw, failed, err := w.startNotifier(ctx, debounce)
+				if err != nil || failed > 0 {
+					if nfw != nil {
+						nfw.Close()
+					}
+					break
+				}
+				fw, pollingOnly, latch = nfw, false, failureLatch{}
+				slog.Info("file watching restored; back to event-driven sync")
+			case cycle%rebuildEvery == 0:
 				fw.Close() // pump goroutine exits with the channel
-				if fw, err = w.startNotifier(ctx, debounce); err != nil {
+				if fw, failed, err = w.startNotifier(ctx, debounce); err != nil {
 					return err
 				}
 				slog.Debug("rebuilt fsnotify watcher", "cycle", cycle)
-			} else {
-				w.syncWatches(fw)
+				pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
+			default:
+				pollingOnly = w.latchIfNeeded(&latch, w.syncWatches(fw), &fw)
 			}
 		}
 	}
 }
 
+// latchIfNeeded records a watch-refresh outcome; on repeated failures it
+// shuts the watcher down (releasing every descriptor it holds) and switches
+// to pure polling. The rebuild cadence periodically retries file watching.
+func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw **fsnotify.Watcher) bool {
+	if failed > 0 && latch.consecutive == 0 {
+		slog.Warn("some directories could not be watched; polling covers them",
+			"failed", failed, "poll_interval", w.Poll)
+	}
+	if !latch.note(failed) {
+		return false
+	}
+	(*fw).Close()
+	*fw = nil
+	slog.Warn("file watching disabled after repeated failures (out of file descriptors?); "+
+		"relying on polling and retrying periodically", "poll_interval", w.Poll)
+	return true
+}
+
 // startNotifier creates an fsnotify watcher over the whole tree and starts
 // its event pump, which feeds the debounce timer until the watcher closes.
-func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (*fsnotify.Watcher, error) {
+// It also returns how many directories could not be watched.
+func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (*fsnotify.Watcher, int, error) {
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	w.syncWatches(fw)
+	failed := w.syncWatches(fw)
 	go func() {
 		for {
 			select {
@@ -150,20 +191,21 @@ func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (*fsn
 			}
 		}
 	}()
-	return fw, nil
+	return fw, failed, nil
 }
 
 // fdLimitOnce: the rlimit is process-wide; one raise is enough.
 var fdLimitOnce sync.Once
 
 // syncWatches makes the fsnotify watch set match the current directory
-// tree. fsnotify drops watches for deleted dirs on its own; stale Adds are
-// harmless, so a simple re-walk suffices.
-func (w *Watcher) syncWatches(fw *fsnotify.Watcher) {
-	w.watchSubtree(fw, w.Eng.SyncDir)
+// tree and returns how many directories could not be watched. fsnotify
+// drops watches for deleted dirs on its own; stale Adds are harmless, so a
+// simple re-walk suffices.
+func (w *Watcher) syncWatches(fw *fsnotify.Watcher) int {
+	return w.watchSubtree(fw, w.Eng.SyncDir)
 }
 
-func (w *Watcher) watchSubtree(fw *fsnotify.Watcher, root string) {
+func (w *Watcher) watchSubtree(fw *fsnotify.Watcher, root string) int {
 	failed := 0
 	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -180,10 +222,25 @@ func (w *Watcher) watchSubtree(fw *fsnotify.Watcher, root string) {
 		}
 		return nil
 	})
-	if failed > 0 {
-		// Degraded but correct: the poll tick full-scans everything the
-		// missing watches would have announced.
-		slog.Warn("some directories could not be watched; relying on polling for them",
-			"failed", failed, "poll_interval", w.Poll)
+	return failed
+}
+
+// watchFailureLatch: consecutive cycles with watch-registration failures
+// after which fsnotify is shut down in favor of pure polling. Failures here
+// mean fd pressure (the tree needs more descriptors than the process has);
+// keeping the watcher would starve the sync itself, and retrying every
+// cycle just spams the log. Polling alone is slower but fully correct.
+const watchFailureLatch = 3
+
+// failureLatch counts consecutive failing watch refreshes.
+type failureLatch struct{ consecutive int }
+
+// note records one refresh outcome and reports whether to latch.
+func (l *failureLatch) note(failed int) bool {
+	if failed == 0 {
+		l.consecutive = 0
+		return false
 	}
+	l.consecutive++
+	return l.consecutive >= watchFailureLatch
 }
