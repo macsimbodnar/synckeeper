@@ -59,8 +59,8 @@ func newWatchCmd() *cobra.Command {
 
 func newServiceCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "service install|uninstall",
-		Short: "Install or remove the login service that runs `synckeeper watch`",
+		Use:   "service install|uninstall|status",
+		Short: "Manage the login service that runs `synckeeper watch`",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var msg string
@@ -77,8 +77,10 @@ func newServiceCmd() *cobra.Command {
 				msg, err = service.Install(bin)
 			case "uninstall":
 				msg, err = service.Uninstall()
+			case "status":
+				msg, err = serviceStatusText()
 			default:
-				return fmt.Errorf("unknown subcommand %q (want install or uninstall)", args[0])
+				return fmt.Errorf("unknown subcommand %q (want install, uninstall, or status)", args[0])
 			}
 			if err != nil {
 				return err
@@ -88,4 +90,27 @@ func newServiceCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+func serviceStatusText() (string, error) {
+	s, err := service.Status()
+	if err != nil {
+		return "", err
+	}
+	if !s.Installed {
+		return "login service: not installed (run `synckeeper service install`)", nil
+	}
+	out := "login service: installed"
+	if s.Enabled {
+		out += ", starts at login"
+	}
+	if s.Running {
+		out += ", running now"
+	} else {
+		out += ", not running"
+	}
+	if s.Detail != "" {
+		out += "\n  " + s.Detail
+	}
+	return out, nil
 }

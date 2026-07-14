@@ -69,6 +69,16 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | 2-hour random-edit soak, both sides, no divergence | passing (2026-07-09, macOS) — converged on 10,858 files; late-stage fd exhaustion degraded to polling as designed and still converged (see decisions.md 2026-07-12) |
 | Cache-prune + polling-latch regression tests (`internal/remotedelta`, `internal/watch`) + 90 s soak re-run | passing (2026-07-12) |
 
+## Monitoring (phase 6, stage 1)
+
+| Case | Status |
+|---|---|
+| statedb v3: daemon_status round-trip; activity ring capped at 500, newest-first, limit honored | passing (2026-07-14) |
+| Running watcher records daemon_status (running/mode/pid/heartbeat/last-cycle) and derives per-action activity | passing (2026-07-14) |
+| Clean shutdown flips recorded state to stopped | passing (2026-07-14) |
+| `service status` parsers (launchctl PID / systemctl is-enabled+is-active / schtasks Status) on canned output | passing (2026-07-14) |
+| CLI render smoke: `status` never-run / running / stale, `--json`, `activity`, `config`, `account` | passing (2026-07-14, macOS) |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

@@ -2,7 +2,7 @@
 
 **Goal:** a way to observe and drive the running `watch` daemon — see whether it is alive, what it is doing, its config and account, recent activity, and autostart state; and send it commands (sync now, pause/resume). Console-first, with a later optional tray/menu-bar GUI reusing the same interface.
 **Exit criterion:** from a second terminal while `watch` runs, `synckeeper status` reports live daemon state (mode, last sync, recent activity, guard-blocked); `synckeeper sync`/`pause`/`resume` reach the running daemon; `service status` reports autostart state. All pure-Go, `CGO_ENABLED=0`, cross-compiled.
-**Status:** not started — design only (approved 2026-07-12). Sequenced after phases 4–5; this doc is the design of record so it survives until built.
+**Status:** in progress — Stage 1 (monitoring, no IPC) done 2026-07-14; Stages 2 (control socket) and 3 (tray GUI) not started. Built ahead of phases 4–5 at the user's request because it touches no durability invariant.
 
 > Scope note: this is an addition beyond the original spec's phases 0–5. See decisions.md (2026-07-12, "Phase 6 added: daemon control & monitoring").
 
@@ -130,14 +130,16 @@ synckeeper service status              # autostart installed / enabled / running
 
 ## Tasks
 
-### Stage 1 — monitoring (no IPC)
-- [ ] statedb migration v3: `daemon_status` (singleton) + `activity` (capped ring); accessors; keep the "refuse newer schema" guard.
-- [ ] Daemon records heartbeat (~10 s ticker) + per-cycle summary + failed actions; mode reflects watching / polling-only / backoff / paused.
-- [ ] Lock-free read env for read-only commands (don't contend the daemon's instance lock).
-- [ ] `status` daemon-aware: running/stale from heartbeat, mode, last sync, guard-blocked, account, autostart; `--json` and `--watch` (periodic re-render).
-- [ ] `activity [-n]`, `config` (effective config + edit hint), `account` (Google account, token presence/validity).
-- [ ] `service status` across launchd/systemd/Task Scheduler.
-- [ ] Tests: migration; heartbeat/activity written and read; status renders running vs stale vs down; `service status` parsing per OS (table-driven on canned tool output).
+### Stage 1 — monitoring (no IPC) — done 2026-07-14
+- [x] statedb migration v3: `daemon_status` (singleton) + `activity` (capped ring, 500 rows); accessors in `statedb/daemon.go`; "refuse newer schema" guard unchanged.
+- [x] Daemon records heartbeat (10 s ticker, `watch.HeartbeatInterval`) + per-cycle summary; mode reflects watching / polling-only / backoff (paused is Stage 2). Recorder in `watch/status.go`.
+- [x] Lock-free read env (`cmd/synckeeper/readenv.go`) for read-only commands — reads via SQLite WAL alongside the daemon's writer, no lock contention.
+- [x] `status` daemon-aware: running/stale/stopped/never-run from heartbeat freshness, mode, last sync + cycle summary, next poll, guard-blocked, autostart; `--json` and `--watch`.
+- [x] `activity [-n]`, `config` (effective config + edit hint), `account` (token presence/expiry/refresh — email lookup deferred, see decisions).
+- [x] `service status` across launchd/systemd/Task Scheduler (`service.Status()` + factored parsers).
+- [x] Tests: migration + daemon_status round-trip + activity ring cap (`statedb`); running Watcher records status + derives activity + marks stopped on shutdown (`watch`); `service status` parsers table-driven (`service`). Smoke-tested the rendered CLI output (never-run / running / stale / json).
+
+Refinement vs. the original plan: activity is recorded **per interesting action derived from the successful cycle's plan** (upload/download/trash/move/mkdir/conflict), not merely cycle-level — this gives the Dropbox-like recent-activity list without touching the executor. Failed cycles record a single error entry (we can't tell which actions ran). `paused` mode is deferred to Stage 2 (it needs the control socket to toggle).
 
 ### Stage 2 — control socket
 - [ ] Control listener in `watch`: unix socket / AF_UNIX (win), 0600, stale-socket cleanup, unlink on shutdown.

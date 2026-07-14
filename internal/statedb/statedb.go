@@ -74,6 +74,33 @@ var migrations = []string{
 	  trashed   integer not null default 0
 	);
 	`,
+	// v2 -> v3: daemon runtime state for monitoring (phase 6). daemon_status
+	// is a singleton heartbeat the `watch` daemon updates; activity is a
+	// capped ring of recent actions read by `status`/`activity`.
+	`
+	create table daemon_status (
+	  id                integer primary key check (id = 1),
+	  running           integer not null default 0,
+	  pid               integer not null default 0,
+	  started_at        integer not null default 0,
+	  last_heartbeat_at integer not null default 0,
+	  mode              text    not null default '',
+	  paused            integer not null default 0,
+	  last_sync_at      integer not null default 0,
+	  last_cycle_json   text    not null default '',
+	  last_error        text    not null default '',
+	  next_poll_at      integer not null default 0,
+	  guard_blocked     integer not null default 0,
+	  guard_reason      text    not null default ''
+	);
+	create table activity (
+	  id       integer primary key autoincrement,
+	  ts       integer not null,
+	  kind     text    not null,
+	  rel_path text    not null default '',
+	  detail   text    not null default ''
+	);
+	`,
 }
 
 // Path returns the state DB path inside the given config dir.

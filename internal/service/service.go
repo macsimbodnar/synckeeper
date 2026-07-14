@@ -51,6 +51,36 @@ func run(name string, args ...string) error {
 	return nil
 }
 
+// output runs a command and returns its combined output; the error is
+// returned too, since these status queries use non-zero exit as a signal.
+func output(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	return string(out), err
+}
+
+// State summarizes whether the login service is installed, set to start at
+// boot, and currently running.
+type State struct {
+	Installed bool
+	Enabled   bool // starts at login/boot
+	Running   bool
+	Detail    string // human-readable specifics (paths, tool output hints)
+}
+
+// Status reports the login service state for the current platform.
+func Status() (State, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return statusLaunchd()
+	case "linux":
+		return statusSystemd()
+	case "windows":
+		return statusTaskScheduler()
+	default:
+		return State{}, fmt.Errorf("no service wrapper for %s", runtime.GOOS)
+	}
+}
+
 // --- macOS: launchd ------------------------------------------------------
 
 func launchdPlist(binPath, logPath string) string {
@@ -112,6 +142,41 @@ func uninstallLaunchd() (string, error) {
 	return "launchd agent stopped and removed.", nil
 }
 
+func statusLaunchd() (State, error) {
+	plistPath, _, err := launchdPaths()
+	if err != nil {
+		return State{}, err
+	}
+	installed := false
+	if _, err := os.Stat(plistPath); err == nil {
+		installed = true
+	}
+	// `launchctl list <label>` exits non-zero when the label isn't loaded;
+	// when loaded, a numeric "PID" line means it is actually running.
+	out, listErr := output("launchctl", "list", label)
+	running := listErr == nil && launchdRunning(out)
+	// Our plist always sets RunAtLoad, so "installed" == "starts at login".
+	return State{Installed: installed, Enabled: installed, Running: running,
+		Detail: "launchd agent " + plistPath}, nil
+}
+
+// launchdRunning reports whether `launchctl list <label>` output shows a live
+// PID (a non-negative "PID" entry).
+func launchdRunning(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, `"PID"`) {
+			continue
+		}
+		// Format: "PID" = 4821;
+		if i := strings.Index(line, "="); i >= 0 {
+			v := strings.Trim(strings.TrimSpace(line[i+1:]), ";")
+			return v != "" && v != "-"
+		}
+	}
+	return false
+}
+
 // --- Linux: systemd user unit --------------------------------------------
 
 func systemdUnit(binPath string) string {
@@ -170,6 +235,28 @@ func uninstallSystemd() (string, error) {
 	return "systemd user unit stopped and removed.", nil
 }
 
+func statusSystemd() (State, error) {
+	unitPath, err := systemdUnitPath()
+	if err != nil {
+		return State{}, err
+	}
+	installed := false
+	if _, err := os.Stat(unitPath); err == nil {
+		installed = true
+	}
+	enabledOut, _ := output("systemctl", "--user", "is-enabled", "synckeeper")
+	activeOut, _ := output("systemctl", "--user", "is-active", "synckeeper")
+	enabled, running := parseSystemctl(enabledOut, activeOut)
+	return State{Installed: installed, Enabled: enabled, Running: running,
+		Detail: "systemd user unit " + unitPath}, nil
+}
+
+// parseSystemctl reads `is-enabled` / `is-active` output. is-enabled prints
+// "enabled" (autostart on); is-active prints "active" (running now).
+func parseSystemctl(isEnabled, isActive string) (enabled, running bool) {
+	return strings.TrimSpace(isEnabled) == "enabled", strings.TrimSpace(isActive) == "active"
+}
+
 // --- Windows: Task Scheduler ----------------------------------------------
 
 const taskName = "Synckeeper"
@@ -220,4 +307,28 @@ func uninstallTaskScheduler() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("scheduled task %q removed.", taskName), nil
+}
+
+func statusTaskScheduler() (State, error) {
+	// `schtasks /Query` exits non-zero when the task doesn't exist.
+	out, err := output("schtasks", "/Query", "/TN", taskName, "/FO", "LIST")
+	if err != nil {
+		return State{Installed: false, Detail: "no scheduled task " + taskName}, nil
+	}
+	running := parseSchtasks(out)
+	// A LogonTrigger task is enabled to start at login by virtue of existing.
+	return State{Installed: true, Enabled: true, Running: running,
+		Detail: "scheduled task " + taskName}, nil
+}
+
+// parseSchtasks reads `schtasks /Query /FO LIST` output; the "Status:" field
+// reads "Running" when the task is executing (vs. "Ready"/"Disabled").
+func parseSchtasks(out string) (running bool) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Status:") {
+			return strings.Contains(line, "Running")
+		}
+	}
+	return false
 }

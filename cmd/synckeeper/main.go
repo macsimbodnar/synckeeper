@@ -34,6 +34,9 @@ func main() {
 	root.AddCommand(
 		newInitCmd(),
 		newStatusCmd(),
+		newActivityCmd(),
+		newConfigCmd(),
+		newAccountCmd(),
 		newSyncCmd(),
 		newDoctorCmd(),
 		newWatchCmd(),

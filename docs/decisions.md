@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-07-14 — Phase 6 Stage 1 built: monitoring via a DB heartbeat
+
+**Context:** implementing the read-only half of [phase-6.md](phase-6.md) — see status/activity of the running daemon without any IPC.
+
+**Decisions made during the build:**
+- **Activity is per-action, derived from the successful cycle's plan** (upload/download/trash/move/mkdir/conflict; Record/Forget skipped), not the cycle-level summary the design floated. This yields the Dropbox-style recent-activity list the user asked for and costs nothing extra: the watch loop already has `Result.Plan`, so the executor stays untouched. A *failed* cycle records a single error entry instead — we can't tell which planned actions actually ran, so we never claim per-action success.
+- **Heartbeat is a separate goroutine** (10 s, `watch.HeartbeatInterval`), not folded into the main select loop, so a long-running sync cycle can't make a live daemon look stale. Staleness window = 3× the interval. Liveness with no socket is: `Running` flag AND heartbeat within the window → running; `Running` but stale → "likely crashed"; not `Running` → "stopped".
+- **Read commands never take the instance lock** (`readEnv`, distinct from `appEnv`): they read via SQLite WAL alongside the daemon's single writer. This is what lets `status` run while `watch` holds the lock.
+- **`paused` mode deferred to Stage 2**: pausing is only meaningful if something can toggle it, which is the control socket.
+- **Account email not fetched**: `account` shows token presence/expiry/refresh only; the Google email needs an `about.get` API call (network + a Client-interface addition). Deferred as a follow-up rather than pull a network dependency into a monitoring command that otherwise works offline.
+- **Guard-blocked surfacing** needed a typed error: added `guards.ErrMassDelete` (wrapped) so the recorder can distinguish a mass-delete block (actionable: `--confirm-deletes`) from any other cycle error and set `guard_blocked` in status.
+
 ## 2026-07-12 — Phase 6 added: daemon control & monitoring
 
 **Context:** the daemon is headless — `status` reads config/DB files but never talks to the running `watch` process, so there is no way to see if it is alive, what it is doing, or to drive it (sync now, pause). The user wants monitoring and interaction, console-first, with a possible tray/menu-bar icon later (à la Dropbox). This is scope beyond the spec's phases 0–5.

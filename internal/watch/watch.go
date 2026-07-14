@@ -8,6 +8,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/macsimbodnar/synckeeper/internal/engine"
+	"github.com/macsimbodnar/synckeeper/internal/guards"
 	"github.com/macsimbodnar/synckeeper/internal/names"
 )
 
@@ -42,6 +44,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.Debounce = 500 * time.Millisecond
 	}
 	fdLimitOnce.Do(raiseFDLimit)
+
+	rec := newRecorder(w.Eng.DB)
+	defer rec.stop()
+	go rec.heartbeat(ctx)
 
 	trigger := make(chan struct{}, 1)
 	kick := func() {
@@ -82,13 +88,22 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ticker.C:
 		}
 
+		start := time.Now()
 		res, err := w.Eng.Sync(ctx, engine.Options{})
+		dur := time.Since(start)
 		switch {
 		case ctx.Err() != nil:
 			return nil
 		case err != nil:
 			// Guards (mass delete, missing dir) land here too: keep the
 			// daemon alive and loudly wait for the human.
+			guardBlocked := errors.Is(err, guards.ErrMassDelete)
+			guardReason := ""
+			if guardBlocked {
+				guardReason = err.Error()
+			}
+			rec.cycleDone(res, dur, err, ModeBackoff, time.Now().Add(backoff), guardBlocked, guardReason)
+			rec.recordError(err)
 			slog.Error("sync cycle failed; will retry", "err", err, "backoff", backoff)
 			select {
 			case <-time.After(backoff):
@@ -129,6 +144,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 			default:
 				pollingOnly = w.latchIfNeeded(&latch, w.syncWatches(fw), &fw)
 			}
+			mode := ModeWatching
+			if pollingOnly {
+				mode = ModePollingOnly
+			}
+			rec.cycleDone(res, dur, nil, mode, time.Now().Add(w.Poll), false, "")
+			rec.recordActivity(res)
 		}
 	}
 }

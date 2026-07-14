@@ -1,11 +1,17 @@
 package guards
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 )
+
+// ErrMassDelete wraps the mass-delete guard failure so callers (the watch
+// daemon's status recorder) can tell a guard block from any other error and
+// surface the actionable "--confirm-deletes" hint.
+var ErrMassDelete = errors.New("mass-delete threshold exceeded")
 
 // CheckSyncDir hard-errors when the sync dir is missing, unreadable, or
 // empty while the baseline tracks items — those states mean "the disk went
@@ -41,8 +47,8 @@ func CheckMassDelete(plan []reconcile.Action, trackedItems int, threshold float6
 		}
 	}
 	if deletions > 10 && float64(deletions)/float64(trackedItems) > threshold {
-		return fmt.Errorf("plan deletes %d of %d tracked items (over the %.0f%% mass-delete threshold); re-run with --confirm-deletes if intended",
-			deletions, trackedItems, threshold*100)
+		return fmt.Errorf("plan deletes %d of %d tracked items (over the %.0f%% mass-delete threshold); re-run with --confirm-deletes if intended: %w",
+			deletions, trackedItems, threshold*100, ErrMassDelete)
 	}
 	return nil
 }
