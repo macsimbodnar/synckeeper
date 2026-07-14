@@ -2,7 +2,7 @@
 
 Personal bidirectional sync between one local folder (`~/Synckeeper`) and one Google Drive folder. Written in Go; single static binary per platform (Linux, macOS, Windows). Multiple machines sync independently against Drive as the hub. Built for one user — no GUI, no installer — but with strict durability guarantees: three-way reconcile against a local SQLite baseline, atomic writes, trash/quarantine instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable operations.
 
-**Status:** phase 3 complete (2-hour soak passed); phase 6 stages 1–2 (daemon monitoring + control socket) done. Implemented: crash-safe `sync`, continuous `watch` (fsnotify + polling), `doctor [--repair]`, `service install`/`status` login-service wrappers, daemon-aware `status`/`activity`/`config`/`account`, and control commands `pause`/`resume`/`reload` plus daemon-delegated `sync` over a local socket. Next: phase 4 (`init --adopt`, multi-machine). See [docs/plan.md](docs/plan.md) for phase status.
+**Status:** phase 3 complete (2-hour soak passed); phase 4 (`init --adopt`, multi-machine) code + matrix tests done; phase 6 stages 1–2 (daemon monitoring + control socket) done. Implemented: crash-safe `sync`, `init --adopt` first-merge, continuous `watch` (fsnotify + polling), `doctor [--repair]`, `service install`/`status` login-service wrappers, daemon-aware `status`/`activity`/`config`/`account`, and control commands `pause`/`resume`/`reload` plus daemon-delegated `sync`. Remaining: manual multi-machine rollout, phase 5 (cross-platform), phase 6 stage 3 (tray icon). See [docs/plan.md](docs/plan.md) for phase status.
 
 ## Documentation
 

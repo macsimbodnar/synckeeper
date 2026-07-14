@@ -13,6 +13,16 @@ Format:
 
 ---
 
+## 2026-07-14 — Phase 4 built: `init --adopt` is empty-baseline first-merge
+
+**Context:** a second/third machine must join an existing non-empty Drive folder without a separate, risky merge planner.
+
+**Decision:** adoption is **not** a new planner mode — it is the ordinary first sync run over an empty baseline, gated behind `--adopt`. With no `items` rows, the existing reconcile decision table's base-absent rows already produce exactly the required behavior: local-only → upload, remote-only → download, same-path same-md5 → adopt/record, same-path diff-md5 → conflict copy (remote wins canonical). Crucially, **an empty baseline can't generate a delete-class action** (deletes require a baseline row that's now missing on one side), so "nothing is deleted during adopt" is structural, not a special case. `init --adopt` therefore just: resolves the folder, and if it already holds files runs one `engine.Sync`.
+
+**Gate:** plain `init` on a Drive folder that already contains files errors and points at `--adopt`, and persists nothing on that path so the `--adopt` retry is clean. An existing *empty* folder is still reused without `--adopt` (nothing to merge, no risk). `machine_id` was already stored by `initialize` from earlier work, so machine identity needed no new code.
+
+**Consequences:** no new merge code to get wrong; the adopt path shares the exact reconcile/executor already validated by phases 1–3. `initialize` gained an `adopt bool` and now returns the folder id. Matrix tests (`internal/engine/adopt_test.go`): union merge, divergent-conflict, three-machine convergence with no lost version, adopt-while-others-active; plus the gate test in `cmd`. The remaining exit item — a real multi-machine rollout — needs physical machines and is the user's step.
+
 ## 2026-07-14 — Phase 6 Stage 2 built: control socket
 
 **Context:** the "interact with the daemon" half of phase 6 — push commands into the running `watch` process.

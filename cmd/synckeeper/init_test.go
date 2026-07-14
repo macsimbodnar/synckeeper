@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/macsimbodnar/synckeeper/internal/config"
@@ -27,7 +28,7 @@ func TestInitializeCreatesFolderAndMeta(t *testing.T) {
 	db := openTestDB(t)
 	cfg := config.Default()
 
-	if err := initialize(ctx, fake, db, cfg); err != nil {
+	if _, err := initialize(ctx, fake, db, cfg, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,7 +60,9 @@ func TestInitializeAdoptsExistingFolder(t *testing.T) {
 	}
 	db := openTestDB(t)
 
-	if err := initialize(ctx, fake, db, config.Default()); err != nil {
+	// An existing but EMPTY folder is reused without --adopt (no content to
+	// merge, so no risk of joining someone else's data unknowingly).
+	if _, err := initialize(ctx, fake, db, config.Default(), false); err != nil {
 		t.Fatal(err)
 	}
 	rootID, _ := db.GetMeta(statedb.MetaRootFolderID)
@@ -81,16 +84,46 @@ func TestInitializeAdoptsExistingFolder(t *testing.T) {
 func TestInitializeKeepsMachineID(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	if err := initialize(ctx, driveclient.NewFake(), db, config.Default()); err != nil {
+	if _, err := initialize(ctx, driveclient.NewFake(), db, config.Default(), false); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := db.GetMeta(statedb.MetaMachineID)
-	if err := initialize(ctx, driveclient.NewFake(), db, config.Default()); err != nil {
+	if _, err := initialize(ctx, driveclient.NewFake(), db, config.Default(), false); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := db.GetMeta(statedb.MetaMachineID)
 	if first == "" || first != second {
 		t.Errorf("machine_id changed across re-init: %q -> %q", first, second)
+	}
+}
+
+// A Drive folder that already holds files is refused without --adopt, and
+// nothing is persisted so an --adopt retry works. With --adopt it proceeds.
+func TestInitializeRefusesNonEmptyWithoutAdopt(t *testing.T) {
+	ctx := context.Background()
+	fake := driveclient.NewFake()
+	folder, err := fake.Mkdir(ctx, driveclient.FakeRootID, "Synckeeper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.Upload(ctx, folder.ID, "existing.txt", strings.NewReader("hi"), 2); err != nil {
+		t.Fatal(err)
+	}
+
+	db := openTestDB(t)
+	if _, err := initialize(ctx, fake, db, config.Default(), false); err == nil {
+		t.Fatal("want error joining a non-empty folder without --adopt")
+	}
+	if _, err := db.GetMeta(statedb.MetaRootFolderID); !errors.Is(err, statedb.ErrNotFound) {
+		t.Error("root_folder_id was persisted despite the refusal")
+	}
+
+	// --adopt proceeds.
+	if _, err := initialize(ctx, fake, db, config.Default(), true); err != nil {
+		t.Fatalf("--adopt should join a non-empty folder: %v", err)
+	}
+	if id, _ := db.GetMeta(statedb.MetaRootFolderID); id != folder.ID {
+		t.Errorf("root folder id = %s, want %s", id, folder.ID)
 	}
 }
 
@@ -113,7 +146,7 @@ func TestRefuseReinit(t *testing.T) {
 func TestInitializeSurfacesClientErrors(t *testing.T) {
 	// A fake with no root folder makes List fail; initialize must propagate.
 	db := openTestDB(t)
-	err := initialize(context.Background(), brokenClient{}, db, config.Default())
+	_, err := initialize(context.Background(), brokenClient{}, db, config.Default(), false)
 	if err == nil {
 		t.Fatal("want error from broken client")
 	}

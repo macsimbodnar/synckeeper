@@ -46,11 +46,14 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | Case | Status |
 |---|---|
-| Offline concurrent edit, same file, 3 machines → conflicts everywhere | todo |
-| Delete vs edit across machines → edit survives everywhere | todo |
-| Rename vs edit of same file | todo |
-| `init --adopt` on machine C while A/B active | todo |
-| Combined with folder moves | todo |
+| `init --adopt` union merge (local-only up, remote-only down, same-md5 adopt, nothing deleted) | passing (2026-07-14) — `TestAdoptUnionMerge` |
+| `init --adopt` divergent content → conflict copy, remote wins canonical | passing (2026-07-14) — `TestAdoptConflictsOnDivergentContent` |
+| Non-empty Drive folder without `--adopt` → hard error, nothing persisted | passing (2026-07-14) — `TestInitializeRefusesNonEmptyWithoutAdopt` |
+| Offline concurrent edit, same file, 3 machines → converge, no version lost | passing (2026-07-14) — `TestThreeMachineConvergence` |
+| `init --adopt` on machine C while A/B active | passing (2026-07-14) — `TestAdoptWhileOthersActive` |
+| Delete vs edit across machines → edit survives everywhere | passing (2026-07-08) — S6 (machine-agnostic) |
+| Rename vs edit of same file | passing (2026-07-08) — S7 (machine-agnostic) |
+| Manual real 3-machine rollout, a day under `watch`, clean `doctor` | todo (needs physical machines) |
 
 ## Platform tests (phase 5)
 
