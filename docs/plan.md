@@ -12,7 +12,7 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 | 3 | [phase-3.md](phase-3.md) | Continuous mode (`watch` + services) | 2-hour soak with random edits on both sides, no divergence | done 2026-07-09 |
 | 4 | [phase-4.md](phase-4.md) | Multi-machine rollout (`init --adopt`) | 3 machines, offline concurrent edit matrix passes | not started |
 | 5 | [phase-5.md](phase-5.md) | Cross-platform hardening | Full test suite green on Linux, macOS, Windows | not started |
-| 6 | [phase-6.md](phase-6.md) | Daemon control & monitoring | Live `status`/`sync`/`pause` reach the running daemon; `service status` reports autostart | in progress — Stage 1 (monitoring) done 2026-07-14 |
+| 6 | [phase-6.md](phase-6.md) | Daemon control & monitoring | Live `status`/`sync`/`pause` reach the running daemon; `service status` reports autostart | in progress — Stages 1–2 done 2026-07-14; tray GUI (3) left |
 
 Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`.
 

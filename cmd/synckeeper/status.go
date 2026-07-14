@@ -86,7 +86,7 @@ func gatherStatus(env *readEnv) statusView {
 	ds, err := env.db.GetDaemonStatus()
 	found := err == nil
 	v.daemon = ds
-	v.daemonState = daemonState(ds, found)
+	v.daemonState = daemonState(ds, found, daemonAlive())
 
 	if rootID, err := env.db.GetMeta(statedb.MetaRootFolderID); err == nil {
 		v.rootID = rootID
@@ -102,9 +102,13 @@ func gatherStatus(env *readEnv) statusView {
 	return v
 }
 
-// daemonState classifies the daemon from its recorded status and heartbeat
-// freshness — the only liveness signal available without an IPC channel.
-func daemonState(ds statedb.DaemonStatus, found bool) string {
+// daemonState classifies the daemon. A live control socket (pingAlive) is
+// authoritative; otherwise it falls back to recorded status and heartbeat
+// freshness, which still works when the daemon is down or has no socket.
+func daemonState(ds statedb.DaemonStatus, found, pingAlive bool) string {
+	if pingAlive {
+		return "running"
+	}
 	if !found || ds.StartedAt == 0 {
 		return "never-run"
 	}

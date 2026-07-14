@@ -13,6 +13,19 @@ Format:
 
 ---
 
+## 2026-07-14 — Phase 6 Stage 2 built: control socket
+
+**Context:** the "interact with the daemon" half of phase 6 — push commands into the running `watch` process.
+
+**Decisions made during the build:**
+- **One transport for all OSes: `net.Listen("unix", …)`.** Go supports AF_UNIX on Windows 10+, so a filesystem socket is a single code path (no build tags, no named-pipe dependency). 0600 on POSIX; stale-socket file removed on start, unlinked on shutdown. Windows AF_UNIX is compile-verified only (no Windows box here).
+- **The control socket is a convenience, never a dependency.** If `Listen` fails (e.g. the config-dir path exceeds the ~104-char `sun_path` limit), the daemon logs a warning and runs on without control — syncing is never blocked. Same graceful-degradation posture as the fsnotify latch.
+- **Commands that mutate loop state go through channels, not shared locks.** `sync`/`reload` hand work to the single-threaded sync loop (`syncNow`, `reloadCh`), keeping the loop the sole owner of the engine, ticker, and config — no locking around `Eng.Cfg`. `pause` is a mutex-guarded flag on the recorder that the loop checks. Verified race-clean.
+- **Monitoring stays DB-sourced; the socket is control-only (plus `ping`).** `status`/`activity` keep reading the DB (fresh within 10 s, and they work when the daemon is down); `status` only *adds* a socket `ping` as an authoritative liveness signal that overrides heartbeat staleness. This avoids duplicating the render over the socket and keeps read commands functional with no daemon.
+- **`sync --wait` is client-side.** A delegated `sync` triggers the daemon then the CLI polls the recorded status for completion (last-sync advance or cycle-summary change), rather than the server holding the connection until the cycle ends. Simpler protocol; 1-second `last_sync_at` granularity is covered by also comparing the cycle summary. `--dry-run` isn't delegated (it needs a standalone run without the lock) — the CLI says so and points at stopping the daemon.
+- **`reload` hot vs cold fields:** poll interval, ignore globs, mass-delete threshold, quarantine retention apply live; sync_dir, folder_name, machine_name are identity/path and reported as needing a restart (left untouched so the report matches reality).
+- **Protocol version handshake** (`control.ProtocolVersion`) on every request/response so a stale CLI against a newer daemon (or vice-versa) fails with "rebuild so both match" instead of misparsing.
+
 ## 2026-07-14 — Phase 6 Stage 1 built: monitoring via a DB heartbeat
 
 **Context:** implementing the read-only half of [phase-6.md](phase-6.md) — see status/activity of the running daemon without any IPC.

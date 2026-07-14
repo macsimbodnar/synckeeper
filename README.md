@@ -2,7 +2,7 @@
 
 Personal bidirectional sync between one local folder (`~/Synckeeper`) and one Google Drive folder. Written in Go; single static binary per platform (Linux, macOS, Windows). Multiple machines sync independently against Drive as the hub. Built for one user — no GUI, no installer — but with strict durability guarantees: three-way reconcile against a local SQLite baseline, atomic writes, trash/quarantine instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable operations.
 
-**Status:** phase 3 complete (2-hour soak passed); phase 6 stage 1 (daemon monitoring) done. Implemented: crash-safe `sync`, continuous `watch` (fsnotify + polling), `doctor [--repair]`, `service install`/`status` login-service wrappers, and daemon-aware `status`/`activity`/`config`/`account`. Next: phase 4 (`init --adopt`, multi-machine). See [docs/plan.md](docs/plan.md) for phase status.
+**Status:** phase 3 complete (2-hour soak passed); phase 6 stages 1–2 (daemon monitoring + control socket) done. Implemented: crash-safe `sync`, continuous `watch` (fsnotify + polling), `doctor [--repair]`, `service install`/`status` login-service wrappers, daemon-aware `status`/`activity`/`config`/`account`, and control commands `pause`/`resume`/`reload` plus daemon-delegated `sync` over a local socket. Next: phase 4 (`init --adopt`, multi-machine). See [docs/plan.md](docs/plan.md) for phase status.
 
 ## Documentation
 
@@ -35,6 +35,9 @@ synckeeper status           # daemon state, config, counts, recent activity (--j
 synckeeper activity [-n 20] # recent actions recorded by the watch daemon
 synckeeper config           # print the effective configuration
 synckeeper account          # Google credential status (token presence/expiry)
+synckeeper sync             # delegates to the running daemon if up, else one-shot
+synckeeper pause | resume   # suspend / resume automatic syncing in the daemon
+synckeeper reload           # re-read config.toml in the running daemon
 synckeeper doctor [--repair]
 synckeeper service install|uninstall|status   # run watch as a login service (launchd/systemd/Task Scheduler)
 ```

@@ -79,6 +79,15 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | `service status` parsers (launchctl PID / systemctl is-enabled+is-active / schtasks Status) on canned output | passing (2026-07-14) |
 | CLI render smoke: `status` never-run / running / stale, `--json`, `activity`, `config`, `account` | passing (2026-07-14, macOS) |
 
+## Control socket (phase 6, stage 2)
+
+| Case | Status |
+|---|---|
+| Transport round-trip, version-mismatch rejection, not-running detection (`internal/control`) | passing (2026-07-14) |
+| Pause suppresses an auto-sync then resume syncs; sync-now runs even while paused (`internal/watch`, race-clean) | passing (2026-07-14) |
+| `applyReload` hot-swaps poll/threshold, reports cold fields as needing restart | passing (2026-07-14) |
+| End-to-end against the real daemon: ping/pause/resume/delegated-sync/reload/stopped | passing (2026-07-14, macOS) |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

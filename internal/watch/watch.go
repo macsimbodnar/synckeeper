@@ -18,6 +18,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
 	"github.com/macsimbodnar/synckeeper/internal/guards"
 	"github.com/macsimbodnar/synckeeper/internal/names"
@@ -28,6 +29,12 @@ type Watcher struct {
 	Eng      *engine.Engine
 	Poll     time.Duration // remote polling cadence
 	Debounce time.Duration // quiet window after local events
+
+	// ControlSocket, if set, is the path to the Unix-domain socket the
+	// daemon serves control commands on; ConfigDir is where `reload` re-reads
+	// config.toml. Both empty in tests that don't exercise control.
+	ControlSocket string
+	ConfigDir     string
 }
 
 // rebuildEvery: sync cycles between fsnotify watcher rebuilds. On kqueue a
@@ -59,6 +66,22 @@ func (w *Watcher) Run(ctx context.Context) error {
 	debounce := time.AfterFunc(time.Hour, kick)
 	debounce.Stop()
 
+	// Control socket: sync-now and reload hand work to this loop via channels
+	// so the loop stays the sole owner of the engine, ticker, and config.
+	syncNow := make(chan engine.Options, 1)
+	reloadCh := make(chan chan reloadResult)
+	if w.ControlSocket != "" {
+		if ln, err := listenControl(w.ControlSocket); err != nil {
+			// A missing control socket is a degraded convenience, not a
+			// reason to stop syncing; the daemon runs on without it.
+			slog.Warn("control socket unavailable; sync/pause/resume/reload won't reach this daemon", "err", err)
+		} else {
+			defer func() { ln.Close(); os.Remove(w.ControlSocket) }()
+			go control.Serve(ctx, ln, w.controlHandler(syncNow, reloadCh, rec))
+			slog.Debug("control socket listening", "path", w.ControlSocket)
+		}
+	}
+
 	var latch failureLatch
 	pollingOnly := false
 	fw, failed, err := w.startNotifier(ctx, debounce)
@@ -81,15 +104,27 @@ func (w *Watcher) Run(ctx context.Context) error {
 	kick()
 
 	for cycle := 1; ; cycle++ {
+		var opts engine.Options
+		forced := false
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-trigger:
 		case <-ticker.C:
+		case opts = <-syncNow: // control `sync`: run now, honor its options
+			forced = true
+		case respCh := <-reloadCh: // control `reload`: hot-swap config, no cycle
+			respCh <- w.applyReload(ticker)
+			continue
+		}
+		// While paused, automatic triggers are skipped; only an explicit
+		// control `sync` (forced) still runs.
+		if rec.isPaused() && !forced {
+			continue
 		}
 
 		start := time.Now()
-		res, err := w.Eng.Sync(ctx, engine.Options{})
+		res, err := w.Eng.Sync(ctx, opts)
 		dur := time.Since(start)
 		switch {
 		case ctx.Err() != nil:
@@ -147,6 +182,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 			mode := ModeWatching
 			if pollingOnly {
 				mode = ModePollingOnly
+			}
+			if rec.isPaused() {
+				mode = ModePaused
 			}
 			rec.cycleDone(res, dur, nil, mode, time.Now().Add(w.Poll), false, "")
 			rec.recordActivity(res)

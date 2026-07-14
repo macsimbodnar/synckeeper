@@ -49,7 +49,9 @@ func newWatchCmd() *cobra.Command {
 					DB: env.db, Client: client, Cfg: env.cfg, SyncDir: env.syncDir,
 					QuarantineDir: filepath.Join(env.configDir, "quarantine"), RootID: rootID,
 				},
-				Poll: time.Duration(env.cfg.Engine.PollIntervalSecs) * time.Second,
+				Poll:          time.Duration(env.cfg.Engine.PollIntervalSecs) * time.Second,
+				ControlSocket: filepath.Join(env.configDir, "control.sock"),
+				ConfigDir:     env.configDir,
 			}
 			slog.Info("watching", "sync_dir", env.syncDir, "poll_interval", w.Poll)
 			return w.Run(ctx)

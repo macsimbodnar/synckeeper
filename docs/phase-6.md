@@ -2,7 +2,7 @@
 
 **Goal:** a way to observe and drive the running `watch` daemon — see whether it is alive, what it is doing, its config and account, recent activity, and autostart state; and send it commands (sync now, pause/resume). Console-first, with a later optional tray/menu-bar GUI reusing the same interface.
 **Exit criterion:** from a second terminal while `watch` runs, `synckeeper status` reports live daemon state (mode, last sync, recent activity, guard-blocked); `synckeeper sync`/`pause`/`resume` reach the running daemon; `service status` reports autostart state. All pure-Go, `CGO_ENABLED=0`, cross-compiled.
-**Status:** in progress — Stage 1 (monitoring, no IPC) done 2026-07-14; Stages 2 (control socket) and 3 (tray GUI) not started. Built ahead of phases 4–5 at the user's request because it touches no durability invariant.
+**Status:** in progress — Stage 1 (monitoring) and Stage 2 (control socket) done 2026-07-14; Stage 3 (tray GUI) not started. Built ahead of phases 4–5 at the user's request because it touches no durability invariant.
 
 > Scope note: this is an addition beyond the original spec's phases 0–5. See decisions.md (2026-07-12, "Phase 6 added: daemon control & monitoring").
 
@@ -141,12 +141,14 @@ synckeeper service status              # autostart installed / enabled / running
 
 Refinement vs. the original plan: activity is recorded **per interesting action derived from the successful cycle's plan** (upload/download/trash/move/mkdir/conflict), not merely cycle-level — this gives the Dropbox-like recent-activity list without touching the executor. Failed cycles record a single error entry (we can't tell which actions ran). `paused` mode is deferred to Stage 2 (it needs the control socket to toggle).
 
-### Stage 2 — control socket
-- [ ] Control listener in `watch`: unix socket / AF_UNIX (win), 0600, stale-socket cleanup, unlink on shutdown.
-- [ ] Line-delimited JSON protocol with `v` handshake; `ping`, `status`, `activity`, `sync{wait}`, `pause`, `resume`, `reload`.
-- [ ] CLI clients: `sync` delegates when the daemon is up (else one-shot); `pause`/`resume`/`reload`; `status`/`activity` prefer the socket, fall back to the DB.
-- [ ] `reload` hot-swaps poll interval / ignore / threshold; reports fields needing a restart.
-- [ ] Tests: request/response round-trips over a socket pair; delegated sync triggers a cycle; pause suppresses ticks; guard-blocked surfaces via status; version-mismatch handling.
+### Stage 2 — control socket — done 2026-07-14
+- [x] Control listener in `watch`: Unix-domain socket / AF_UNIX (`net.Listen("unix", …)`, one path all OSes), 0600, stale-socket cleanup on start, unlink on shutdown. A failed bind (e.g. path over the ~104-char sun_path limit) logs a warning and the daemon runs on without control — sync is never blocked by it. `internal/control` (transport) + `watch/control.go` (handlers).
+- [x] Line-delimited JSON, one request/response per connection, with a `v` protocol-version handshake that rejects mismatches loudly. Commands: `ping`, `sync{confirm_deletes}`, `pause`, `resume`, `reload`.
+- [x] CLI clients: `sync` delegates to the daemon when it's up (waits for the cycle, prints the summary) else runs the one-shot as before; `pause`/`resume`/`reload`; `status` pings the socket for authoritative liveness.
+- [x] `reload` hot-swaps poll interval / ignore / threshold / retention; reports cold fields (sync_dir, folder_name, machine_name) as needing a restart.
+- [x] Tests: transport round-trip + version-mismatch + not-running detection (`control`); pause actually suppresses an auto-sync then resume syncs, sync-now runs even while paused, applyReload hot/cold split (`watch`, race-clean). End-to-end drive of the real daemon (ping/pause/resume/delegated-sync/reload/stopped) verified manually.
+
+Deviations from the design sketch: **status/activity stay DB-sourced** rather than served over the socket — the DB is fresh within 10 s, works when the daemon is down, and avoids duplicating the render; the socket is used only for control plus a liveness `ping` that `status` folds in. **`sync --wait` is client-side**: the CLI polls the daemon's recorded status for completion (last-sync advance / cycle-summary change) rather than the server holding the connection open. `paused` is now a real mode (Stage 1 had deferred it).
 
 ### Stage 3 — tray GUI (separate binary)
 - [ ] `cmd/synckeeper-tray` (or separate repo); own build target, cgo allowed; explicitly excluded from `make build-all`.

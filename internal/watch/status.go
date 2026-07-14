@@ -23,6 +23,7 @@ const (
 	ModeWatching    = "watching"     // fsnotify active
 	ModePollingOnly = "polling-only" // watch failed; polling covers the tree
 	ModeBackoff     = "backoff"      // last cycle errored; retrying with backoff
+	ModePaused      = "paused"       // auto-sync suspended via `pause`
 	ModeStopped     = "stopped"      // clean shutdown
 )
 
@@ -78,6 +79,24 @@ func (r *recorder) setMode(mode string) {
 	r.s.Mode = mode
 	r.mu.Unlock()
 	r.persist()
+}
+
+// setPaused records the pause state; while paused the mode reads "paused" so
+// status makes the suspended auto-sync obvious.
+func (r *recorder) setPaused(p bool) {
+	r.mu.Lock()
+	r.s.Paused = p
+	if p {
+		r.s.Mode = ModePaused
+	}
+	r.mu.Unlock()
+	r.persist()
+}
+
+func (r *recorder) isPaused() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.s.Paused
 }
 
 // cycleDone records the outcome of one sync cycle and its next-poll estimate.
