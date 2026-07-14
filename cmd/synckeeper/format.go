@@ -25,6 +25,20 @@ func until(unixSecs int64) string {
 	return "in " + dur(d)
 }
 
+// directionLabel renders an activity's change direction for humans.
+func directionLabel(source string) string {
+	switch source {
+	case "local":
+		return "local→drive"
+	case "remote":
+		return "drive→local"
+	case "conflict":
+		return "conflict"
+	default:
+		return ""
+	}
+}
+
 // dur renders a duration coarsely: seconds, minutes, hours, or days.
 func dur(d time.Duration) string {
 	switch {

@@ -154,7 +154,7 @@ func (r *recorder) recordActivity(res *engine.Result) {
 			if a.NewRelPath != "" {
 				detail = "-> " + a.NewRelPath
 			}
-			r.append(statedb.Activity{TS: now, Kind: kind, RelPath: a.RelPath, Detail: detail})
+			r.append(statedb.Activity{TS: now, Kind: kind, RelPath: a.RelPath, Detail: detail, Source: activitySource(a.Type)})
 		}
 		return
 	}
@@ -180,6 +180,22 @@ func cycleSummaryText(res *engine.Result) string {
 	cs := statedb.CycleSummary{Actions: len(res.Plan), Executed: res.Executed, Failed: res.Failed}
 	b, _ := json.Marshal(cs)
 	return string(b)
+}
+
+// activitySource reports the direction of a change: "local" when a local
+// change was pushed to Drive, "remote" when a remote change was pulled down,
+// "conflict" for a conflict copy.
+func activitySource(t reconcile.Type) string {
+	switch t {
+	case reconcile.Upload, reconcile.UpdateRemote, reconcile.TrashRemote, reconcile.MoveRemote, reconcile.MkdirRemote:
+		return "local"
+	case reconcile.Download, reconcile.QuarantineLocal, reconcile.MoveLocal, reconcile.MkdirLocal:
+		return "remote"
+	case reconcile.ConflictBackup:
+		return "conflict"
+	default:
+		return ""
+	}
 }
 
 // activityKind maps a plan action to a short verb, or "" to skip actions that

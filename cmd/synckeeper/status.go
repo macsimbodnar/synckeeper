@@ -170,7 +170,7 @@ func printStatusHuman(v statusView) {
 	if len(v.activity) > 0 {
 		fmt.Println("recent activity:")
 		for _, a := range v.activity {
-			line := fmt.Sprintf("  %-9s %-9s %s", ago(a.TS), a.Kind, a.RelPath)
+			line := fmt.Sprintf("  %-9s %-11s %-9s %s", ago(a.TS), directionLabel(a.Source), a.Kind, a.RelPath)
 			if a.Detail != "" {
 				line += " " + a.Detail
 			}
@@ -244,7 +244,7 @@ func printStatusJSON(v statusView) error {
 	}
 	acts := make([]map[string]any, 0, len(v.activity))
 	for _, a := range v.activity {
-		acts = append(acts, map[string]any{"ts": a.TS, "kind": a.Kind, "rel_path": a.RelPath, "detail": a.Detail})
+		acts = append(acts, map[string]any{"ts": a.TS, "kind": a.Kind, "rel_path": a.RelPath, "detail": a.Detail, "source": a.Source})
 	}
 	out["recent_activity"] = acts
 

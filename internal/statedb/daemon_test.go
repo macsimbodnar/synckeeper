@@ -80,6 +80,23 @@ func TestActivityRingCap(t *testing.T) {
 	}
 }
 
+func TestActivitySourceRoundTrip(t *testing.T) {
+	db := openTemp(t)
+	if err := db.AppendActivity(Activity{TS: 1, Kind: "upload", RelPath: "a.txt", Source: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AppendActivity(Activity{TS: 2, Kind: "download", RelPath: "b.txt", Source: "remote"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.RecentActivity(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Source != "remote" || got[1].Source != "local" {
+		t.Fatalf("source not preserved: %q, %q", got[0].Source, got[1].Source)
+	}
+}
+
 func TestRecentActivityLimit(t *testing.T) {
 	db := openTemp(t)
 	for i := 0; i < 10; i++ {

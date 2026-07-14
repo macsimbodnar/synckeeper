@@ -1,0 +1,25 @@
+# Phase 7 — macOS experience
+
+**Goal:** make Synckeeper feel native on macOS (the primary platform): visible sync status and control, before any cross-platform work.
+**Exit criterion:** activity shows change direction; the Synckeeper folder is in the Finder sidebar; case collisions are handled safely; a working macOS menu-bar icon drives the daemon.
+**Status:** in progress — quick wins first (chosen 2026-07-14). Sequenced ahead of phase 5's Windows/Linux specifics per the 2026-07-14 replan (macOS-first; other architectures last).
+
+## Quick wins (first)
+- [x] **Activity direction** (done 2026-07-14): every `activity`/`status` event is labeled `local→drive` / `drive→local` / `conflict`. The direction (`source`) is derived from the action type at record time and stored via statedb migration v4, so `status --json` and a future tray get it too. Verified end-to-end (migration on a v3 DB → v4, and the rendered output).
+- [ ] **Finder sidebar:** add the Synckeeper folder to the Finder favorites/sidebar (ideas.md) — a small `init`/`service install` convenience on macOS.
+- [ ] **Case-collision safety (APFS is case-insensitive):** detect Drive siblings differing only by case (`a.txt` vs `A.txt`) that would collide on the local FS → keep one deterministically (first by id), quarantine-report the other; detect case-only local renames and send them as a remote rename, not delete+create. This is the macOS-relevant slice of phase 5.
+
+## Tray / menu-bar icon (was phase 6 stage 3, macOS)
+- [ ] Separate cgo-allowed binary (`cmd/synckeeper-tray`), excluded from `make build-all`; NSStatusBar icon + menu (Sync now / Pause / Resume / Open folder / Open logs / Quit), talking to the control socket; mode-reflecting icon; `subscribe` streaming for live status. Details in [phase-6.md](phase-6.md) Stage 3.
+
+## Finder sync badges
+- [ ] FinderSync app-extension overlays (synced / syncing / conflict) inside a macOS app bundle. Most involved: app bundle + code signing + extension lifecycle. Reads state from the daemon (socket or DB).
+
+## Deferred to last — other architectures ([phase-5.md](phase-5.md))
+- Windows name hardening (reserved names, illegal chars, long paths, NTFS rename atomicity), cross-platform tray variants (Linux DBus StatusNotifierItem, Windows Shell_NotifyIcon), and the full test suite on real Linux + Windows.
+
+## Verification
+- [ ] `activity` and `status` show direction; `status --json` carries it.
+- [ ] Synckeeper folder appears in Finder sidebar after setup.
+- [ ] Case-collision tests pass on APFS; nothing silently overwritten.
+- [ ] Tray icon reflects state and drives the daemon on macOS.

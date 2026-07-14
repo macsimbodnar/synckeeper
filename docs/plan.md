@@ -11,8 +11,19 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 | 2 | [phase-2.md](phase-2.md) | Safety hardening | Fault tests F1–F5 pass | done 2026-07-08 |
 | 3 | [phase-3.md](phase-3.md) | Continuous mode (`watch` + services) | 2-hour soak with random edits on both sides, no divergence | done 2026-07-09 |
 | 4 | [phase-4.md](phase-4.md) | Multi-machine rollout (`init --adopt`) | 3 machines, offline concurrent edit matrix passes | code + matrix tests done 2026-07-14; manual rollout pending |
-| 5 | [phase-5.md](phase-5.md) | Cross-platform hardening | Full test suite green on Linux, macOS, Windows | not started |
-| 6 | [phase-6.md](phase-6.md) | Daemon control & monitoring | Live `status`/`sync`/`pause` reach the running daemon; `service status` reports autostart | in progress — Stages 1–2 done 2026-07-14; tray GUI (3) left |
+| 5 | [phase-5.md](phase-5.md) | Cross-platform hardening | Full test suite green on Linux, macOS, Windows | **deferred to last** (other architectures) — 2026-07-14 replan |
+| 6 | [phase-6.md](phase-6.md) | Daemon control & monitoring | Live `status`/`sync`/`pause` reach the running daemon; `service status` reports autostart | Stages 1–2 done 2026-07-14; tray GUI (3) → folded into phase 7 |
+| 7 | [phase-7.md](phase-7.md) | macOS experience | Native-feeling status & control on macOS (quick wins, tray, Finder badges) | in progress — quick wins first (2026-07-14) |
+
+## Revised roadmap (2026-07-14) — macOS-first
+
+The tool is correct and daily-usable on macOS (phases 0–4, 6.1–6.2). Remaining work is reprioritized to polish the **macOS** experience first and defer everything specific to **other architectures** (Windows/Linux) to the end. Ordering now:
+
+1. **Near-term — macOS experience ([phase 7](phase-7.md)):** quick wins (activity remote/local labeling, add folder to Finder sidebar, case-collision safety — APFS is case-insensitive, so this matters here), then the macOS menu-bar tray icon (phase 6 stage 3), then Finder sync badges.
+2. **Middle — needs a second Mac (same architecture):** phase 4 real multi-machine rollout; phase 3 `service install` + reboot check.
+3. **Last — other architectures ([phase 5](phase-5.md)):** Windows name hardening (reserved names, illegal chars, long paths, NTFS atomicity), cross-platform tray variants (Linux DBus, Windows Shell_NotifyIcon), and the full suite run on real Linux + Windows.
+
+Note: the case-collision item lives in phase 7 (it affects macOS/APFS) even though phase-5.md still lists it; the rest of phase 5 is the deferred Windows/Linux work.
 
 Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`.
 

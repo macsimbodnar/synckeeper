@@ -10,7 +10,7 @@ Personal bidirectional sync between one local folder (`~/Synckeeper`) and one Go
 |---|---|
 | [docs/spec.md](docs/spec.md) | Implementation contract (authoritative) |
 | [docs/plan.md](docs/plan.md) | Execution plan, phase status, working process |
-| [docs/phase-0.md](docs/phase-0.md) … [phase-6.md](docs/phase-6.md) | Per-phase task checklists |
+| [docs/phase-0.md](docs/phase-0.md) … [phase-7.md](docs/phase-7.md) | Per-phase task checklists |
 | [docs/testing.md](docs/testing.md) | Test matrix (scenario, fault, guard, platform) |
 | [docs/decisions.md](docs/decisions.md) | Decision log |
 

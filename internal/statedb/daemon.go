@@ -36,13 +36,16 @@ type CycleSummary struct {
 	DurationMS int64 `json:"duration_ms"`
 }
 
-// Activity is one row of the recent-actions ring.
+// Activity is one row of the recent-actions ring. Source is the direction of
+// the change: "local" (a local change pushed to Drive), "remote" (a remote
+// change pulled down), "conflict", or "" (errors / pre-v4 rows).
 type Activity struct {
 	ID      int64
 	TS      int64
 	Kind    string
 	RelPath string
 	Detail  string
+	Source  string
 }
 
 // SetDaemonStatus upserts the singleton status row.
@@ -88,8 +91,8 @@ func (d *DB) GetDaemonStatus() (DaemonStatus, error) {
 func (d *DB) AppendActivity(a Activity) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if _, err := d.sql.Exec(`insert into activity (ts, kind, rel_path, detail) values (?, ?, ?, ?)`,
-		a.TS, a.Kind, a.RelPath, a.Detail); err != nil {
+	if _, err := d.sql.Exec(`insert into activity (ts, kind, rel_path, detail, source) values (?, ?, ?, ?, ?)`,
+		a.TS, a.Kind, a.RelPath, a.Detail, a.Source); err != nil {
 		return err
 	}
 	_, err := d.sql.Exec(`delete from activity where id <= (select max(id) from activity) - ?`, activityCap)
@@ -101,7 +104,7 @@ func (d *DB) RecentActivity(limit int) ([]Activity, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := d.sql.Query(`select id, ts, kind, rel_path, detail from activity
+	rows, err := d.sql.Query(`select id, ts, kind, rel_path, detail, source from activity
 		order by id desc limit ?`, limit)
 	if err != nil {
 		return nil, err
@@ -110,7 +113,7 @@ func (d *DB) RecentActivity(limit int) ([]Activity, error) {
 	var out []Activity
 	for rows.Next() {
 		var a Activity
-		if err := rows.Scan(&a.ID, &a.TS, &a.Kind, &a.RelPath, &a.Detail); err != nil {
+		if err := rows.Scan(&a.ID, &a.TS, &a.Kind, &a.RelPath, &a.Detail, &a.Source); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

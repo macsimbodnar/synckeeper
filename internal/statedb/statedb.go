@@ -101,6 +101,9 @@ var migrations = []string{
 	  detail   text    not null default ''
 	);
 	`,
+	// v3 -> v4: activity.source — direction of the change, "local" (pushed to
+	// Drive) or "remote" (pulled down), so activity/status can label events.
+	`alter table activity add column source text not null default '';`,
 }
 
 // Path returns the state DB path inside the given config dir.

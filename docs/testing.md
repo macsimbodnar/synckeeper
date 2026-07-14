@@ -81,6 +81,7 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | Clean shutdown flips recorded state to stopped | passing (2026-07-14) |
 | `service status` parsers (launchctl PID / systemctl is-enabled+is-active / schtasks Status) on canned output | passing (2026-07-14) |
 | CLI render smoke: `status` never-run / running / stale, `--json`, `activity`, `config`, `account` | passing (2026-07-14, macOS) |
+| Activity direction: `source` round-trips (statedb v4); `activity`/`status`/`--json` show local→drive/drive→local/conflict | passing (2026-07-14, macOS) |
 
 ## Control socket (phase 6, stage 2)
 
