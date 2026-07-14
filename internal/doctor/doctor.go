@@ -121,7 +121,7 @@ func (d *Doctor) Check(ctx context.Context) (*Report, error) {
 		} else {
 			rep.Notes = append(rep.Notes, "no changes page token; remote comparison uses cached state — run `doctor --repair`")
 		}
-		remote, _, err := remotedelta.Snapshot(d.DB, rootID, d.Cfg.Engine.Ignore)
+		remote, _, err := remotedelta.Snapshot(d.DB, rootID, d.Cfg.Engine.Ignore, names.CaseInsensitiveFS(d.SyncDir))
 		if err != nil {
 			return nil, err
 		}
@@ -183,7 +183,7 @@ func (d *Doctor) Repair(ctx context.Context) (*Report, error) {
 	if err := remotedelta.ForceFullWalk(ctx, d.Client, d.DB, folder.ID); err != nil {
 		return nil, fmt.Errorf("rebuild remote cache: %w", err)
 	}
-	remote, _, err := remotedelta.Snapshot(d.DB, folder.ID, d.Cfg.Engine.Ignore)
+	remote, _, err := remotedelta.Snapshot(d.DB, folder.ID, d.Cfg.Engine.Ignore, names.CaseInsensitiveFS(d.SyncDir))
 	if err != nil {
 		return nil, err
 	}

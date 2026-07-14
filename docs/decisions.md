@@ -23,6 +23,16 @@ Format:
 
 **Consequences:** no new merge code to get wrong; the adopt path shares the exact reconcile/executor already validated by phases 1–3. `initialize` gained an `adopt bool` and now returns the folder id. Matrix tests (`internal/engine/adopt_test.go`): union merge, divergent-conflict, three-machine convergence with no lost version, adopt-while-others-active; plus the gate test in `cmd`. The remaining exit item — a real multi-machine rollout — needs physical machines and is the user's step.
 
+## 2026-07-14 — Case-collision safety (phase 7 quick win)
+
+**Context:** APFS (the user's Mac) is case-insensitive by default, so Drive siblings `a.txt` and `A.txt` map to the same local path. Nothing collapsed them, so a plan would download both and the second would silently clobber the first.
+
+**Decision:** collapse case-colliding remote siblings at snapshot time, only when the local FS folds case. `remotedelta.Snapshot` takes a `caseInsensitive` flag; when set, it de-dups siblings by lower-cased name in addition to exact name (keeping the first by id, skipping + reporting the rest as a "case-collision" skip). The flag is a runtime probe (`names.CaseInsensitiveFS`: create a temp file, stat a case-toggled name), so behavior is correct on both case-insensitive (macOS/Windows) and case-sensitive (Linux, case-sensitive APFS) filesystems — no collapsing where names are genuinely distinct. The engine probes once and caches (sync cycles are serialized); doctor probes its sync dir per call.
+
+**Case-only local renames** (`notes.txt` → `Notes.txt`) turned out to need no new code: the existing local move-pairing already converts a delete+create with identical md5+size into a `move_remote`, so a pure case rename renames the Drive file rather than trash+re-upload. Confirmed with an APFS-conditional test (skips on case-sensitive hosts).
+
+**Consequences:** on case-sensitive filesystems nothing changes (the flag is false, identical to before). This is the macOS-relevant slice of phase 5, pulled forward into phase 7 per the 2026-07-14 macOS-first replan; the rest of phase 5 (Windows reserved names, long paths, NTFS) stays deferred. `Snapshot`'s signature gained the flag — all three callers (engine, doctor ×2) updated.
+
 ## 2026-07-14 — Phase 6 Stage 2 built: control socket
 
 **Context:** the "interact with the daemon" half of phase 6 — push commands into the running `watch` process.

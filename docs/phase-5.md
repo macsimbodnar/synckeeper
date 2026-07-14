@@ -6,9 +6,9 @@
 
 ## Tasks
 
-### Case collisions (`internal/names`)
-- [ ] Detect Drive trees containing names differing only by case (`a.txt` vs `A.txt`) targeting a case-insensitive local filesystem (macOS/Windows): keep one deterministically (first by id), quarantine-report the other; never silently overwrite.
-- [ ] Detect case-only local renames and propagate as remote rename, not delete+create.
+### Case collisions (`internal/names`) — done 2026-07-14 (pulled into [phase 7](phase-7.md), it affects macOS/APFS)
+- [x] Detect Drive trees containing names differing only by case (`a.txt` vs `A.txt`) targeting a case-insensitive local filesystem: keep one deterministically (first by id), skip + report the other; never silently overwrite. (`remotedelta.Snapshot` + `names.CaseInsensitiveFS` probe.)
+- [x] Case-only local renames propagate as a remote rename, not delete+create (existing local move-pairing; covered by an APFS-conditional test).
 
 ### Windows-specific
 - [ ] Long paths: `\\?\` prefix where paths exceed 260 chars.

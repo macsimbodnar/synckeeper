@@ -82,6 +82,9 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | `service status` parsers (launchctl PID / systemctl is-enabled+is-active / schtasks Status) on canned output | passing (2026-07-14) |
 | CLI render smoke: `status` never-run / running / stale, `--json`, `activity`, `config`, `account` | passing (2026-07-14, macOS) |
 | Activity direction: `source` round-trips (statedb v4); `activity`/`status`/`--json` show local→drive/drive→local/conflict | passing (2026-07-14, macOS) |
+| Case collision: `Snapshot` keeps first-by-id + reports the rest when case-insensitive, both when sensitive | passing (2026-07-14) — `TestSnapshotCaseCollision` |
+| Case-sensitivity probe agrees with a direct case-toggled stat | passing (2026-07-14) — `TestCaseInsensitiveFS` |
+| Case-only local rename → remote move, not trash+upload (APFS-conditional) | passing (2026-07-14, macOS/APFS) — `TestCaseOnlyRenameBecomesMove` |
 
 ## Control socket (phase 6, stage 2)
 

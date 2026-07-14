@@ -16,6 +16,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/executor"
 	"github.com/macsimbodnar/synckeeper/internal/guards"
+	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
 	"github.com/macsimbodnar/synckeeper/internal/scanner"
@@ -33,6 +34,19 @@ type Engine struct {
 	SyncDir       string
 	QuarantineDir string
 	RootID        string
+
+	caseFold *bool // lazily probed once; sync cycles are serialized
+}
+
+// caseInsensitive reports (and caches) whether the sync dir folds case, so
+// remote siblings differing only by case are collapsed instead of colliding
+// on disk.
+func (e *Engine) caseInsensitive() bool {
+	if e.caseFold == nil {
+		v := names.CaseInsensitiveFS(e.SyncDir)
+		e.caseFold = &v
+	}
+	return *e.caseFold
 }
 
 // Options tweak one run.
@@ -66,7 +80,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	if err := remotedelta.Refresh(ctx, e.Client, e.DB, e.RootID); err != nil {
 		return nil, fmt.Errorf("refresh remote state: %w", err)
 	}
-	remote, remoteSkips, err := remotedelta.Snapshot(e.DB, e.RootID, e.Cfg.Engine.Ignore)
+	remote, remoteSkips, err := remotedelta.Snapshot(e.DB, e.RootID, e.Cfg.Engine.Ignore, e.caseInsensitive())
 	if err != nil {
 		return nil, err
 	}

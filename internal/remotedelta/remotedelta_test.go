@@ -12,6 +12,52 @@ import (
 
 // newCache returns a fake Drive with a sync root folder and a state DB whose
 // page token is taken at call time (changes before it are never replayed).
+// Two Drive siblings differing only by case collide on a case-insensitive
+// target: the first by id is kept, the other skipped and reported; on a
+// case-sensitive target both survive.
+func TestSnapshotCaseCollision(t *testing.T) {
+	ctx := context.Background()
+	fake := driveclient.NewFake()
+	db, rootID := newCache(t, fake)
+	if _, err := fake.Upload(ctx, rootID, "a.txt", strings.NewReader("lower"), 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.Upload(ctx, rootID, "A.txt", strings.NewReader("UPPER"), 5); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, fake, db, rootID)
+
+	// Case-sensitive: both present.
+	snap, _, err := Snapshot(db, rootID, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap) != 2 {
+		t.Fatalf("case-sensitive: want 2 items, got %d", len(snap))
+	}
+
+	// Case-insensitive: one kept (first by id = a.txt), one reported.
+	snap, skips, err := Snapshot(db, rootID, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap) != 1 {
+		t.Fatalf("case-insensitive: want 1 item, got %d", len(snap))
+	}
+	if _, ok := snap["a.txt"]; !ok {
+		t.Errorf("expected a.txt (first by id) to win; snapshot = %v", snap)
+	}
+	found := false
+	for _, s := range skips {
+		if strings.Contains(s.Reason, "case-collision") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a case-collision skip, got %v", skips)
+	}
+}
+
 func newCache(t *testing.T, fake *driveclient.Fake) (*statedb.DB, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -154,7 +200,7 @@ func TestMoveInPopulatesSubtree(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, fake, db, rootID)
-	snap, _, err := Snapshot(db, rootID, nil)
+	snap, _, err := Snapshot(db, rootID, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -203,7 +203,10 @@ func toNode(f driveclient.File, parent string) statedb.RemoteNode {
 // Snapshot derives the reconcile remote snapshot from the cache: BFS from
 // rootID over non-trashed nodes, skipping Google-native files, ignored and
 // invalid names, and deduplicating same-name siblings (first by id wins).
-func Snapshot(db *statedb.DB, rootID string, ignore []string) (map[string]reconcile.RemoteItem, []reconcile.Skip, error) {
+// When caseInsensitive is set (the local FS folds case, e.g. APFS), siblings
+// differing only by case also collide: the first by id is kept and the rest
+// are skipped and reported, so a download can never silently clobber another.
+func Snapshot(db *statedb.DB, rootID string, ignore []string, caseInsensitive bool) (map[string]reconcile.RemoteItem, []reconcile.Skip, error) {
 	nodes, err := db.AllRemoteNodes()
 	if err != nil {
 		return nil, nil, err
@@ -225,6 +228,7 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string) (map[string]reconc
 		kids := children[f.id]
 		sort.Slice(kids, func(i, j int) bool { return kids[i].FileID < kids[j].FileID })
 		seen := map[string]bool{}
+		foldSeen := map[string]string{} // lower(name) -> first actual name kept
 		for _, n := range kids {
 			rel := names.Join(f.relPath, n.Name)
 			switch {
@@ -239,6 +243,15 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string) (map[string]reconc
 			case seen[n.Name]:
 				skips = append(skips, reconcile.Skip{RelPath: rel, Reason: "duplicate name in Drive folder; kept first by id"})
 				continue
+			}
+			if caseInsensitive {
+				fold := strings.ToLower(n.Name)
+				if first, ok := foldSeen[fold]; ok {
+					skips = append(skips, reconcile.Skip{RelPath: rel,
+						Reason: fmt.Sprintf("case-collision with %q on a case-insensitive filesystem; not synced here", first)})
+					continue
+				}
+				foldSeen[fold] = n.Name
 			}
 			seen[n.Name] = true
 			isDir := n.MimeType == driveclient.FolderMimeType
