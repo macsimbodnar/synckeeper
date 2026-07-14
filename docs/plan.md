@@ -12,6 +12,7 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 | 3 | [phase-3.md](phase-3.md) | Continuous mode (`watch` + services) | 2-hour soak with random edits on both sides, no divergence | done 2026-07-09 |
 | 4 | [phase-4.md](phase-4.md) | Multi-machine rollout (`init --adopt`) | 3 machines, offline concurrent edit matrix passes | not started |
 | 5 | [phase-5.md](phase-5.md) | Cross-platform hardening | Full test suite green on Linux, macOS, Windows | not started |
+| 6 | [phase-6.md](phase-6.md) | Daemon control & monitoring | Live `status`/`sync`/`pause` reach the running daemon; `service status` reports autostart | not started (design only) |
 
 Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`.
 
@@ -32,6 +33,7 @@ Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date
 - **`watch` (phase 3) reuses the phase 1 engine unchanged**: fsnotify events and remote polling only decide *when* to run a targeted reconcile; they must not introduce a second sync code path.
 - **Multi-machine (phase 4) needs only `--adopt`**: the reconcile engine is already machine-agnostic; adoption is a special first-merge planner mode.
 - **Platform quirks last (phase 5)**: `internal/names` exists from phase 1 with the mapping logic; phase 5 fills in the Windows/macOS edge cases and runs the suite on real machines.
+- **Control & monitoring (phase 6) is additive and sits on the seam**: the daemon stays headless and pure-Go; monitoring is a DB heartbeat the CLI reads, control is a local socket the CLI (and a later, separate, cgo-allowed tray binary) drives. Deferred to last because it touches no durability invariant — it observes and triggers the phase-1 engine, never a second sync path.
 
 ## Key risks to watch
 

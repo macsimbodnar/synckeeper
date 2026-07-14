@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-07-12 — Phase 6 added: daemon control & monitoring
+
+**Context:** the daemon is headless — `status` reads config/DB files but never talks to the running `watch` process, so there is no way to see if it is alive, what it is doing, or to drive it (sync now, pause). The user wants monitoring and interaction, console-first, with a possible tray/menu-bar icon later (à la Dropbox). This is scope beyond the spec's phases 0–5.
+
+**Decision:** add a phase 6 ([phase-6.md](phase-6.md)), designed now and built later (after 4–5). Key choices:
+
+- **Monitor and control are split.** Monitoring (running?/mode/last sync/activity/config/account/autostart) needs *no* IPC: the daemon records a heartbeat + activity ring to its SQLite DB (new migration v3) and the CLI reads it — this also works when the daemon is down. Control (sync now/pause/resume/reload) needs a channel *into* the process because the daemon holds the flock instance lock, so a CLI can't run its own sync; "sync now" is *delegated*.
+- **The daemon's one interface is a local control socket** — Unix-domain socket / AF_UNIX (0600), never a TCP port (filesystem perms are the auth; no network surface). Line-delimited JSON with a version handshake. The CLI and the future GUI are both just clients of it.
+- **The tray GUI is a separate, optional, per-platform binary that may use cgo**, excluded from `make build-all`. Rationale: a macOS menu-bar icon (NSStatusBar) requires Cocoa → cgo, which is fundamentally incompatible with the project's hard `CGO_ENABLED=0` / cross-compile-from-one-machine guarantee. Quarantining the GUI (and its cgo) behind the socket keeps the sync core pure-Go and static, and the GUI holds no sync logic so it can't threaten data integrity.
+
+**Consequences:** three build stages (monitoring / control socket / tray), each independently shippable. statedb gains a v3 migration. Read-only CLI commands must stay lock-free (like today's `status`) so they don't contend the daemon's lock. Open questions (persist pause across restart; activity granularity; line-JSON vs HTTP-over-socket; Windows AF_UNIX vs named pipe; tray toolkit) are recorded in phase-6.md, not yet decided.
+
 ## 2026-07-12 — Post-soak fixes: remote-cache pruning and a polling-only latch
 
 **Context:** the full 2-hour soak passed (converged on 10,858 files) but surfaced two long-run resource problems. First, `remote_nodes` grew monotonically: the changes feed is drive-wide, trashed files were cached as tombstone rows forever, and children of a trashed folder became permanently unreachable garbage — all loaded into memory every cycle by `AllRemoteNodes`. Second, when the tree outgrew the fd limit (~10k files per watcher on kqueue), watch re-registration failed and logged an error every cycle, forever.

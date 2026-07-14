@@ -5,3 +5,4 @@ dist/
 token.json
 .DS_Store
 .vscode
+.claude
