@@ -23,6 +23,17 @@ Format:
 
 **Consequences:** no new merge code to get wrong; the adopt path shares the exact reconcile/executor already validated by phases 1–3. `initialize` gained an `adopt bool` and now returns the folder id. Matrix tests (`internal/engine/adopt_test.go`): union merge, divergent-conflict, three-machine convergence with no lost version, adopt-while-others-active; plus the gate test in `cmd`. The remaining exit item — a real multi-machine rollout — needs physical machines and is the user's step.
 
+## 2026-07-16 — Finder sidebar: abandoned (no viable API on macOS 14)
+
+**Context:** the third phase-7 quick win was to add `~/Synckeeper` to the Finder sidebar (Dropbox-style). Attempted to build it; it is not achievable.
+
+**Findings (empirical, macOS 14.8.5):**
+- The only API reachable without cgo is the deprecated `LSSharedFileList` (via `osascript`/JXA). On Sonoma it is **disconnected from the real Finder sidebar**: `LSSharedFileListCopySnapshot(kLSSharedFileListFavoriteItems)` returns **0 items** even in native Swift — it can't see the user's actual favorites, and inserts (though they touched a legacy `.sfl3`) don't appear in Finder.
+- Driving that API from `osascript`/JXA is independently unusable: nondeterministic "Ref has incompatible type" errors and hard segfaults on the CF calls.
+- The modern favorites live in a TCC-protected `.sfl3` behind `sharedfilelistd`, as NSKeyedArchiver'd security-scoped **bookmark blobs** that only Apple's frameworks can generate — i.e. cgo, and even then via no *public* write API (this is why tools like `mysides` broke on recent macOS).
+
+**Decision:** abandon the Finder-sidebar item. No code shipped; no repo changes. Test entries added during the probe were into the disconnected legacy list (almost certainly invisible to the user); the throwaway folders were removed. The remaining native-macOS items (menu-bar tray via NSStatusBar, Finder badges via a FinderSync extension) ARE achievable, but only inside a separate, cgo-allowed macOS app bundle — never the pure-Go core binary.
+
 ## 2026-07-14 — Case-collision safety (phase 7 quick win)
 
 **Context:** APFS (the user's Mac) is case-insensitive by default, so Drive siblings `a.txt` and `A.txt` map to the same local path. Nothing collapsed them, so a plan would download both and the second would silently clobber the first.
