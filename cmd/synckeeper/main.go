@@ -33,6 +33,7 @@ func main() {
 
 	root.AddCommand(
 		newInitCmd(),
+		newLoginCmd(),
 		newStatusCmd(),
 		newActivityCmd(),
 		newConfigCmd(),

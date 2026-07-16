@@ -23,6 +23,14 @@ Format:
 
 **Consequences:** no new merge code to get wrong; the adopt path shares the exact reconcile/executor already validated by phases 1–3. `initialize` gained an `adopt bool` and now returns the folder id. Matrix tests (`internal/engine/adopt_test.go`): union merge, divergent-conflict, three-machine convergence with no lost version, adopt-while-others-active; plus the gate test in `cmd`. The remaining exit item — a real multi-machine rollout — needs physical machines and is the user's step.
 
+## 2026-07-16 — `login` command for re-authentication
+
+**Context:** a user's refresh token expired/was revoked (`invalid_grant`) and the daemon looped on auth failures. There was no clean way to re-auth: refreshing credentials had to piggyback on `init --force`, which also resets the change-page token and re-runs folder setup.
+
+**Decision:** add a standalone `synckeeper login`. It only re-runs the OAuth flow (`auth.Login`, which already forces a fresh consent + offline refresh token) and replaces `token.json` — no folder setup, no sync-state reset. It acquires the instance lock, which (usefully) forces the daemon to be stopped first: a running daemon holds the dead token in memory and must restart to pick up the new one. After login it makes one cheap Drive call (`StartPageToken`) to verify the new token actually works before reporting success.
+
+**Consequences:** the token-expiry recovery is now: stop the daemon → `synckeeper login` → restart. Root-cause prevention (consent screen in "Testing" caps refresh tokens at 7 days) still requires publishing the OAuth app to Production — see the 2026-07-06 baseline note.
+
 ## 2026-07-16 — Finder sidebar: abandoned (no viable API on macOS 14)
 
 **Context:** the third phase-7 quick win was to add `~/Synckeeper` to the Finder sidebar (Dropbox-style). Attempted to build it; it is not achievable.

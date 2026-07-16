@@ -28,6 +28,7 @@ make build-all    # linux-amd64, darwin-arm64, darwin-amd64, windows-amd64 → d
 ```sh
 synckeeper init             # OAuth flow, find/create Drive folder, create state DB
 synckeeper init --adopt     # join an existing non-empty Drive folder (safe first merge)
+synckeeper login            # re-authenticate (refresh an expired/revoked token); stop the daemon first
 synckeeper sync             # one-shot bidirectional sync
 synckeeper sync --dry-run   # print the plan, change nothing
 synckeeper watch            # continuous mode (fsnotify + remote polling)
