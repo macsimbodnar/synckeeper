@@ -25,8 +25,8 @@ func TestLaunchdRunning(t *testing.T) {
 
 func TestParseSystemctl(t *testing.T) {
 	cases := []struct {
-		enabledOut, activeOut  string
-		wantEnabled, wantRun   bool
+		enabledOut, activeOut string
+		wantEnabled, wantRun  bool
 	}{
 		{"enabled\n", "active\n", true, true},
 		{"disabled\n", "inactive\n", false, false},

@@ -33,8 +33,9 @@ func newConfigCmd() *cobra.Command {
 			if err := toml.NewEncoder(os.Stdout).Encode(cfg); err != nil {
 				return err
 			}
-			fmt.Println("\n# Edit the file above, then restart the daemon to apply.")
-			fmt.Println("# (Live `reload` without a restart lands in phase 6, stage 2.)")
+			fmt.Println("\n# Edit the file above, then run `synckeeper reload` to apply hot fields")
+			fmt.Println("# (poll interval, ignore globs, thresholds, retention) to the running daemon.")
+			fmt.Println("# Identity/path fields (sync_dir, folder_name, machine_name) need a restart.")
 			return nil
 		},
 	}

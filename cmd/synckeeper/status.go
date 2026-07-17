@@ -58,21 +58,21 @@ func newStatusCmd() *cobra.Command {
 
 // statusView is everything status shows, gathered once.
 type statusView struct {
-	daemon      statedb.DaemonStatus
-	daemonState string // running | stale | stopped | never-run
-	rootID      string
-	tokenOK     bool
-	items       int
-	pending     int
-	qFiles      int
-	qBytes      int64
-	autostart   service.State
+	daemon       statedb.DaemonStatus
+	daemonState  string // running | stale | stopped | never-run
+	rootID       string
+	tokenOK      bool
+	items        int
+	pending      int
+	qFiles       int
+	qBytes       int64
+	autostart    service.State
 	autostartErr error
-	activity    []statedb.Activity
-	configDir   string
-	syncDir     string
-	driveFolder string
-	machineName string
+	activity     []statedb.Activity
+	configDir    string
+	syncDir      string
+	driveFolder  string
+	machineName  string
 }
 
 func gatherStatus(env *readEnv) statusView {

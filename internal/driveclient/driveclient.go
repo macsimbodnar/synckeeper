@@ -17,14 +17,14 @@ const GoogleAppsPrefix = "application/vnd.google-apps"
 
 // File is the subset of Drive file metadata the engine cares about.
 type File struct {
-	ID      string
-	Name    string
+	ID       string
+	Name     string
 	MimeType string
-	MD5     string // empty for folders and Google-native files
-	Size    int64
-	Version int64
-	Parents []string
-	Trashed bool
+	MD5      string // empty for folders and Google-native files
+	Size     int64
+	Version  int64
+	Parents  []string
+	Trashed  bool
 }
 
 // IsDir reports whether the file is a Drive folder.
