@@ -7,17 +7,25 @@ Format:
 ```
 ## YYYY-MM-DD — Short title
 **Context:** why the question came up.
-**Decision:** what was chosen.
+**Decision (who):** what was chosen. Decisions belong to Max; note "agent-proposed" where an agent supplied the analysis/options. Entries before 2026-07-17 predate this convention (all were Max's calls on agent proposals).
 **Consequences:** what it affects; link the spec/plan section if it amends one.
 ```
 
 ---
 
+## 2026-07-17 — Docs restructured as permanent inter-agent memory
+
+**Context:** phases 0–7 are done and retired; work now happens in workstreams. Max wants any future agent (or future Max) to grasp immediately: the last, current, and next task; the goal; and every decision's what/when/who/why — without archaeology.
+
+**Decision (Max; agent-proposed structure):** the repo root gains `CLAUDE.md` (auto-loaded agent guide: read order, doc map with per-file update duties, project state model, hard rules incl. never-push). `docs/status.md` becomes the single session-to-session state pointer — rewritten, not appended, at the end of every work session. Phase docs move to `docs/history/` (read-only archive) so their retirement is structural, not just stated. This log's format gains an explicit "decided by". README refreshed to match (workstream status, native-build policy, doc map).
+
+**Consequences:** the entry path for any new session is CLAUDE.md → status.md → plan.md → spec.md. Links to phase docs updated in plan.md/decisions.md and inside the archived files. Keeping this memory current is itself a rule (CLAUDE.md doc map); a stale status.md is a bug.
+
 ## 2026-07-17 — Credential distribution: embedded author defaults + BYO override (rclone model)
 
 **Context:** Max wants to publish the app and source without operational surprises from binding every user to his Google Cloud project. Alternatives considered: bring-your-own-credentials only (best isolation, but ~10 minutes of Cloud-console onboarding for every user), an auth proxy (rejected: requires running a server, against the project's principles), `drive.file` scope to dodge verification (rejected: the app couldn't see files added via the Drive web UI — breaks the hub model).
 
-**Decision:** ship with Max's OAuth **client** credentials embedded as the working default (a desktop client secret is non-confidential by design — Google's own docs say so), and support user-supplied client credentials with precedence (`credentials.json` in config dir → config keys → embedded) for anyone who wants dedicated quota. Terminology guard: what is shared is the app's client identity, never a token — each user authenticates their own Google account.
+**Decision (Max; options and analysis agent-proposed):** ship with Max's OAuth **client** credentials embedded as the working default (a desktop client secret is non-confidential by design — Google's own docs say so), and support user-supplied client credentials with precedence (`credentials.json` in config dir → config keys → embedded) for anyone who wants dedicated quota. Terminology guard: what is shared is the app's client identity, never a token — each user authenticates their own Google account.
 
 **Consequences:** default users share the author's per-project API quota (per-user rate limits still apply individually); the unverified consent screen warns on first auth and caps the default client at ~100 users on the restricted full-drive scope. Growth path: Google verification + security assessment, potentially donation-funded — API usage itself is free, so verification is the only real monetary cost in this model. README gets BYO instructions and (at publication) a donation note; the stray `client_secret_*.json` leaves the repo root, `credentials.go` stays the single embedded source. Rotating the client remains optional hygiene since publication makes the historical secret permanent anyway. Spec §9 amended; plan W2.4 concretized.
 
@@ -25,7 +33,7 @@ Format:
 
 **Context:** a full review (build, docs, and code walkthrough with runnable repros) found two ordering bugs — one losing data (conflict backup sorted after the move feeding it → download overwrites the local edit; reproduced), one livelocking (mkdir creates a pending move's destination; reproduced) — plus gaps: `init --force` leaves a stale remote mirror, downloads can overwrite an edit made mid-cycle, read-only commands run migrations without the lock, no Unicode-normalization folding, and a dead `full_rescan_interval_secs` knob. Iterating on the design with Max produced new directions.
 
-**Decisions:**
+**Decisions (Max, over the 2026-07-17 design iteration; findings and proposals from the review agent):**
 - **spec.md rewritten platform-agnostically**: behavior is defined by probed filesystem capabilities, never OS names; platforms appear only in the roadmap (macOS → Linux → Windows; CLI first, UI later).
 - **Daemon-first**: the daemon is the product; `sync` is a thin client/fallback. Spec §1, §8.
 - **New durability invariant 7**: plan ordering is dependency-aware and destruction never outruns protection — the design-level lesson of both reproduced bugs (spec §4.5).
@@ -90,7 +98,7 @@ Format:
 
 ## 2026-07-14 — Phase 6 Stage 1 built: monitoring via a DB heartbeat
 
-**Context:** implementing the read-only half of [phase-6.md](phase-6.md) — see status/activity of the running daemon without any IPC.
+**Context:** implementing the read-only half of [phase-6.md](history/phase-6.md) — see status/activity of the running daemon without any IPC.
 
 **Decisions made during the build:**
 - **Activity is per-action, derived from the successful cycle's plan** (upload/download/trash/move/mkdir/conflict; Record/Forget skipped), not the cycle-level summary the design floated. This yields the Dropbox-style recent-activity list the user asked for and costs nothing extra: the watch loop already has `Result.Plan`, so the executor stays untouched. A *failed* cycle records a single error entry instead — we can't tell which planned actions actually ran, so we never claim per-action success.
@@ -104,7 +112,7 @@ Format:
 
 **Context:** the daemon is headless — `status` reads config/DB files but never talks to the running `watch` process, so there is no way to see if it is alive, what it is doing, or to drive it (sync now, pause). The user wants monitoring and interaction, console-first, with a possible tray/menu-bar icon later (à la Dropbox). This is scope beyond the spec's phases 0–5.
 
-**Decision:** add a phase 6 ([phase-6.md](phase-6.md)), designed now and built later (after 4–5). Key choices:
+**Decision:** add a phase 6 ([phase-6.md](history/phase-6.md)), designed now and built later (after 4–5). Key choices:
 
 - **Monitor and control are split.** Monitoring (running?/mode/last sync/activity/config/account/autostart) needs *no* IPC: the daemon records a heartbeat + activity ring to its SQLite DB (new migration v3) and the CLI reads it — this also works when the daemon is down. Control (sync now/pause/resume/reload) needs a channel *into* the process because the daemon holds the flock instance lock, so a CLI can't run its own sync; "sync now" is *delegated*.
 - **The daemon's one interface is a local control socket** — Unix-domain socket / AF_UNIX (0600), never a TCP port (filesystem perms are the auth; no network surface). Line-delimited JSON with a version handshake. The CLI and the future GUI are both just clients of it.

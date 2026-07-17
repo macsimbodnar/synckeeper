@@ -1,7 +1,7 @@
 # Phase 2 — Safety hardening
 
 **Goal:** the engine survives crashes at any point and refuses to amplify mistakes (mass deletes, unmounted dirs, lost DB).
-**Exit criterion:** fault tests F1–F5 pass (see [testing.md](testing.md)).
+**Exit criterion:** fault tests F1–F5 pass (see [testing.md](../testing.md)).
 **Status:** done 2026-07-08 — F1–F5 and scenario-level G1–G2 green; doctor verified against real Drive
 
 ## Tasks

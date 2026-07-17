@@ -6,14 +6,14 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 
 | Phase | Doc | Outcome |
 |---|---|---|
-| 0 | [phase-0.md](phase-0.md) | Skeleton: auth, config, DB, Drive client interface — done 2026-07-07 |
-| 1 | [phase-1.md](phase-1.md) | One-shot bidirectional sync, S1–S8 — done 2026-07-08 |
-| 2 | [phase-2.md](phase-2.md) | Safety hardening, F1–F5 — done 2026-07-08 |
-| 3 | [phase-3.md](phase-3.md) | Continuous mode + 2 h soak — done 2026-07-09 |
-| 4 | [phase-4.md](phase-4.md) | `init --adopt` + matrix tests — done 2026-07-14 (real rollout pending, now W6) |
-| 5 | [phase-5.md](phase-5.md) | Cross-platform hardening — superseded by W7/W8 |
-| 6 | [phase-6.md](phase-6.md) | Daemon monitoring + control socket — stages 1–2 done 2026-07-14; tray → W9 |
-| 7 | [phase-7.md](phase-7.md) | macOS quick wins — activity direction + case-collision done; Finder sidebar abandoned (no API); rest folded into W3/W9 |
+| 0 | [phase-0.md](history/phase-0.md) | Skeleton: auth, config, DB, Drive client interface — done 2026-07-07 |
+| 1 | [phase-1.md](history/phase-1.md) | One-shot bidirectional sync, S1–S8 — done 2026-07-08 |
+| 2 | [phase-2.md](history/phase-2.md) | Safety hardening, F1–F5 — done 2026-07-08 |
+| 3 | [phase-3.md](history/phase-3.md) | Continuous mode + 2 h soak — done 2026-07-09 |
+| 4 | [phase-4.md](history/phase-4.md) | `init --adopt` + matrix tests — done 2026-07-14 (real rollout pending, now W6) |
+| 5 | [phase-5.md](history/phase-5.md) | Cross-platform hardening — superseded by W7/W8 |
+| 6 | [phase-6.md](history/phase-6.md) | Daemon monitoring + control socket — stages 1–2 done 2026-07-14; tray → W9 |
+| 7 | [phase-7.md](history/phase-7.md) | macOS quick wins — activity direction + case-collision done; Finder sidebar abandoned (no API); rest folded into W3/W9 |
 
 ## Workstreams
 
@@ -34,7 +34,7 @@ Reproduced bugs first; each fix lands with its regression test (testing.md R1/R2
 
 1. Remove `full_rescan_interval_secs` (config, validation, reload, docs) — spec §13.
 2. Unicode normalization folding: extend the fold in `remotedelta.Snapshot` + `names.CaseInsensitiveFS`-style probe to NFC/NFD (spec §5); tests N2.
-3. Stale text: `cmd/synckeeper/config.go` still says live reload is future; phase-7 exit criterion still lists the abandoned Finder-sidebar item.
+3. Stale text: `cmd/synckeeper/config.go` still says live reload is future. (The phase-7 exit-criterion staleness was fixed 2026-07-17 with the docs restructure.)
 4. Credentials (decided 2026-07-17, spec §9 — rclone model): (a) keep the author's client id/secret embedded via `internal/auth/credentials.go` as the shipping default; (b) add the BYO override — load `credentials.json` from the config dir (or config keys) with precedence over embedded; (c) `account` reports which credentials are in use; (d) README gains an rclone-style "use your own client id for dedicated quota" page and, at publication time, a donation note (funds future Google verification if the ~100-user unverified cap is ever reached); (e) hygiene: drop the stray `client_secret_*.json` from the repo root — `credentials.go` is the single embedded source. Optional (owner: Max): rotate the client in the console anyway, since publishing makes the historical secret live forever.
 5. README: update build instructions for the native-build policy (no cross-compile matrix, cgo allowed).
 
@@ -74,7 +74,7 @@ Tray/menu-bar app as a separate binary on the control socket (mode icon, sync no
 
 ## Working process
 
-1. A workstream item is done when its code, tests, and doc updates land together; check items off here with a date.
+1. A workstream item is done when its code, tests, and doc updates land together; check items off here with a date **and rewrite [status.md](status.md)** (last/current/next) before ending the session.
 2. Every scope change, spec deviation, or non-obvious choice gets a dated entry in [decisions.md](decisions.md) before or alongside the change.
 3. [testing.md](testing.md) rows are the acceptance ledger — add the row with the feature, not after.
 4. README build/run instructions stay correct at every commit.

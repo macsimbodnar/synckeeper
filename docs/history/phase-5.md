@@ -21,7 +21,7 @@
 - [ ] Non-regular files (sockets, fifos, devices): skipped and reported.
 
 ### Platform test runs
-- [ ] Platform test cases from [testing.md](testing.md) (case collision, reserved names, long paths, symlinks) implemented; case/reserved-name tests skip conditionally where the host FS can't express them.
+- [ ] Platform test cases from [testing.md](../testing.md) (case collision, reserved names, long paths, symlinks) implemented; case/reserved-name tests skip conditionally where the host FS can't express them.
 - [ ] Full `go test ./...` run on real Linux, macOS, and Windows machines (documented manually — no CI in v1).
 - [ ] Scenario S1–S8 + fault F1–F5 executed on Windows at least once (path handling differs most there).
 

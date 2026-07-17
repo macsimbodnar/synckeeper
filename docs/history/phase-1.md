@@ -1,7 +1,7 @@
 # Phase 1 — One-shot bidirectional sync
 
 **Goal:** `synckeeper sync` performs a full, safe, three-way sync. After this phase the tool is usable daily via cron/Task Scheduler and functionally replaces Dropbox.
-**Exit criterion:** scenario tests S1–S8 pass (see [testing.md](testing.md)).
+**Exit criterion:** scenario tests S1–S8 pass (see [testing.md](../testing.md)).
 **Status:** done 2026-07-08 — S1–S8 green against the fake, live smoke green against real Drive, manual round-trip verified
 
 ## Build order
@@ -59,7 +59,7 @@ Reconcile is pure and test-first; everything else feeds it or executes its outpu
 ### Test infrastructure
 - [x] In-memory fake Drive completing full semantics: ids, versions, md5, parents, trash, changes feed with page tokens. Shared by all scenario tests.
 - [x] Scenario harness: N (sync_dir, state DB) pairs against one fake Drive to simulate machines.
-- [x] Scenario tests S1–S8 (definitions in [testing.md](testing.md)).
+- [x] Scenario tests S1–S8 (definitions in [testing.md](../testing.md)).
 - [x] Live smoke suite gated on `SYNCKEEPER_LIVE_TEST=1` against a throwaway Drive folder: upload/download/trash/changes round-trip, validating the fake's semantics against real Drive.
 
 ## Verification
