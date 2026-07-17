@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-17 — R2 fix: plan stage order is dir-moves → mkdirs → file-moves → transfers → deletes
+
+**Context:** W1.2 — the reproduced livelock. `MkdirLocal` ran in the mkdirs stage ahead of all moves; for a new remote subfolder inside a remotely renamed (same-id) folder, its `MkdirAll` scaffolded the rename's destination and the dir `MoveLocal` failed `file exists` every cycle, forever.
+
+**Decision (agent, implementing spec §4.5; ordering fix pre-agreed in plan W1.2):** split the moves stage around the mkdirs instead of a blanket reorder. Local **directory** moves are hoisted ahead of all mkdirs — they depend on nothing the plan creates (the executor `MkdirAll`s a move's destination parents itself). **File** moves and conflict backups stay after the mkdirs, because a blanket moves-first would regress the common local flow "create folder, move files into it": that `MoveRemote` needs the parent folder id a `MkdirRemote` produces. Bonus fix: `MkdirRemote` beneath a remotely moved dir now finds its parent id (the dir move's `renamePathIDs` has already run), removing a latent one-cycle transient failure.
+
+**Consequences:** spec §4.5 stage order updated in the same change; the executor's serial/parallel staging is untouched (the non-transfer prefix stays contiguous). Regression tests at engine and reconcile level (testing.md R2); suite + `-race` green.
+
 ## 2026-07-17 — R1 fix: conflicts never depend on moves; `ProtectedBy` failure propagation
 
 **Context:** W1.1 — the reproduced data-loss bug. In a true conflict combined with a remote rename, the plan emitted `MoveLocal` + `ConflictBackup` whose correctness depended on lexicographic sort order of the moves stage; in the losing order the backup failed on a not-yet-existing path and the canonical download overwrote the only copy of the local edit.

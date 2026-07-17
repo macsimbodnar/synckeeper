@@ -414,3 +414,27 @@ func TestRemoteMovePlusConflictBacksUpFromCurrentPath(t *testing.T) {
 		}
 	}
 }
+
+// R2 regression (2026-07-17, testing.md): a local dir move must order before
+// any MkdirLocal — a mkdir beneath the moved dir would scaffold the move's
+// destination and the rename would fail every cycle.
+func TestDirMoveOrdersBeforeMkdirLocal(t *testing.T) {
+	runPlan(t, Input{
+		Base: map[string]BaseItem{
+			"docs":       baseDir("d1"),
+			"docs/f.txt": baseFile("f1", "m1", 3),
+		},
+		Local: map[string]LocalItem{
+			"docs":       locDir(),
+			"docs/f.txt": locFile("m1", 3),
+		},
+		Remote: map[string]RemoteItem{
+			"papers":       remDir("d1", 1),
+			"papers/f.txt": remFile("f1", "m1", 3, 1),
+			"papers/sub":   remDir("d2", 1),
+		},
+	}, []step{
+		{t: MoveLocal, rel: "docs", newRel: "papers"},
+		{t: MkdirLocal, rel: "papers/sub", fileID: "d2"},
+	})
+}

@@ -2,27 +2,28 @@
 
 The single answer to "where are we?". Read this first; **rewrite it before ending any work session** (sections replaced in place — history lives in `git log` and [decisions.md](decisions.md), not here).
 
-**Updated:** 2026-07-17 — W1.1 session.
+**Updated:** 2026-07-17 — W1.2 session.
 
 ## Last completed
 
-**W1.1 / R1 — the data-loss ordering bug is fixed** (2026-07-17). A true conflict no longer routes local content through a `MoveLocal`: the conflict backup acts on the file's current local path, and conflict transfers carry `ProtectedBy`, which the executor refuses to run when the named backup failed (invariant 7 / spec §4.5). Regression tests at three levels — engine (`TestR1RemoteMoveEditVsLocalEditConflict`), reconcile (`TestRemoteMovePlusConflictBacksUpFromCurrentPath`), executor (`TestProtectedDownloadRefusedWhenBackupFails`); full suite and `-race` green. Decision entry: decisions.md 2026-07-17 "R1 fix". Before that: docs restructure (`1dfb2a1`), design overhaul (`17d2fa6`).
+**W1.2 / R2 — the dir-rename livelock is fixed** (2026-07-17). Plan stage order is now dir-moves → mkdirs → file-moves/backups → transfers → deletes (spec §4.5 updated in the same change): a `MkdirLocal` can no longer scaffold a pending dir move's destination, and `MkdirRemote` under a remotely moved dir now resolves its parent id first try. Tests: `TestR2RemoteDirRenameWithNewSubdir` (engine), `TestDirMoveOrdersBeforeMkdirLocal` (reconcile); suite + `-race` green. Decision entry: decisions.md 2026-07-17 "R2 fix". Before that: R1 fix (`25294ff`), docs restructure (`1dfb2a1`), design overhaul (`17d2fa6`).
 
 ## In progress
 
-W1 (correctness fixes) — item 1 of 6 done.
+W1 (correctness fixes) — items 1–2 of 6 done.
 
 ## Next
 
-**W1.2 — fix R2** (the livelock), same TDD order:
+**W1.3 — `init --force` leaves a stale remote mirror** ([plan.md](plan.md) W1.3, testing.md R3):
 
-1. Regression test first ([testing.md](testing.md) R2 scenario: remote same-id dir rename + new remote subdir inside it — currently `MkdirLocal` runs before moves, `MkdirAll` creates the move destination, `MoveLocal` fails `file exists` every cycle; must FAIL against current code).
-2. Fix per spec §4.5: order local dir moves ahead of local mkdirs (preferred), or make `moveLocal` merge into plan-created empty scaffold. See [plan.md](plan.md) W1.2.
+1. Regression test first: after `init --force`, a remote change made *before* the re-init must still reach the local side (currently the fresh page token skips it and the stale `remote_nodes` mirror hides it — the divergence is silent).
+2. Fix per spec §12: `--force` performs the same forced full walk as `doctor --repair` (`remotedelta.ForceFullWalk`) instead of only resetting the page token.
 3. Suite green → check off in plan.md → rewrite this file.
 
-Then W1.3–W1.6 strictly in order.
+Then W1.4 (download overwrite window), W1.5 (read-path migrations), W1.6 (swap-rename sweep).
 
 ## Blockers / parked
 
 - **W6** (real multi-machine rollout): needs a second physical machine — Max's step.
 - **Optional, Max:** rotate the OAuth client in the Google console before publication (hygiene; the decided credential model doesn't require it).
+- Pre-existing gofmt drift in 4 untouched files (`cmd/synckeeper/status.go`, `internal/config/config.go`, `internal/driveclient/driveclient.go`, `internal/service/status_test.go`) — fold into W2 hygiene.

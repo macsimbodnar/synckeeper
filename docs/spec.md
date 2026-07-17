@@ -81,7 +81,7 @@ Created before children (top-down), removed only when empty after children resol
 
 ### 4.5 Plan ordering (normative — invariant 7)
 
-Stage order: mkdirs (top-down) → moves and conflict backups → transfers → deletes (bottom-up, files before their parent dirs). Within and across stages the following dependencies are binding:
+Stage order *(refined 2026-07-17 with the R2 fix)*: local directory moves (top-down) → mkdirs (top-down) → file moves and conflict backups → transfers → deletes (bottom-up, files before their parent dirs). Directory moves precede all creations because a creation may scaffold a move's destination; file moves follow the mkdirs because a remote move may target a folder being created. Within and across stages the following dependencies are binding:
 
 - A **conflict backup** must run against the path where the local content *currently* is — i.e. it must be sequenced before (or expressed independently of) any local move that relocates that content. A download onto a canonical path must not run if the conflict backup protecting that path's previous content failed.
 - A **local directory creation** (`MkdirAll` included) must not create the destination path of a pending local move; moves into or out of a path order before creations of that path.

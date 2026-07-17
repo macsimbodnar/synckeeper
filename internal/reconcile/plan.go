@@ -14,8 +14,9 @@ type remoteRef struct {
 	item RemoteItem
 }
 
-// Plan computes the ordered action plan. Output order: mkdirs (top-down),
-// moves (dirs first) and conflict backups, transfers, deletes (bottom-up).
+// Plan computes the ordered action plan. Output order: local dir moves
+// (top-down), mkdirs (top-down), file moves and conflict backups, transfers,
+// deletes (bottom-up).
 func Plan(in Input) ([]Action, []Skip) {
 	var skips []Skip
 	var mkdirs, moves, transfers, deletes []Action
@@ -328,17 +329,31 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		return mkdirs[i].RelPath < mkdirs[j].RelPath
 	})
-	sort.SliceStable(moves, func(i, j int) bool {
-		// Dir moves first (top-down), then file moves/backups by path.
-		di, dj := moves[i].IsDir, moves[j].IsDir
-		if di != dj {
-			return di
+	// Local dir moves are hoisted ahead of the mkdirs: a MkdirLocal beneath
+	// a moved dir would otherwise scaffold the move's destination and the
+	// rename would fail forever (invariant 7: creations order after moves of
+	// the paths they touch). Hoisting them is safe — a dir move depends on
+	// nothing the plan creates (the executor makes its destination parents).
+	// File moves and conflict backups stay after the mkdirs, because a
+	// MoveRemote may target a folder a MkdirRemote has yet to create.
+	var moveDirs, moveFiles []Action
+	for _, m := range moves {
+		if m.IsDir {
+			moveDirs = append(moveDirs, m)
+		} else {
+			moveFiles = append(moveFiles, m)
 		}
-		if d1, d2 := depth(moves[i].RelPath), depth(moves[j].RelPath); d1 != d2 {
-			return d1 < d2
+	}
+	byDepthThenPath := func(s []Action) func(i, j int) bool {
+		return func(i, j int) bool {
+			if d1, d2 := depth(s[i].RelPath), depth(s[j].RelPath); d1 != d2 {
+				return d1 < d2
+			}
+			return s[i].RelPath < s[j].RelPath
 		}
-		return moves[i].RelPath < moves[j].RelPath
-	})
+	}
+	sort.SliceStable(moveDirs, byDepthThenPath(moveDirs))
+	sort.SliceStable(moveFiles, byDepthThenPath(moveFiles))
 	sort.SliceStable(transfers, func(i, j int) bool { return transfers[i].RelPath < transfers[j].RelPath })
 	sort.SliceStable(deletes, func(i, j int) bool {
 		if d1, d2 := depth(deletes[i].RelPath), depth(deletes[j].RelPath); d1 != d2 {
@@ -348,8 +363,9 @@ func Plan(in Input) ([]Action, []Skip) {
 	})
 
 	plan := make([]Action, 0, len(mkdirs)+len(moves)+len(transfers)+len(deletes))
+	plan = append(plan, moveDirs...)
 	plan = append(plan, mkdirs...)
-	plan = append(plan, moves...)
+	plan = append(plan, moveFiles...)
 	plan = append(plan, transfers...)
 	plan = append(plan, deletes...)
 	sort.Slice(skips, func(i, j int) bool { return skips[i].RelPath < skips[j].RelPath })

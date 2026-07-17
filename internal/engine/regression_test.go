@@ -4,6 +4,7 @@ package engine
 // regressions" rows). Each test is named after its ledger row.
 
 import (
+	"context"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,72 @@ func TestR1RemoteMoveEditVsLocalEditConflict(t *testing.T) {
 	}
 	if got := b.read(t, cp); got != "v-local-edit" {
 		t.Errorf("[b] conflict copy %s = %q, want %q", cp, got, "v-local-edit")
+	}
+}
+
+// R2: remote same-id dir rename (Drive web UI style) plus a new remote
+// subfolder created inside it. Spec §4.5 / invariant 7: a local dir creation
+// must never create the destination of a pending local move.
+//
+// Before the fix, MkdirLocal ran in the mkdirs stage ahead of all moves and
+// its MkdirAll created the move destination; the dir MoveLocal then failed
+// "file exists" — every cycle, forever (livelock until a human merged the
+// folders by hand).
+func TestR2RemoteDirRenameWithNewSubdir(t *testing.T) {
+	ctx := context.Background()
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	b := newMachine(t, "b", fake, rootID)
+
+	a.write(t, "docs/f.txt", "v1")
+	a.sync(t)
+	b.sync(t)
+
+	// Simulate the Drive web UI: rename the folder in place (same id),
+	// then create a subfolder inside it.
+	items, err := fake.List(ctx, rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirID string
+	for _, it := range items {
+		if it.IsDir() && it.Name == "docs" {
+			dirID = it.ID
+		}
+	}
+	if dirID == "" {
+		t.Fatal("docs folder not found on the fake Drive")
+	}
+	if _, err := fake.Move(ctx, dirID, rootID, "papers"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.Mkdir(ctx, dirID, "sub"); err != nil {
+		t.Fatal(err)
+	}
+
+	// One cycle must converge cleanly (sync() fails the test on any
+	// failed action — the pre-fix code failed the dir move here).
+	a.sync(t)
+
+	if got := a.read(t, "papers/f.txt"); got != "v1" {
+		t.Errorf("papers/f.txt = %q, want %q", got, "v1")
+	}
+	if !a.exists("papers/sub") {
+		t.Error("papers/sub was not created locally")
+	}
+	if a.exists("docs") {
+		t.Error("docs still present; the rename should have moved it to papers")
+	}
+	if res := a.sync(t); len(res.Plan) != 0 {
+		t.Errorf("second cycle planned %d actions, want 0: %+v", len(res.Plan), res.Plan)
+	}
+
+	b.sync(t)
+	if got := b.read(t, "papers/f.txt"); got != "v1" {
+		t.Errorf("[b] papers/f.txt = %q, want %q", got, "v1")
+	}
+	if !b.exists("papers/sub") {
+		t.Error("[b] papers/sub missing")
 	}
 }
 
