@@ -6,9 +6,12 @@ package engine
 import (
 	"context"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/macsimbodnar/synckeeper/internal/executor"
 )
 
 // R1: remote rename to a lexicographically smaller path + remote edit +
@@ -136,6 +139,55 @@ func TestR2RemoteDirRenameWithNewSubdir(t *testing.T) {
 	}
 	if !b.exists("papers/sub") {
 		t.Error("[b] papers/sub missing")
+	}
+}
+
+// R4: a local edit landing between the scan and the download's rename must
+// not be overwritten (spec §7 overwrite guard). The refused cycle reports a
+// failure; the NEXT cycle sees local-changed + remote-changed and resolves
+// it as a proper conflict — the edit ends up preserved, never lost.
+func TestR4MidCycleEditBecomesConflictNotLoss(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	b := newMachine(t, "b", fake, rootID)
+
+	a.write(t, "f.txt", "v1")
+	a.sync(t)
+	b.sync(t)
+	b.write(t, "f.txt", "v2-remote")
+	b.sync(t)
+
+	// While A's download of v2-remote is in flight (temp written, rename
+	// pending), the "user" edits the target.
+	target := filepath.Join(a.dir, "f.txt")
+	executor.FaultHook = func(cp string) error {
+		if cp == executor.CPDownloadTempWritten {
+			return os.WriteFile(target, []byte("mid-cycle-edit"), 0o644)
+		}
+		return nil
+	}
+	defer func() { executor.FaultHook = nil }()
+
+	res, err := a.eng.Sync(context.Background(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor.FaultHook = nil
+	if res.Failed != 1 {
+		t.Fatalf("guard cycle: failed = %d, want 1 (refused download): %v", res.Failed, res.Errors)
+	}
+	if got := a.read(t, "f.txt"); got != "mid-cycle-edit" {
+		t.Fatalf("f.txt = %q after refused cycle, want the mid-cycle edit preserved", got)
+	}
+
+	// The next cycle resolves it as an ordinary conflict.
+	a.sync(t)
+	if got := a.read(t, "f.txt"); got != "v2-remote" {
+		t.Errorf("canonical f.txt = %q, want %q", got, "v2-remote")
+	}
+	cp := findConflictCopy(t, a.dir)
+	if got := a.read(t, cp); got != "mid-cycle-edit" {
+		t.Errorf("conflict copy %s = %q, want the mid-cycle edit", cp, got)
 	}
 }
 

@@ -77,6 +77,15 @@ type Action struct {
 	// executor must not run the action if that backup failed — durability
 	// invariant 7: destruction never outruns protection.
 	ProtectedBy string
+
+	// Downloads: the local state the plan assumes will be at RelPath when
+	// the atomic replace happens (after moves and backups have run). The
+	// executor re-stats the target immediately before the rename and
+	// refuses the download on any drift — a local write racing the cycle
+	// must win it (spec §7 overwrite guard). Zero values mean "absent".
+	LocalExists  bool
+	LocalSize    int64
+	LocalMtimeNS int64
 }
 
 // Skip is a reported, non-fatal exclusion (invalid name, type clash, ...).

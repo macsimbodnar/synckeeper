@@ -172,8 +172,11 @@ func Plan(in Input) ([]Action, []Skip) {
 			case localChanged && !remoteContentChanged:
 				transfers = append(transfers, Action{Type: UpdateRemote, RelPath: pathNow, FileID: b.FileID})
 			case !localChanged && remoteContentChanged:
+				// The download replaces the scanned local file (moved into
+				// place first when the remote also renamed it).
 				transfers = append(transfers, Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
-					MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version})
+					MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
 			case loc.MD5 == ra.item.MD5:
 				// Both changed to identical content; record, no transfer.
 				transfers = append(transfers, Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
@@ -258,8 +261,15 @@ func Plan(in Input) ([]Action, []Skip) {
 			mkdirs = append(mkdirs, Action{Type: MkdirLocal, RelPath: rp, FileID: r.FileID,
 				IsDir: true, Version: r.Version})
 		} else {
-			transfers = append(transfers, Action{Type: Download, RelPath: rp, FileID: r.FileID,
-				MD5: r.MD5, Size: r.Size, Version: r.Version})
+			act := Action{Type: Download, RelPath: rp, FileID: r.FileID,
+				MD5: r.MD5, Size: r.Size, Version: r.Version}
+			// Replaced-in-place: an unchanged local file sits where the new
+			// remote item lands; the guard pins the replace to its scanned
+			// stat so a mid-cycle edit is never clobbered.
+			if l, ok := in.Local[rp]; ok && !l.IsDir {
+				act.LocalExists, act.LocalSize, act.LocalMtimeNS = true, l.Size, l.MtimeNS
+			}
+			transfers = append(transfers, act)
 		}
 	}
 

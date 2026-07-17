@@ -467,6 +467,29 @@ func (x *Executor) download(ctx context.Context, opID int64, a reconcile.Action)
 	if err := checkpoint(CPDownloadTempWritten); err != nil {
 		return err
 	}
+	// Spec §7 overwrite guard: the atomic replace may only land on what the
+	// plan assumed is here (the scanned file, or nothing). A local write
+	// racing this cycle wins it; the refused download is replanned — and by
+	// then it is a local change, so the decision table conflicts it instead
+	// of overwriting. A sub-microsecond race between this stat and the
+	// rename remains and is accepted.
+	cur, statErr := os.Lstat(target)
+	switch {
+	case statErr == nil:
+		if !a.LocalExists {
+			return fmt.Errorf("a file appeared at the target after the scan; leaving it alone, replanning next cycle")
+		}
+		if !cur.Mode().IsRegular() || cur.Size() != a.LocalSize || cur.ModTime().UnixNano() != a.LocalMtimeNS {
+			return fmt.Errorf("target changed after the scan (size %d mtime %d, scanned size %d mtime %d); leaving the local file alone, replanning next cycle",
+				cur.Size(), cur.ModTime().UnixNano(), a.LocalSize, a.LocalMtimeNS)
+		}
+	case os.IsNotExist(statErr):
+		if a.LocalExists {
+			return fmt.Errorf("target disappeared after the scan; replanning next cycle")
+		}
+	default:
+		return statErr
+	}
 	if err := os.Rename(tmpName, target); err != nil {
 		return err
 	}

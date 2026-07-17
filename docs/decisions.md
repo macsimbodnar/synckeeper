@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-17 — R4 fix: downloads pin the target to the plan's assumption; any drift refuses the rename
+
+**Context:** W1.4 — the download overwrite window. Between the scan and the download's atomic rename, a local write to the target was silently destroyed by the replace (uploads already had a mid-change guard; downloads had none).
+
+**Decision (agent, implementing spec §7; approach pre-agreed in plan W1.4):** every `Download` action now carries the local state the plan assumes at its target *at rename time* — `LocalExists` + scanned size/mtime for replacements, "absent" for targets a conflict backup vacates and for edit-beats-delete paths. The executor `Lstat`s the target immediately before the rename and refuses the download on **any** drift: changed stat, non-regular file, appearance where absence was assumed, and also disappearance where presence was assumed. Refusing on disappearance (rather than proceeding, which the decision table would eventually sanction) keeps one rule — reality must match the plan or the cycle replans — instead of per-case cleverness. The refused write is not lost work: next cycle the racing edit is a *local change*, so the decision table conflicts it properly. A sub-microsecond stat→rename race remains and is accepted.
+
+**Consequences:** `reconcile.Action` gains `LocalExists`/`LocalSize`/`LocalMtimeNS`; only two plan sites set them (both-exist download, pass-3 replaced-in-place download). Regression coverage: executor level (both drift directions) and engine level (mid-cycle edit ends as a conflict copy, never a loss). Suite + `-race` green.
+
 ## 2026-07-17 — R2 fix: plan stage order is dir-moves → mkdirs → file-moves → transfers → deletes
 
 **Context:** W1.2 — the reproduced livelock. `MkdirLocal` ran in the mkdirs stage ahead of all moves; for a new remote subfolder inside a remotely renamed (same-id) folder, its `MkdirAll` scaffolded the rename's destination and the dir `MoveLocal` failed `file exists` every cycle, forever.
