@@ -133,6 +133,89 @@ func TestR4DownloadRefusedWhenTargetAppearsMidCycle(t *testing.T) {
 	}
 }
 
+// R7 (spec §7 overwrite guard, moves): a MoveLocal must never clobber a file
+// the plan did not account for. When the destination is occupied and the
+// action did not expect an occupant, the move is refused and the occupant
+// preserved.
+func TestR7MoveLocalRefusesUnexpectedOccupant(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(syncDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := statedb.Open(filepath.Join(base, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// The file being moved, and an unrelated precious file already at the dest.
+	if err := os.WriteFile(filepath.Join(syncDir, "from.txt"), []byte("moving"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(syncDir, "to.txt"), []byte("PRECIOUS"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	x := &Executor{DB: db, Client: driveclient.NewFake(), SyncDir: syncDir,
+		QuarantineDir: filepath.Join(base, "quarantine"), RootID: "root"}
+	// LocalExists is false: the plan believed the destination was empty.
+	sum, err := x.Apply(ctx, []reconcile.Action{
+		{Type: reconcile.MoveLocal, RelPath: "from.txt", NewRelPath: "to.txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Failed != 1 || sum.Executed != 0 {
+		t.Fatalf("executed/failed = %d/%d, want 0/1 (move refused): %v", sum.Executed, sum.Failed, sum.Errors)
+	}
+	if got, _ := os.ReadFile(filepath.Join(syncDir, "to.txt")); string(got) != "PRECIOUS" {
+		t.Fatalf("to.txt = %q, want the precious occupant untouched", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(syncDir, "from.txt")); string(got) != "moving" {
+		t.Fatalf("from.txt = %q, want the source left in place for the next cycle", got)
+	}
+}
+
+// R8 (Finding 2): a ConflictBackup must never overwrite an existing file at its
+// destination (a crash-leftover copy with a colliding timestamped name).
+func TestR8ConflictBackupRefusesExistingDestination(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(syncDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := statedb.Open(filepath.Join(base, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := os.WriteFile(filepath.Join(syncDir, "f.txt"), []byte("current"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(syncDir, "f (conflict).txt"), []byte("earlier-copy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	x := &Executor{DB: db, Client: driveclient.NewFake(), SyncDir: syncDir,
+		QuarantineDir: filepath.Join(base, "quarantine"), RootID: "root"}
+	sum, err := x.Apply(ctx, []reconcile.Action{
+		{Type: reconcile.ConflictBackup, RelPath: "f.txt", NewRelPath: "f (conflict).txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Failed != 1 {
+		t.Fatalf("failed = %d, want 1 (backup refused): %v", sum.Failed, sum.Errors)
+	}
+	if got, _ := os.ReadFile(filepath.Join(syncDir, "f (conflict).txt")); string(got) != "earlier-copy" {
+		t.Fatalf("existing conflict copy = %q, want it untouched", got)
+	}
+}
+
 // Invariant 7 (spec §4.5): an action whose protecting conflict backup failed
 // must not execute. The backup here fails naturally (its destination
 // directory does not exist); the protected download must then be refused,

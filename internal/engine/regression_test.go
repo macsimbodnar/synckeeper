@@ -292,6 +292,65 @@ func TestR6RemoteFileSwapConverges(t *testing.T) {
 	}
 }
 
+// R7 (adversarial analysis 2026-07-17): a remote rename whose destination name
+// collides with an unrelated, untracked local file. The W1 review hardened
+// downloads (R4) and records (R6) against clobbering, but MoveLocal — the third
+// primitive that overwrites a local path by os.Rename — had no guard: the move
+// silently destroyed the local file and reported success.
+//
+// The fix preserves the occupant as a conflict copy (backed up and uploaded)
+// and lands the remote-canonical name via the move, with the move refused if
+// the protecting backup fails (invariant 7).
+func TestR7RemoteMoveOntoUntrackedLocalFilePreserved(t *testing.T) {
+	ctx := context.Background()
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+
+	a.write(t, "a.txt", "content-A")
+	a.sync(t)
+
+	// Rename a.txt -> b.txt remotely, same id (a move, not delete + create).
+	children, _ := fake.List(ctx, root)
+	var xid string
+	for _, c := range children {
+		if c.Name == "a.txt" {
+			xid = c.ID
+		}
+	}
+	if _, err := fake.Move(ctx, xid, root, "b.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The user already has an unrelated precious file sitting at b.txt.
+	a.write(t, "b.txt", "PRECIOUS-local-b")
+
+	// One cycle: sync() fails the test on any failed action.
+	a.sync(t)
+
+	// The remote-canonical content landed at b.txt.
+	if got := a.read(t, "b.txt"); got != "content-A" {
+		t.Errorf("canonical b.txt = %q, want the moved content-A", got)
+	}
+	// The precious local file survives as a conflict copy — nothing lost.
+	cp := findConflictCopy(t, a.dir)
+	if got := a.read(t, cp); got != "PRECIOUS-local-b" {
+		t.Errorf("conflict copy %s = %q, want PRECIOUS-local-b", cp, got)
+	}
+	// Converged.
+	if res := a.sync(t); len(res.Plan) != 0 {
+		t.Errorf("second cycle planned %d actions, want 0: %+v", len(res.Plan), res.Plan)
+	}
+	// The copy reached Drive too: a fresh machine sees both versions.
+	b := newMachine(t, "b", fake, root)
+	b.sync(t)
+	if got := b.read(t, "b.txt"); got != "content-A" {
+		t.Errorf("[b] b.txt = %q, want content-A", got)
+	}
+	if got := b.read(t, cp); got != "PRECIOUS-local-b" {
+		t.Errorf("[b] conflict copy %s = %q, want PRECIOUS-local-b", cp, got)
+	}
+}
+
 func countConflictCopies(t *testing.T, dir string) int {
 	t.Helper()
 	n := 0

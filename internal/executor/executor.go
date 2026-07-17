@@ -313,6 +313,28 @@ func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
 	}
+	// Overwrite guard (invariant 7 / spec §7, the download guard generalized to
+	// moves): the rename may only land where the plan expects. A destination
+	// occupied by a file the plan did not account for — a racing local write,
+	// or content only reconcile knew to preserve — must never be silently
+	// clobbered. LocalExists is set only when reconcile saw a destination
+	// occupant whose bytes are safe on Drive (e.g. a swap); the pinned stat
+	// then guarantees a racing write is refused instead of lost.
+	cur, statErr := os.Lstat(to)
+	switch {
+	case statErr == nil:
+		if !a.LocalExists {
+			return fmt.Errorf("move destination %s is occupied by an unexpected file; leaving it alone, replanning next cycle", a.NewRelPath)
+		}
+		if !cur.Mode().IsRegular() || cur.Size() != a.LocalSize || cur.ModTime().UnixNano() != a.LocalMtimeNS {
+			return fmt.Errorf("move destination %s changed since the scan; leaving it alone, replanning next cycle", a.NewRelPath)
+		}
+	case os.IsNotExist(statErr):
+		// Absent — the expected state for most moves, and fine even when an
+		// occupant was expected (a sibling move may have vacated it first).
+	default:
+		return statErr
+	}
 	if err := os.Rename(from, to); err != nil {
 		return err
 	}
@@ -352,6 +374,14 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 }
 
 func (x *Executor) conflictBackup(opID int64, a reconcile.Action) error {
+	// The conflict copy is a rescue artifact; it must never overwrite an
+	// existing file (a crash-leftover copy with a colliding timestamped name).
+	// Refuse and replan — the next cycle's timestamp yields a fresh name.
+	if _, err := os.Lstat(x.abs(a.NewRelPath)); err == nil {
+		return fmt.Errorf("conflict-copy path %s already exists; refusing to overwrite it, replanning next cycle", a.NewRelPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.Rename(x.abs(a.RelPath), x.abs(a.NewRelPath)); err != nil {
 		return err
 	}

@@ -2,15 +2,17 @@
 
 The single answer to "where are we?". Read this first; **rewrite it before ending any work session** (sections replaced in place — history lives in `git log` and [decisions.md](decisions.md), not here).
 
-**Updated:** 2026-07-17 — W1.6 session. **W1 is closed.**
+**Updated:** 2026-07-17 — W1.7 session (adversarial analysis). **W1 reopened and re-closed as W1.7.**
 
 ## Last completed
 
-**W1 — correctness fixes: all six items done (2026-07-17).** The finale, W1.6/R6, was planned as verification-only but disproved the review's "swap self-heals" analysis: an unprotected `Record` could stamp a planned md5 onto the wrong file after half-failed moves, poisoning the baseline into permanent silent divergence. Fixed by generalizing the invariant-7 mechanisms — `ProtectedBy` now covers local moves, and every file-level `Record` verifies the scanned size/mtime before overwriting the baseline's truth. See decisions.md 2026-07-17 "R6" (which formally corrects the earlier claim). W1 summary: R1 data-loss conflict ordering (`25294ff`), R2 dir-rename livelock (`18b37f4`), R3 stale mirror on `init --force` (`9480788`), R4 download overwrite window (`5751812`), R5 read-path migrations (`d2c35c9`), R6 record poisoning (this commit). All with red-first regression tests at up to three levels; suite + `-race` green throughout.
+**W1.7 — adversarial-analysis correctness fixes: R7, R8, G3 done (2026-07-17).** An adversarial re-analysis of the engine against the core invariant found a **confirmed critical data-loss bug the W1 review missed**: `MoveLocal` (a third local-overwriting primitive alongside the download and record that W1 guarded) `os.Rename`d over an untracked local file when a remote rename/move landed on its name — silent loss, reported as a clean success. Fixed with the R4 pattern generalized to moves (reconcile preserves an untracked occupant as a conflict copy + stat-pins a tracked one; executor re-stats the destination and refuses an unexpected occupant). R8 gave `ConflictBackup` the same guard. G3 (Finding 3) made the daemon **defer** a mass delete — sync everything else, surface the block — matching spec §6/§8.1 instead of aborting the whole cycle (new `Options.DeferMassDelete`). Red-first tests at three levels; suite + `-race` green. See decisions.md 2026-07-17 "W1.7 (R7/R8/G3)".
+
+Prior W1 (2026-07-17): R1 conflict ordering, R2 dir-rename livelock, R3 stale mirror on `init --force`, R4 download overwrite window, R5 read-path migrations, R6 record poisoning.
 
 ## In progress
 
-Nothing in flight. W1 `done`; next workstream is W2.
+Nothing in flight. **W1.7 changes are staged but not yet committed** (per the never-push rule, Max commits/pushes). Suggested commits: one for R7/R8 (reconcile + executor + engine + tests + spec §4.5/§7), one for G3/C1 (engine + watch + tests + spec §6). Next workstream is W2.
 
 ## Next
 

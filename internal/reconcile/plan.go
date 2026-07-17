@@ -42,6 +42,10 @@ func Plan(in Input) ([]Action, []Skip) {
 	// (adopted, conflicted, or replacing baseline content in place), so
 	// pass 3 does not download them a second time.
 	claimed := map[string]bool{}
+	// backedUp marks a local path whose untracked content a move reclaimed:
+	// it has been routed to a conflict copy, so pass 2 must not also upload it
+	// as a plain new file.
+	backedUp := map[string]bool{}
 
 	// Remote directory moves, used to explain descendants' path changes so
 	// one dir rename does not fan out into per-file moves.
@@ -117,7 +121,33 @@ func Plan(in Input) ([]Action, []Skip) {
 		// backup depend on an ordering the plan must never get wrong.
 		trueConflict := locOK && remOK && localChanged && remoteContentChanged && loc.MD5 != ra.item.MD5
 		if remoteMoved && locOK && !trueConflict {
-			moves = append(moves, Action{Type: MoveLocal, RelPath: expected, NewRelPath: ra.path, FileID: b.FileID})
+			mv := Action{Type: MoveLocal, RelPath: expected, NewRelPath: ra.path, FileID: b.FileID}
+			// The move's destination may already be occupied locally. Never let
+			// the rename silently clobber it (invariant 7).
+			if occ, occupied := in.Local[ra.path]; occupied && ra.path != expected {
+				_, tracked := in.Base[ra.path]
+				switch {
+				case !occ.IsDir && !tracked:
+					// Untracked local-only file: its only copy lives here.
+					// Preserve it as a conflict copy before the move vacates the
+					// path, and refuse the move if that backup fails.
+					cp := conflicts.Path(ra.path, in.Machine, in.Now)
+					moves = append(moves, Action{Type: ConflictBackup, RelPath: ra.path, NewRelPath: cp})
+					transfers = append(transfers, Action{Type: Upload, RelPath: cp, ProtectedBy: ra.path})
+					mv.ProtectedBy = ra.path
+					backedUp[ra.path] = true
+				case !occ.IsDir && tracked:
+					// Tracked content (bytes safe on Drive, e.g. a swap): the
+					// executor may clobber it, but must first confirm it is
+					// still the file the scan saw so a racing write wins (§7).
+					mv.LocalExists, mv.LocalSize, mv.LocalMtimeNS = true, occ.Size, occ.MtimeNS
+				default:
+					// A directory occupies a file's destination — a type clash
+					// never resolved by clobbering; the executor refuses it
+					// (LocalExists stays false), leaving both sides intact.
+				}
+			}
+			moves = append(moves, mv)
 		}
 
 		switch {
@@ -217,6 +247,9 @@ func Plan(in Input) ([]Action, []Skip) {
 	for _, p := range slices.Sorted(maps.Keys(in.Local)) {
 		if _, inBase := in.Base[p]; inBase {
 			continue
+		}
+		if backedUp[p] {
+			continue // reclaimed by a move; already preserved as a conflict copy
 		}
 		loc := in.Local[p]
 		target := rewrite(p)
@@ -379,7 +412,16 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 	}
 	sort.SliceStable(moveDirs, byDepthThenPath(moveDirs))
-	sort.SliceStable(moveFiles, byDepthThenPath(moveFiles))
+	// Conflict backups vacate a path before the move that fills it, so they
+	// must precede the file moves within the stage (a move may be ProtectedBy a
+	// backup that reclaims its destination).
+	moveFilesLess := byDepthThenPath(moveFiles)
+	sort.SliceStable(moveFiles, func(i, j int) bool {
+		if bi, bj := moveFiles[i].Type == ConflictBackup, moveFiles[j].Type == ConflictBackup; bi != bj {
+			return bi
+		}
+		return moveFilesLess(i, j)
+	})
 	sort.SliceStable(transfers, func(i, j int) bool { return transfers[i].RelPath < transfers[j].RelPath })
 	sort.SliceStable(deletes, func(i, j int) bool {
 		if d1, d2 := depth(deletes[i].RelPath), depth(deletes[j].RelPath); d1 != d2 {

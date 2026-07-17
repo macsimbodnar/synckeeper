@@ -85,6 +85,7 @@ Stage order *(refined 2026-07-17 with the R2 fix)*: local directory moves (top-d
 
 - A **conflict backup** must run against the path where the local content *currently* is — i.e. it must be sequenced before (or expressed independently of) any local move that relocates that content. A download onto a canonical path must not run if the conflict backup protecting that path's previous content failed.
 - A **local directory creation** (`MkdirAll` included) must not create the destination path of a pending local move; moves into or out of a path order before creations of that path.
+- A **local move or conflict backup must never overwrite a file the plan did not account for** *(added 2026-07-17, R7/R8)*. A remote move whose destination is already occupied locally resolves by occupant: tracked content (its bytes are on Drive) may be clobbered; **untracked local-only content is preserved as a conflict copy** (backed up before the move, then uploaded), with the move `ProtectedBy` that backup. Occupant-preserving backups order before the moves that reclaim their paths. At execution both `MoveLocal` and `ConflictBackup` re-stat the destination immediately before the rename and refuse on any unexpected occupant — the same overwrite guard downloads carry (§7); a racing local write wins the cycle and reconciles next.
 - Actions touching the same rel_path, or an ancestor/descendant pair, never run concurrently. Transfers may otherwise run in a small worker pool; plan generation and DB commits are serialized.
 
 ### 4.6 Crash resume
@@ -104,13 +105,13 @@ rel_paths are posix-style, never absolute, no `.`/`..` segments. Behavior adapts
 
 ## 6. Guards
 
-- **Mass delete:** a plan that trashes/quarantines more than `mass_delete_threshold` of tracked items (and more than 10 absolute) aborts with a report; requires `--confirm-deletes`. The daemon never self-confirms; it logs loudly, surfaces the block in `status`, and keeps syncing everything else.
+- **Mass delete:** a plan that trashes/quarantines more than `mass_delete_threshold` of tracked items (and more than 10 absolute) requires `--confirm-deletes`. The **interactive one-shot `sync` aborts the whole cycle** with the report and hint. The **daemon never self-confirms and never blocks the whole cycle**: it strips only the delete-class actions, executes everything else, logs loudly, and surfaces the block in `status` until the human confirms. *(Split clarified 2026-07-17: the daemon previously aborted the entire cycle, contradicting "keeps syncing everything else"; now it defers only the deletes.)*
 - **Sync dir sanity:** missing, unreadable, not-a-directory, or empty-while-baseline-nonempty → hard error, no plan executed.
 - **Single instance:** file lock in the config dir. Read-only commands never take it.
 
 ## 7. Transfer protocol
 
-- **Downloads:** stream to `.synckeeper.tmp.<random>` in the destination directory, md5 computed on the fly and verified against Drive's checksum, fsync, atomic rename onto the target, fsync parent dir, then commit. **Overwrite guard:** immediately before the rename, the target is re-statted; if size/mtime no longer match what the cycle's scan observed, the download is abandoned and requeued (the local edit wins this round and reconciles next cycle). *(Added 2026-07-17.)*
+- **Downloads:** stream to `.synckeeper.tmp.<random>` in the destination directory, md5 computed on the fly and verified against Drive's checksum, fsync, atomic rename onto the target, fsync parent dir, then commit. **Overwrite guard:** immediately before the rename, the target is re-statted; if size/mtime no longer match what the cycle's scan observed, the download is abandoned and requeued (the local edit wins this round and reconciles next cycle). *(Added 2026-07-17.)* The same guard applies to the two other rename primitives that land on a local path — **`MoveLocal` and `ConflictBackup`** re-stat their destination and refuse an unexpected occupant (§4.5). *(Extended 2026-07-17, R7/R8.)*
 - **Uploads:** hash before upload; chunked resumable media (8 MB chunks) above 5 MB, simple upload otherwise. Commit only after Drive returns metadata whose checksum matches the pre-upload hash; if the file changed mid-upload, commit nothing new — the next scan sees it dirty and re-uploads.
 - **Retries:** exponential backoff with jitter on rate-limit/quota and 5xx errors, max 5 attempts; hard failures stay journaled for the next cycle.
 
@@ -196,10 +197,10 @@ SQLite via `database/sql`, WAL, single connection, writes serialized. Versioned 
 
 The test matrix in [testing.md](testing.md) is the ledger; a feature is done when its rows pass. Summary of what must hold:
 
-1. **Reconcile:** every decision-table row covered by table-driven tests; move pairing; directory ordering; dependency ordering of §4.5 (regression tests R1, R2).
+1. **Reconcile:** every decision-table row covered by table-driven tests; move pairing; directory ordering; dependency ordering of §4.5 (regression tests R1, R2); move/backup destination-overwrite guard (R7, R8).
 2. **Scenarios S1–S8** on the fake backend: create/edit/delete/rename each direction, conflicts preserved on all machines, edit-beats-delete both orders, deep trees.
 3. **Faults F1–F5:** crash at every checkpoint then rerun converges; lost DB repaired additively; unmounted dir is a hard error.
-4. **Guards G1–G2** block without confirmation and surface in `status`.
+4. **Guards G1–G3** block without confirmation and surface in `status`; the daemon defers the deletes and keeps syncing everything else (G3).
 5. **Names N1–N3:** case-collision collapse, normalization collapse (both probe-gated), duplicates — nothing silently clobbered, everything reported.
 6. **Daemon:** heartbeat/liveness classification, activity with direction labels, control round-trips, reload hot/cold split, degradation to polling and recovery, guard block visible and clearable while the daemon keeps running.
 7. **Randomized convergence (FZ1):** a seeded fuzzer drives random op sequences (edits/moves/deletes/conflicts across N simulated machines, random crash points) and asserts convergence and no-content-loss; failures replay deterministically from the seed. *(Adopted 2026-07-17 from Dropbox's testing approach.)*

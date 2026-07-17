@@ -252,6 +252,54 @@ func TestG1MassDeleteBlocked(t *testing.T) {
 	}
 }
 
+// --- G3 (spec §8.1): the daemon defers a mass delete — it keeps syncing
+// everything else and surfaces the block, instead of aborting the whole cycle.
+func TestG3DaemonDefersMassDeleteButSyncsRest(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+
+	for i := 0; i < 12; i++ {
+		a.write(t, fmt.Sprintf("bulk-%02d.txt", i), fmt.Sprintf("content %d", i))
+	}
+	a.sync(t)
+
+	// Delete 11 of 12 (over the threshold) and add an unrelated new file.
+	for i := 0; i < 11; i++ {
+		a.remove(t, fmt.Sprintf("bulk-%02d.txt", i))
+	}
+	a.write(t, "new.txt", "fresh content")
+
+	res, err := a.eng.Sync(context.Background(), Options{DeferMassDelete: true})
+	if err != nil {
+		t.Fatalf("deferred mass delete must not error: %v", err)
+	}
+	if !res.GuardBlocked {
+		t.Error("res.GuardBlocked = false, want the block surfaced")
+	}
+	if res.Failed != 0 {
+		t.Fatalf("failed = %d, want 0: %v", res.Failed, res.Errors)
+	}
+	// The deletes were deferred: all 12 originals still on Drive, plus the new
+	// upload that synced despite the block.
+	children, _ := fake.List(context.Background(), root)
+	if len(children) != 13 {
+		t.Fatalf("remote has %d files, want 13 (12 originals kept + new upload)", len(children))
+	}
+	if countByName(t, fake, root, "new.txt") != 1 {
+		t.Error("new.txt was not uploaded; the daemon must sync everything else")
+	}
+
+	// Confirming lets the deletes through on the next cycle.
+	res, err = a.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+	if err != nil || res.Failed > 0 {
+		t.Fatalf("confirmed sync: err=%v failed=%d", err, res.Failed)
+	}
+	children, _ = fake.List(context.Background(), root)
+	if len(children) != 2 {
+		t.Errorf("remote has %d files after confirm, want 2 (bulk-11 + new.txt)", len(children))
+	}
+}
+
 // --- G2: empty dir with populated DB -> hard error ------------------------
 
 func TestG2EmptyDirBlocked(t *testing.T) {

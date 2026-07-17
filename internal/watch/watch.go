@@ -8,7 +8,6 @@ package watch
 
 import (
 	"context"
-	"errors"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -20,7 +19,6 @@ import (
 
 	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
-	"github.com/macsimbodnar/synckeeper/internal/guards"
 	"github.com/macsimbodnar/synckeeper/internal/names"
 )
 
@@ -123,6 +121,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 			continue
 		}
 
+		// The daemon never self-confirms a mass delete and never blocks the
+		// whole cycle on it: it syncs everything else and surfaces the block
+		// in status (spec §8.1).
+		opts.DeferMassDelete = true
 		start := time.Now()
 		res, err := w.Eng.Sync(ctx, opts)
 		dur := time.Since(start)
@@ -130,14 +132,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case ctx.Err() != nil:
 			return nil
 		case err != nil:
-			// Guards (mass delete, missing dir) land here too: keep the
-			// daemon alive and loudly wait for the human.
-			guardBlocked := errors.Is(err, guards.ErrMassDelete)
-			guardReason := ""
-			if guardBlocked {
-				guardReason = err.Error()
-			}
-			rec.cycleDone(res, dur, err, ModeBackoff, time.Now().Add(backoff), guardBlocked, guardReason)
+			// Hard errors (missing/unreadable sync dir, remote refresh failure,
+			// ...): keep the daemon alive, back off, and wait loudly. A
+			// mass-delete guard no longer lands here — the daemon defers it and
+			// syncs everything else (recorded via res.GuardBlocked below).
+			rec.cycleDone(res, dur, err, ModeBackoff, time.Now().Add(backoff), false, "")
 			rec.recordError(err)
 			slog.Error("sync cycle failed; will retry", "err", err, "backoff", backoff)
 			select {
@@ -186,7 +185,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if rec.isPaused() {
 				mode = ModePaused
 			}
-			rec.cycleDone(res, dur, nil, mode, time.Now().Add(w.Poll), false, "")
+			if res.GuardBlocked {
+				slog.Warn("mass-delete guard blocked deletions; synced everything else and waiting for --confirm-deletes",
+					"reason", res.GuardReason)
+			}
+			rec.cycleDone(res, dur, nil, mode, time.Now().Add(w.Poll), res.GuardBlocked, res.GuardReason)
 			rec.recordActivity(res)
 		}
 	}

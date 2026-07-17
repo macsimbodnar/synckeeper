@@ -39,8 +39,9 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | ID | Guard | Expected | Status |
 |---|---|---|---|
-| G1 | Delete 50% of files | Blocked without `--confirm-deletes` | passing (2026-07-08, unit + scenario level) |
+| G1 | Delete 50% of files | Blocked without `--confirm-deletes` (interactive one-shot aborts the cycle) | passing (2026-07-08, unit + scenario level) |
 | G2 | Empty local dir with populated DB | Hard error | passing (2026-07-08, unit + scenario level) |
+| G3 | Mass delete under the daemon (`DeferMassDelete`) | Deletes deferred, everything else synced, block surfaced in status (spec §8.1) | passing (2026-07-17) — `TestG3DaemonDefersMassDeleteButSyncsRest` (engine) |
 
 ## Multi-machine matrix (phase 4)
 
@@ -105,6 +106,8 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | R4 | Local edit landing between scan and download is not overwritten (requeued) | passing (2026-07-17) — `TestR4MidCycleEditBecomesConflictNotLoss` (engine), `TestR4DownloadRefusedWhenTargetDriftsMidCycle` + `TestR4DownloadRefusedWhenTargetAppearsMidCycle` (executor) |
 | R5 | Read-only commands neither migrate nor break on schema mismatch | passing (2026-07-17) — `TestR5OpenReadNeverMigrates` (statedb) |
 | R6 | Cross-rename swap (a↔b same cycle) converges to the correct state within bounded cycles (transient move failures accepted; no lying records) | passing (2026-07-17) — `TestR6RemoteFileSwapConverges` (engine); found + fixed silent divergence via unprotected Record |
+| R7 | Remote move onto an untracked local file → the occupant is preserved as a conflict copy (backed up + uploaded), never clobbered by `MoveLocal` (adversarial analysis; was: silent local data loss reported as success) | passing (2026-07-17) — `TestR7RemoteMoveOntoUntrackedLocalFilePreserved` (engine), `TestRemoteMoveOntoUntrackedLocalFilePreserved` (reconcile), `TestR7MoveLocalRefusesUnexpectedOccupant` (executor) |
+| R8 | `ConflictBackup` refuses to overwrite an existing file at its destination (crash-leftover copy) | passing (2026-07-17) — `TestR8ConflictBackupRefusesExistingDestination` (executor) |
 | N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | todo |
 | FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay | todo |
 | W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo |

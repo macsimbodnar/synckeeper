@@ -415,6 +415,52 @@ func TestRemoteMovePlusConflictBacksUpFromCurrentPath(t *testing.T) {
 	}
 }
 
+// R7 regression (adversarial analysis 2026-07-17, testing.md): a remote move
+// whose destination is occupied by an untracked local file must preserve that
+// file as a conflict copy (backed up before the move, uploaded), never let the
+// MoveLocal clobber it. The backup orders before the move it protects, and the
+// move is ProtectedBy the backup.
+func TestRemoteMoveOntoUntrackedLocalFilePreserved(t *testing.T) {
+	got, _ := Plan(Input{
+		Base:    map[string]BaseItem{"a.txt": baseFile("X", "mA", 2)},
+		Local:   map[string]LocalItem{"a.txt": locFile("mA", 2), "b.txt": locFile("mB", 5)},
+		Remote:  map[string]RemoteItem{"b.txt": remFile("X", "mA", 2, 2)},
+		Machine: "test_box",
+		Now:     testNow,
+	})
+	cp := "b" + conflictSuffix + ".txt"
+	want := []step{
+		{t: ConflictBackup, rel: "b.txt", newRel: cp},
+		{t: MoveLocal, rel: "a.txt", newRel: "b.txt"},
+		{t: Upload, rel: cp},
+		{t: Record, rel: "b.txt"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("plan length = %d, want %d\ngot: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Type != w.t || g.RelPath != w.rel {
+			t.Errorf("step %d = %s %q, want %s %q", i, g.Type, g.RelPath, w.t, w.rel)
+		}
+		if w.newRel != "" && g.NewRelPath != w.newRel {
+			t.Errorf("step %d newRelPath = %q, want %q", i, g.NewRelPath, w.newRel)
+		}
+	}
+	for _, a := range got {
+		switch a.Type {
+		case MoveLocal:
+			if a.ProtectedBy != "b.txt" {
+				t.Errorf("MoveLocal ProtectedBy = %q, want %q (the backup that vacates its destination)", a.ProtectedBy, "b.txt")
+			}
+		case Upload:
+			if a.ProtectedBy != "b.txt" {
+				t.Errorf("Upload ProtectedBy = %q, want %q", a.ProtectedBy, "b.txt")
+			}
+		}
+	}
+}
+
 // R2 regression (2026-07-17, testing.md): a local dir move must order before
 // any MkdirLocal — a mkdir beneath the moved dir would scaffold the move's
 // destination and the rename would fail every cycle.
