@@ -141,7 +141,8 @@ func Plan(in Input) ([]Action, []Skip) {
 			case localChanged && replaced && newRem.MD5 == loc.MD5:
 				// Same new content arrived on both sides independently.
 				transfers = append(transfers, Action{Type: Record, RelPath: p, FileID: newRem.FileID,
-					MD5: newRem.MD5, Size: newRem.Size, Version: newRem.Version})
+					MD5: newRem.MD5, Size: newRem.Size, Version: newRem.Version,
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
 				claimed[p] = true
 			case localChanged && replaced:
 				cp := conflicts.Path(p, in.Machine, in.Now)
@@ -166,11 +167,20 @@ func Plan(in Input) ([]Action, []Skip) {
 			switch {
 			case !localChanged && !remoteContentChanged:
 				if b.MtimeNS != loc.MtimeNS || b.Size != loc.Size || b.DriveVersion != ra.item.Version {
-					transfers = append(transfers, Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
-						MD5: b.MD5, Size: loc.Size, Version: ra.item.Version})
+					act := Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
+						MD5: b.MD5, Size: loc.Size, Version: ra.item.Version,
+						LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS}
+					if remoteMoved {
+						act.ProtectedBy = expected // the record acts on the moved file
+					}
+					transfers = append(transfers, act)
 				}
 			case localChanged && !remoteContentChanged:
-				transfers = append(transfers, Action{Type: UpdateRemote, RelPath: pathNow, FileID: b.FileID})
+				act := Action{Type: UpdateRemote, RelPath: pathNow, FileID: b.FileID}
+				if remoteMoved {
+					act.ProtectedBy = expected // upload must read the moved file, not a stranger
+				}
+				transfers = append(transfers, act)
 			case !localChanged && remoteContentChanged:
 				// The download replaces the scanned local file (moved into
 				// place first when the remote also renamed it).
@@ -179,8 +189,13 @@ func Plan(in Input) ([]Action, []Skip) {
 					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
 			case loc.MD5 == ra.item.MD5:
 				// Both changed to identical content; record, no transfer.
-				transfers = append(transfers, Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
-					MD5: loc.MD5, Size: loc.Size, Version: ra.item.Version})
+				act := Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
+					MD5: loc.MD5, Size: loc.Size, Version: ra.item.Version,
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS}
+				if remoteMoved {
+					act.ProtectedBy = expected
+				}
+				transfers = append(transfers, act)
 			default:
 				// True conflict: local becomes the conflicted copy — backed
 				// up from its current location — and remote keeps the
@@ -219,7 +234,8 @@ func Plan(in Input) ([]Action, []Skip) {
 			if r.MD5 == loc.MD5 {
 				// Adopt: identical content already on both sides.
 				transfers = append(transfers, Action{Type: Record, RelPath: p, FileID: r.FileID,
-					MD5: r.MD5, Size: r.Size, Version: r.Version})
+					MD5: r.MD5, Size: r.Size, Version: r.Version,
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
 			} else {
 				cp := conflicts.Path(p, in.Machine, in.Now)
 				moves = append(moves, Action{Type: ConflictBackup, RelPath: p, NewRelPath: cp})

@@ -104,7 +104,7 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | R3 | `init --force` rebuilds the remote mirror (no silently missed remote changes) | passing (2026-07-17) — `TestR3ForceReinitSeesPriorRemoteChanges` (cmd) |
 | R4 | Local edit landing between scan and download is not overwritten (requeued) | passing (2026-07-17) — `TestR4MidCycleEditBecomesConflictNotLoss` (engine), `TestR4DownloadRefusedWhenTargetDriftsMidCycle` + `TestR4DownloadRefusedWhenTargetAppearsMidCycle` (executor) |
 | R5 | Read-only commands neither migrate nor break on schema mismatch | passing (2026-07-17) — `TestR5OpenReadNeverMigrates` (statedb) |
-| R6 | Cross-rename swap (a↔b same cycle) self-heals within bounded cycles | todo |
+| R6 | Cross-rename swap (a↔b same cycle) converges to the correct state within bounded cycles (transient move failures accepted; no lying records) | passing (2026-07-17) — `TestR6RemoteFileSwapConverges` (engine); found + fixed silent divergence via unprotected Record |
 | N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | todo |
 | FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay | todo |
 | W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo |

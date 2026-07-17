@@ -72,10 +72,12 @@ type Action struct {
 	MD5        string // expected content md5 (download verify, record rows)
 	Version    int64  // remote version for record rows
 
-	// ProtectedBy names the ConflictBackup (by its RelPath) that preserves
-	// the content this action would otherwise destroy or depend on. The
-	// executor must not run the action if that backup failed — durability
-	// invariant 7: destruction never outruns protection.
+	// ProtectedBy names the moves-stage action (a ConflictBackup or a local
+	// move, by its source RelPath) that must have succeeded for this action
+	// to act on the right file. The executor refuses the action if that
+	// predecessor failed — durability invariant 7: destruction (and
+	// recording, which overwrites the baseline's truth) never outruns
+	// protection.
 	ProtectedBy string
 
 	// Downloads: the local state the plan assumes will be at RelPath when

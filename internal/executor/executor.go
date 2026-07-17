@@ -56,9 +56,9 @@ type Executor struct {
 	QuarantineDir string
 	RootID        string
 
-	mu            sync.Mutex
-	pathIDs       map[string]string // rel_path -> drive file id, for parent lookup
-	failedBackups map[string]bool   // ConflictBackup sources that failed this run (invariant 7)
+	mu               sync.Mutex
+	pathIDs          map[string]string // rel_path -> drive file id, for parent lookup
+	failedProtectors map[string]bool   // failed ConflictBackup/MoveLocal sources (invariant 7)
 }
 
 // Summary reports what happened.
@@ -80,7 +80,7 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 	for _, it := range items {
 		x.pathIDs[it.RelPath] = it.DriveFileID
 	}
-	x.failedBackups = map[string]bool{}
+	x.failedProtectors = map[string]bool{}
 
 	ops := make([]statedb.PendingOp, len(plan))
 	for i, a := range plan {
@@ -219,14 +219,15 @@ func (x *Executor) setPathID(rel, id string) {
 	x.pathIDs[rel] = id
 }
 
-// noteFailure records a failed conflict backup so actions it protects are
-// refused for the rest of the run (invariant 7).
+// noteFailure records a failed protector — a conflict backup or a local
+// move — so actions that depend on it are refused for the rest of the run
+// (invariant 7).
 func (x *Executor) noteFailure(a reconcile.Action) {
-	if a.Type != reconcile.ConflictBackup {
+	if a.Type != reconcile.ConflictBackup && a.Type != reconcile.MoveLocal {
 		return
 	}
 	x.mu.Lock()
-	x.failedBackups[a.RelPath] = true
+	x.failedProtectors[a.RelPath] = true
 	x.mu.Unlock()
 }
 
@@ -236,10 +237,10 @@ func (x *Executor) execute(ctx context.Context, opID int64, a reconcile.Action) 
 	// transfer starts.
 	if a.ProtectedBy != "" {
 		x.mu.Lock()
-		failed := x.failedBackups[a.ProtectedBy]
+		failed := x.failedProtectors[a.ProtectedBy]
 		x.mu.Unlock()
 		if failed {
-			return fmt.Errorf("not executed: the conflict backup of %s failed and this action depends on it; local content preserved, replanning next cycle", a.ProtectedBy)
+			return fmt.Errorf("not executed: the move/backup of %s failed and this action depends on it; leaving everything alone, replanning next cycle", a.ProtectedBy)
 		}
 	}
 	switch a.Type {
@@ -519,6 +520,15 @@ func (x *Executor) record(opID int64, a reconcile.Action) error {
 		info, err := os.Stat(x.abs(a.RelPath))
 		if err != nil {
 			return err
+		}
+		// A record overwrites the baseline's truth, so the file present must
+		// be the one the plan observed (invariant 7) — renames preserve size
+		// and mtime, so the scanned stat still identifies it after a move.
+		// Recording a planned md5 against a different file would poison the
+		// baseline: the scanner would trust the wrong hash from then on.
+		if a.LocalExists && (info.Size() != a.LocalSize || info.ModTime().UnixNano() != a.LocalMtimeNS) {
+			return fmt.Errorf("local file does not match what the plan observed (size %d mtime %d, scanned %d/%d); refusing to record, replanning next cycle",
+				info.Size(), info.ModTime().UnixNano(), a.LocalSize, a.LocalMtimeNS)
 		}
 		item.Size = info.Size()
 		item.LocalMtimeNS = info.ModTime().UnixNano()

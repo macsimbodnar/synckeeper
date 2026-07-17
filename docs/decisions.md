@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-17 — R6: the swap "self-heals" claim was wrong — records must be protected and verified
+
+**Context:** W1.6 was planned as verification-only: the 2026-07-17 review analysis claimed a same-cycle remote cross-rename (a↔b, ids preserved) self-heals with transient noise. **The test disproved the claim** — correcting the record here since decisions.md carried it. Actual pre-fix behavior: the two local moves collide on the path-unique DB rows (FS rename succeeds, DB rolls back), and an unprotected `Record` then stamped its *planned* md5 onto whichever file actually sat at the path. The poisoned baseline (right size, right mtime, wrong hash) made the scanner trust the wrong content forever: local showed stale content while Drive held newer — permanent, silent, no cycle would ever repair it. No bytes were lost (everything stayed on Drive), but "keeps the folders identical" failed invisibly, which is exactly what invariant 7 exists to prevent.
+
+**Decision (agent, extending the pre-agreed W1 mechanisms):** no new machinery — the two existing invariant-7 mechanisms generalize. (1) `ProtectedBy` now also names **local moves**: a `Record` or `UpdateRemote` acting at a moved file's destination is refused when that move failed (the executor tracks failed `MoveLocal` sources exactly like failed backups). (2) `Record` reuses the R4 stat-pinning: every file-level record carries the scanned size/mtime (renames preserve both, so the check holds across successful moves) and refuses to commit when the file present isn't the file observed — recording overwrites the baseline's *truth*, so it counts as destruction under invariant 7. The transient unique-constraint move failures themselves stay unfixed deliberately: with truthful records the download/adopt path reaches the **correct** swapped state in ~4 cycles, and a proper two-phase rename dance for the swap edge isn't worth the complexity.
+
+**Consequences:** all file-level `Record` sites carry the scanned stat; move-dependent records/uploads carry `ProtectedBy`. The R6 test pins bounded convergence to the correct state, zero conflict copies, on two machines. Suite + `-race` green. Lesson recorded for the W4 fuzzer: "analysis says it's fine" is exactly what the fuzzer exists to check.
+
 ## 2026-07-17 — R4 fix: downloads pin the target to the plan's assumption; any drift refuses the rename
 
 **Context:** W1.4 — the download overwrite window. Between the scan and the download's atomic rename, a local write to the target was silently destroyed by the replace (uploads already had a mid-change guard; downloads had none).

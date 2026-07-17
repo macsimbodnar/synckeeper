@@ -191,6 +191,119 @@ func TestR4MidCycleEditBecomesConflictNotLoss(t *testing.T) {
 	}
 }
 
+// R6: a same-cycle remote cross-rename (a.txt and b.txt swap names, both
+// keeping their ids) is the worst case for path-keyed row updates: the two
+// local moves collide with each other's DB rows and fail transiently.
+// Transient failures are accepted — but the tree MUST converge to the
+// correct swapped state within a bounded number of cycles, with no content
+// lost and no conflict copies.
+//
+// Before the fix this test exposed silent permanent divergence, worse than
+// the review's "self-heals" analysis: after the moves half-failed (FS
+// renamed, DB rolled back), an unprotected Record stamped the PLANNED md5
+// onto whichever file actually sat at the path. The baseline then lied,
+// the scanner trusted the lie (same size/mtime), and no later cycle ever
+// looked again — a.txt showed stale content forever. Fixed by extending
+// ProtectedBy to local moves (a record/upload of a moved file is refused
+// when its move failed) and by Records verifying the scanned stat before
+// overwriting the baseline's truth (invariant 7).
+func TestR6RemoteFileSwapConverges(t *testing.T) {
+	ctx := context.Background()
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	b := newMachine(t, "b", fake, rootID)
+
+	a.write(t, "a.txt", "content-A")
+	a.write(t, "b.txt", "content-B")
+	a.sync(t)
+	b.sync(t)
+
+	// Swap remotely via a temp name, as a human (or another client) would:
+	// a -> tmp, b -> a, tmp -> b. Ids are preserved throughout.
+	items, err := fake.List(ctx, rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, it := range items {
+		ids[it.Name] = it.ID
+	}
+	for _, mv := range []struct{ id, name string }{
+		{ids["a.txt"], "swap-tmp"},
+		{ids["b.txt"], "a.txt"},
+		{ids["a.txt"], "b.txt"},
+	} {
+		if _, err := fake.Move(ctx, mv.id, rootID, mv.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	converged := false
+	for i := 1; i <= 6; i++ {
+		res, err := a.eng.Sync(ctx, Options{})
+		if err != nil {
+			t.Fatalf("cycle %d: %v", i, err)
+		}
+		t.Logf("cycle %d: plan=%d executed=%d failed=%d errors=%v",
+			i, len(res.Plan), res.Executed, res.Failed, res.Errors)
+		if res.Failed == 0 && len(res.Plan) == 0 {
+			converged = true
+			break
+		}
+	}
+	if !converged {
+		t.Fatal("swap did not converge within 6 cycles")
+	}
+
+	// Final state: contents swapped, nothing lost, no conflict copies.
+	if got := a.read(t, "a.txt"); got != "content-B" {
+		t.Errorf("a.txt = %q, want %q", got, "content-B")
+	}
+	if got := a.read(t, "b.txt"); got != "content-A" {
+		t.Errorf("b.txt = %q, want %q", got, "content-A")
+	}
+	if n := countConflictCopies(t, a.dir); n != 0 {
+		t.Errorf("found %d conflict copies, want 0", n)
+	}
+
+	// Machine B walks the same transient failures and must converge too.
+	bConverged := false
+	for i := 1; i <= 6; i++ {
+		res, err := b.eng.Sync(ctx, Options{})
+		if err != nil {
+			t.Fatalf("[b] cycle %d: %v", i, err)
+		}
+		if res.Failed == 0 && len(res.Plan) == 0 {
+			bConverged = true
+			break
+		}
+	}
+	if !bConverged {
+		t.Fatal("[b] swap did not converge within 6 cycles")
+	}
+	if got := b.read(t, "a.txt"); got != "content-B" {
+		t.Errorf("[b] a.txt = %q, want %q", got, "content-B")
+	}
+	if got := b.read(t, "b.txt"); got != "content-A" {
+		t.Errorf("[b] b.txt = %q, want %q", got, "content-A")
+	}
+	if n := countConflictCopies(t, b.dir); n != 0 {
+		t.Errorf("[b] found %d conflict copies, want 0", n)
+	}
+}
+
+func countConflictCopies(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.Contains(d.Name(), " (conflict ") {
+			n++
+		}
+		return nil
+	})
+	return n
+}
+
 // findConflictCopy returns the rel_path of the single conflict copy under
 // dir, failing the test if none (or more than one) exists.
 func findConflictCopy(t *testing.T, dir string) string {

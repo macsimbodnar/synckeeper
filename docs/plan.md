@@ -19,7 +19,7 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 
 Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`. Work strictly in order within a workstream; W1 blocks everything else (correctness first). W2–W5 order is the recommended sequence on the primary platform; W6+ follow the spec roadmap.
 
-### W1 — Correctness fixes (from the 2026-07-17 review) — `in progress`
+### W1 — Correctness fixes (from the 2026-07-17 review) — `done (2026-07-17)`
 
 Reproduced bugs first; each fix lands with its regression test (testing.md R1/R2, plus rows below).
 
@@ -28,7 +28,7 @@ Reproduced bugs first; each fix lands with its regression test (testing.md R1/R2
 3. **`init --force` leaves a stale remote mirror** — **done 2026-07-17.** It reset the page token without rebuilding the cache → silently missed remote changes. Fixed per spec §12: `initialize` now calls `remotedelta.ForceFullWalk` (fresh token + mirror rebuild in one step); a fresh `init` gets a pre-warmed mirror as a side benefit. Test: testing.md R3.
 4. **Download overwrite window** — **done 2026-07-17.** Downloads now carry the local state the plan assumed at the target (scanned size/mtime, or "absent" for conflict-vacated and edit-beats-delete targets); the executor re-stats immediately before the atomic rename and refuses on any drift — the racing local write wins the cycle and the next cycle resolves it as an ordinary conflict. Tests: testing.md R4.
 5. **Read-only commands can migrate the DB without the lock** — **done 2026-07-17.** `statedb.OpenRead` accepts only an exact schema-version match (older → "run `sync` once with this binary"; newer → "binary too old"; missing DB never created); `openReadEnv` uses it, treating a missing DB as not-initialized. Migrations now run only under the instance lock (spec §14). Test: testing.md R5.
-6. Sweep: transient unique-constraint failures on cross-rename swaps self-heal — verify with a test, document as accepted noise if so.
+6. **Swap-rename sweep** — **done 2026-07-17, and the review's "self-heals" analysis was wrong.** The verification test exposed *silent permanent divergence*: after the swap's moves half-failed (FS renamed, DB rolled back), an unprotected `Record` stamped the planned md5 onto whichever file sat at the path — a poisoned baseline the scanner trusted forever. Fixed by extending `ProtectedBy` to local moves (records/uploads of a moved file are refused when its move failed) and by `Record` verifying the scanned stat before overwriting the baseline (invariant 7). The transient unique-constraint move failures remain as accepted noise; convergence to the *correct* state within ~4 cycles is now pinned by the test. Tests: testing.md R6.
 
 ### W2 — Spec alignment & hygiene — `not started`
 
