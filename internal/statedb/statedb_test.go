@@ -1,7 +1,9 @@
 package statedb
 
 import (
+	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -75,5 +77,70 @@ func TestRefusesNewerSchema(t *testing.T) {
 	db.Close()
 	if _, err := Open(path); err == nil {
 		t.Fatal("want error opening db with newer schema, got nil")
+	}
+}
+
+// R5 regression (2026-07-17, testing.md): read-only commands run without the
+// instance lock, so their open must never migrate the schema under a live
+// daemon (spec §14). OpenRead accepts only an exact version match, refuses
+// skew in either direction with guidance, and never creates a missing DB.
+func TestR5OpenReadNeverMigrates(t *testing.T) {
+	// Exact version: reads work.
+	path := filepath.Join(t.TempDir(), "state.db")
+	db := open(t, path)
+	if err := db.SetDaemonStatus(DaemonStatus{Running: true, PID: 42}); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	rdb, err := OpenRead(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds, err := rdb.GetDaemonStatus(); err != nil || ds.PID != 42 {
+		t.Fatalf("GetDaemonStatus = %+v, %v; want PID 42", ds, err)
+	}
+	rdb.Close()
+
+	// Older schema: refused, and the version marker must stay untouched.
+	oldPath := filepath.Join(t.TempDir(), "old.db")
+	odb := open(t, oldPath)
+	if err := odb.SetMeta(MetaSchemaVersion, "2"); err != nil {
+		t.Fatal(err)
+	}
+	odb.Close()
+	if _, err := OpenRead(oldPath); err == nil {
+		t.Fatal("want refusal opening an older-schema db read-only, got nil")
+	}
+	raw, err := sql.Open("sqlite", oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var v string
+	if err := raw.QueryRow(`select value from meta where key = ?`, MetaSchemaVersion).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v != "2" {
+		t.Fatalf("schema_version = %q after OpenRead; the read path migrated the db", v)
+	}
+
+	// Newer schema: refused.
+	newPath := filepath.Join(t.TempDir(), "new.db")
+	ndb := open(t, newPath)
+	if err := ndb.SetMeta(MetaSchemaVersion, "999"); err != nil {
+		t.Fatal(err)
+	}
+	ndb.Close()
+	if _, err := OpenRead(newPath); err == nil {
+		t.Fatal("want refusal opening a newer-schema db read-only, got nil")
+	}
+
+	// Missing db: refused without creating the file.
+	missing := filepath.Join(t.TempDir(), "missing.db")
+	if _, err := OpenRead(missing); err == nil {
+		t.Fatal("want error opening a missing db read-only, got nil")
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("OpenRead created %s (stat err %v); it must never create a db", missing, err)
 	}
 }

@@ -39,7 +39,13 @@ func openReadEnv() (*readEnv, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := statedb.Open(statedb.Path(configDir))
+	dbPath := statedb.Path(configDir)
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, errNotInitialized
+	}
+	// OpenRead, not Open: read commands hold no instance lock, so they must
+	// never migrate the schema under a live daemon (spec §14).
+	db, err := statedb.OpenRead(dbPath)
 	if err != nil {
 		return nil, err
 	}

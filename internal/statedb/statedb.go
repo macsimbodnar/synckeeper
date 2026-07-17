@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -111,9 +112,13 @@ func Path(configDir string) string {
 	return filepath.Join(configDir, "state.db")
 }
 
+func dsn(path string) string {
+	return path + "?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
+}
+
 // Open opens (creating and migrating if needed) the database at path.
 func Open(path string) (*DB, error) {
-	handle, err := sql.Open("sqlite", path+"?_pragma=journal_mode(wal)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)")
+	handle, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, fmt.Errorf("open state db: %w", err)
 	}
@@ -128,22 +133,65 @@ func Open(path string) (*DB, error) {
 	return db, nil
 }
 
+// OpenRead opens an existing database for read-only commands, which run
+// WITHOUT the instance lock and therefore must never migrate the schema
+// under a live daemon (spec §14). It accepts only an exact schema-version
+// match — skew in either direction is refused with guidance — and it never
+// creates a missing database.
+func OpenRead(path string) (*DB, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("no state db at %s: run `synckeeper init` first", path)
+		}
+		return nil, err
+	}
+	handle, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		return nil, fmt.Errorf("open state db: %w", err)
+	}
+	handle.SetMaxOpenConns(1)
+	db := &DB{sql: handle}
+	version, err := db.schemaVersion()
+	if err != nil {
+		handle.Close()
+		return nil, err
+	}
+	switch {
+	case version < len(migrations):
+		handle.Close()
+		return nil, fmt.Errorf("state db schema v%d predates this binary (v%d); run `synckeeper sync` once — or restart the daemon — with this binary to migrate, then retry", version, len(migrations))
+	case version > len(migrations):
+		handle.Close()
+		return nil, fmt.Errorf("state db schema version %d is newer than this binary supports (%d)", version, len(migrations))
+	}
+	return db, nil
+}
+
 func (d *DB) Close() error { return d.sql.Close() }
 
-func (d *DB) migrate() error {
-	version := 0
+// schemaVersion reads the recorded schema version; 0 means a fresh
+// (pre-migration) database.
+func (d *DB) schemaVersion() (int, error) {
 	var v string
 	err := d.sql.QueryRow(`select value from meta where key = ?`, MetaSchemaVersion).Scan(&v)
 	switch {
 	case err == nil:
-		version, err = strconv.Atoi(v)
-		if err != nil {
-			return fmt.Errorf("corrupt schema_version %q: %w", v, err)
+		n, aerr := strconv.Atoi(v)
+		if aerr != nil {
+			return 0, fmt.Errorf("corrupt schema_version %q: %w", v, aerr)
 		}
+		return n, nil
 	case isMissingTable(err):
-		version = 0
+		return 0, nil
 	default:
-		return fmt.Errorf("read schema version: %w", err)
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+}
+
+func (d *DB) migrate() error {
+	version, err := d.schemaVersion()
+	if err != nil {
+		return err
 	}
 	if version > len(migrations) {
 		return fmt.Errorf("state db schema version %d is newer than this binary supports (%d)", version, len(migrations))

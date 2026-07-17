@@ -103,7 +103,7 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | R2 | Remote same-id dir rename + new remote subdir → converges (was: mkdir created the move destination; livelock) | passing (2026-07-17) — `TestR2RemoteDirRenameWithNewSubdir` (engine), `TestDirMoveOrdersBeforeMkdirLocal` (reconcile) |
 | R3 | `init --force` rebuilds the remote mirror (no silently missed remote changes) | passing (2026-07-17) — `TestR3ForceReinitSeesPriorRemoteChanges` (cmd) |
 | R4 | Local edit landing between scan and download is not overwritten (requeued) | passing (2026-07-17) — `TestR4MidCycleEditBecomesConflictNotLoss` (engine), `TestR4DownloadRefusedWhenTargetDriftsMidCycle` + `TestR4DownloadRefusedWhenTargetAppearsMidCycle` (executor) |
-| R5 | Read-only commands neither migrate nor break on schema mismatch | todo |
+| R5 | Read-only commands neither migrate nor break on schema mismatch | passing (2026-07-17) — `TestR5OpenReadNeverMigrates` (statedb) |
 | R6 | Cross-rename swap (a↔b same cycle) self-heals within bounded cycles | todo |
 | N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | todo |
 | FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay | todo |
