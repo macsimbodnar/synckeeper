@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
@@ -28,7 +30,7 @@ func TestSnapshotCaseCollision(t *testing.T) {
 	refresh(t, fake, db, rootID)
 
 	// Case-sensitive: both present.
-	snap, _, err := Snapshot(db, rootID, nil, false)
+	snap, _, err := Snapshot(db, rootID, nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +39,7 @@ func TestSnapshotCaseCollision(t *testing.T) {
 	}
 
 	// Case-insensitive: one kept (first by id = a.txt), one reported.
-	snap, skips, err := Snapshot(db, rootID, nil, true)
+	snap, skips, err := Snapshot(db, rootID, nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +57,55 @@ func TestSnapshotCaseCollision(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a case-collision skip, got %v", skips)
+	}
+}
+
+// N2 (spec §5, testing.md): two Drive siblings differing only by Unicode
+// normalization (NFC vs NFD) collapse on a normalization-insensitive FS —
+// first by id kept, the rest skipped and reported; both survive when the FS
+// is normalization-sensitive.
+func TestSnapshotNormalizationCollision(t *testing.T) {
+	ctx := context.Background()
+	fake := driveclient.NewFake()
+	db, rootID := newCache(t, fake)
+	nfcName := norm.NFC.String("café") + ".txt" // composed é
+	nfdName := norm.NFD.String("café") + ".txt" // decomposed e + U+0301
+	if nfcName == nfdName {
+		t.Fatal("test setup: NFC and NFD names are identical")
+	}
+	if _, err := fake.Upload(ctx, rootID, nfcName, strings.NewReader("composed"), 8); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.Upload(ctx, rootID, nfdName, strings.NewReader("decomposed!"), 10); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, fake, db, rootID)
+
+	// Normalization-sensitive: both present (distinct byte names).
+	snap, _, err := Snapshot(db, rootID, nil, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap) != 2 {
+		t.Fatalf("normalization-sensitive: want 2 items, got %d", len(snap))
+	}
+
+	// Normalization-insensitive: one kept, one reported.
+	snap, skips, err := Snapshot(db, rootID, nil, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap) != 1 {
+		t.Fatalf("normalization-insensitive: want 1 item, got %d", len(snap))
+	}
+	found := false
+	for _, s := range skips {
+		if strings.Contains(s.Reason, "normalization-collision") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a normalization-collision skip, got %v", skips)
 	}
 }
 
@@ -200,7 +251,7 @@ func TestMoveInPopulatesSubtree(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, fake, db, rootID)
-	snap, _, err := Snapshot(db, rootID, nil, false)
+	snap, _, err := Snapshot(db, rootID, nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

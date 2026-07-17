@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // TempPrefix marks synckeeper's own temp files; always ignored.
@@ -47,4 +49,23 @@ func Join(parent, name string) string {
 		return name
 	}
 	return parent + "/" + name
+}
+
+// FoldKey returns the key under which a name collides with its siblings on a
+// filesystem that folds case and/or Unicode normalization. Two Drive names
+// that produce the same key map to one path locally, so only the first may be
+// materialized (the rest are skipped and reported). Normalization is folded to
+// NFC; ToLower can denormalize, so a final NFC pass re-canonicalizes when both
+// folds are active. With both flags false this is the identity.
+func FoldKey(name string, caseFold, normFold bool) string {
+	if normFold {
+		name = norm.NFC.String(name)
+	}
+	if caseFold {
+		name = strings.ToLower(name)
+		if normFold {
+			name = norm.NFC.String(name)
+		}
+	}
+	return name
 }

@@ -108,7 +108,7 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | R6 | Cross-rename swap (a↔b same cycle) converges to the correct state within bounded cycles (transient move failures accepted; no lying records) | passing (2026-07-17) — `TestR6RemoteFileSwapConverges` (engine); found + fixed silent divergence via unprotected Record |
 | R7 | Remote move onto an untracked local file → the occupant is preserved as a conflict copy (backed up + uploaded), never clobbered by `MoveLocal` (adversarial analysis; was: silent local data loss reported as success) | passing (2026-07-17) — `TestR7RemoteMoveOntoUntrackedLocalFilePreserved` (engine), `TestRemoteMoveOntoUntrackedLocalFilePreserved` (reconcile), `TestR7MoveLocalRefusesUnexpectedOccupant` (executor) |
 | R8 | `ConflictBackup` refuses to overwrite an existing file at its destination (crash-leftover copy) | passing (2026-07-17) — `TestR8ConflictBackupRefusesExistingDestination` (executor) |
-| N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | todo |
+| N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | passing (2026-07-18) — `TestSnapshotNormalizationCollision` (remotedelta), `TestNormalizationInsensitiveFS` + `TestFoldKey` (names, probe validated on real APFS) |
 | FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay | todo |
 | W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo |
 

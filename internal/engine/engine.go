@@ -36,6 +36,7 @@ type Engine struct {
 	RootID        string
 
 	caseFold *bool // lazily probed once; sync cycles are serialized
+	normFold *bool
 }
 
 // caseInsensitive reports (and caches) whether the sync dir folds case, so
@@ -47,6 +48,17 @@ func (e *Engine) caseInsensitive() bool {
 		e.caseFold = &v
 	}
 	return *e.caseFold
+}
+
+// normInsensitive reports (and caches) whether the sync dir folds Unicode
+// normalization, so remote siblings differing only by NFC/NFD are collapsed
+// instead of colliding on disk.
+func (e *Engine) normInsensitive() bool {
+	if e.normFold == nil {
+		v := names.NormalizationInsensitiveFS(e.SyncDir)
+		e.normFold = &v
+	}
+	return *e.normFold
 }
 
 // Options tweak one run.
@@ -88,7 +100,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	if err := remotedelta.Refresh(ctx, e.Client, e.DB, e.RootID); err != nil {
 		return nil, fmt.Errorf("refresh remote state: %w", err)
 	}
-	remote, remoteSkips, err := remotedelta.Snapshot(e.DB, e.RootID, e.Cfg.Engine.Ignore, e.caseInsensitive())
+	remote, remoteSkips, err := remotedelta.Snapshot(e.DB, e.RootID, e.Cfg.Engine.Ignore, e.caseInsensitive(), e.normInsensitive())
 	if err != nil {
 		return nil, err
 	}

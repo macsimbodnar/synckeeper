@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-18 — W2.2: combined case+normalization fold uses NFC → lower → NFC
+
+**Context:** implementing the normalization folding adopted 2026-07-17 (spec §5). On a filesystem that folds *both* case and Unicode normalization (macOS APFS), two Drive siblings like `CAFÉ.txt` (NFC) and `café.txt` (NFD) map to one local path and must collapse — but a naive `NFC(name)` then `ToLower(...)` does not collapse them, because `ToLower` can denormalize (lowercasing a precomposed letter and a base+combining pair yields different byte sequences).
+
+**Decision (agent-proposed; follows the pre-agreed spec §5 direction):** `names.FoldKey(name, caseFold, normFold)` applies **NFC → ToLower → NFC** when both folds are active (one pass each when only one is active, identity when neither). The trailing NFC re-canonicalizes whatever `ToLower` denormalized, so case and normalization compose. `remotedelta.Snapshot` takes `caseFold, normFold` (both runtime-probed and cached, like the existing case probe) and, on a collision, attributes the cause — case, normalization, or both — by re-folding with one flag dropped, so the skip message reads precisely. Scope stays at the mapping/dedup layer (collapse + report, matching N1); cross-tree normalization matching is unaffected because a downloaded file keeps the remote's byte form on disk and the three trees key on identical bytes.
+
+**Consequences:** `golang.org/x/text/unicode/norm` becomes a direct dependency (pure Go). Tests N2: `TestSnapshotNormalizationCollision`, plus `TestFoldKey` and the APFS-validated `TestNormalizationInsensitiveFS`. Amends spec §5 (implemented note); testing.md N2 passing.
+
 ## 2026-07-17 — W1.7 (R7/R8/G3): the move/backup overwrite guard, and the daemon defers a mass delete
 
 **Context:** an adversarial re-analysis of the whole engine (against the core invariant "never silently lose or corrupt a file") found a **confirmed, critical data-loss bug the W1 review missed**, plus a spec-vs-code gap. The W1 review framed invariant 7 purely as an *ordering* problem and hardened the two local-overwriting primitives it noticed — downloads (R4 stat guard) and records (R6 stat-pin). But `MoveLocal` is a **third** primitive that overwrites a local path by `os.Rename`, and it had no guard: a remote rename/move whose destination name already exists locally as an untracked file silently `os.Rename`d over it. Reproduced end-to-end — `a.txt` renamed to `b.txt` on Drive while an unrelated local `b.txt` exists → the move clobbers the local file, the cycle reports `executed=3 failed=0` (a clean success), and the user's file is gone with no conflict copy and no quarantine. `ConflictBackup` shares the same unguarded-rename shape (R8). Separately (Finding 3): the mass-delete guard aborted the **entire** cycle, contradicting spec §6/§8.1's promise that the daemon "keeps syncing everything else."

@@ -187,6 +187,21 @@ func prune(db *statedb.DB, rootID string) error {
 	return nil
 }
 
+// foldCollisionReason labels a fold collision by its cause: case alone,
+// normalization alone, or both. It attributes to case when dropping the case
+// fold would separate the names, to normalization when dropping the norm fold
+// would, so the common single-cause collisions read precisely.
+func foldCollisionReason(name, first string, caseFold, normFold bool) string {
+	switch {
+	case caseFold && names.FoldKey(name, false, normFold) != names.FoldKey(first, false, normFold):
+		return fmt.Sprintf("case-collision with %q on a case-insensitive filesystem; not synced here", first)
+	case normFold && names.FoldKey(name, caseFold, false) != names.FoldKey(first, caseFold, false):
+		return fmt.Sprintf("normalization-collision with %q on a normalization-insensitive filesystem; not synced here", first)
+	default:
+		return fmt.Sprintf("collides with %q under this filesystem's name folding; not synced here", first)
+	}
+}
+
 func toNode(f driveclient.File, parent string) statedb.RemoteNode {
 	return statedb.RemoteNode{
 		FileID:   f.ID,
@@ -203,10 +218,11 @@ func toNode(f driveclient.File, parent string) statedb.RemoteNode {
 // Snapshot derives the reconcile remote snapshot from the cache: BFS from
 // rootID over non-trashed nodes, skipping Google-native files, ignored and
 // invalid names, and deduplicating same-name siblings (first by id wins).
-// When caseInsensitive is set (the local FS folds case, e.g. APFS), siblings
-// differing only by case also collide: the first by id is kept and the rest
-// are skipped and reported, so a download can never silently clobber another.
-func Snapshot(db *statedb.DB, rootID string, ignore []string, caseInsensitive bool) (map[string]reconcile.RemoteItem, []reconcile.Skip, error) {
+// When the local FS folds case (caseFold, e.g. APFS) and/or Unicode
+// normalization (normFold), siblings that collide under that folding also
+// collapse: the first by id is kept and the rest are skipped and reported, so
+// a download can never silently clobber another.
+func Snapshot(db *statedb.DB, rootID string, ignore []string, caseFold, normFold bool) (map[string]reconcile.RemoteItem, []reconcile.Skip, error) {
 	nodes, err := db.AllRemoteNodes()
 	if err != nil {
 		return nil, nil, err
@@ -228,7 +244,7 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseInsensitive bo
 		kids := children[f.id]
 		sort.Slice(kids, func(i, j int) bool { return kids[i].FileID < kids[j].FileID })
 		seen := map[string]bool{}
-		foldSeen := map[string]string{} // lower(name) -> first actual name kept
+		foldSeen := map[string]string{} // fold key -> first actual name kept
 		for _, n := range kids {
 			rel := names.Join(f.relPath, n.Name)
 			switch {
@@ -244,14 +260,14 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseInsensitive bo
 				skips = append(skips, reconcile.Skip{RelPath: rel, Reason: "duplicate name in Drive folder; kept first by id"})
 				continue
 			}
-			if caseInsensitive {
-				fold := strings.ToLower(n.Name)
-				if first, ok := foldSeen[fold]; ok {
+			if caseFold || normFold {
+				key := names.FoldKey(n.Name, caseFold, normFold)
+				if first, ok := foldSeen[key]; ok {
 					skips = append(skips, reconcile.Skip{RelPath: rel,
-						Reason: fmt.Sprintf("case-collision with %q on a case-insensitive filesystem; not synced here", first)})
+						Reason: foldCollisionReason(n.Name, first, caseFold, normFold)})
 					continue
 				}
-				foldSeen[fold] = n.Name
+				foldSeen[key] = n.Name
 			}
 			seen[n.Name] = true
 			isDir := n.MimeType == driveclient.FolderMimeType
