@@ -27,12 +27,11 @@ type LocalConfig struct {
 }
 
 type EngineConfig struct {
-	PollIntervalSecs       int      `toml:"poll_interval_secs"`
-	FullRescanIntervalSecs int      `toml:"full_rescan_interval_secs"`
-	MassDeleteThreshold    float64  `toml:"mass_delete_threshold"`
-	MachineName            string   `toml:"machine_name"`
-	QuarantineRetentionDays int     `toml:"quarantine_retention_days"`
-	Ignore                 []string `toml:"ignore"`
+	PollIntervalSecs        int      `toml:"poll_interval_secs"`
+	MassDeleteThreshold     float64  `toml:"mass_delete_threshold"`
+	MachineName             string   `toml:"machine_name"`
+	QuarantineRetentionDays int      `toml:"quarantine_retention_days"`
+	Ignore                  []string `toml:"ignore"`
 }
 
 // Dir returns the synckeeper config directory, creating it if needed.
@@ -60,7 +59,6 @@ func Default() Config {
 		Local: LocalConfig{SyncDir: "~/Synckeeper"},
 		Engine: EngineConfig{
 			PollIntervalSecs:        45,
-			FullRescanIntervalSecs:  3600,
 			MassDeleteThreshold:     0.25,
 			MachineName:             machine,
 			QuarantineRetentionDays: 30,
@@ -130,9 +128,6 @@ func (c Config) validate() error {
 	}
 	if c.Engine.PollIntervalSecs <= 0 {
 		return fmt.Errorf("engine.poll_interval_secs must be positive")
-	}
-	if c.Engine.FullRescanIntervalSecs <= 0 {
-		return fmt.Errorf("engine.full_rescan_interval_secs must be positive")
 	}
 	if c.Engine.MassDeleteThreshold <= 0 || c.Engine.MassDeleteThreshold > 1 {
 		return fmt.Errorf("engine.mass_delete_threshold must be in (0, 1]")

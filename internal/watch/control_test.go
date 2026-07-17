@@ -169,7 +169,6 @@ folder_name = "Synckeeper"
 sync_dir = "~/Synckeeper"
 [engine]
 poll_interval_secs = ` + strconv.Itoa(poll) + `
-full_rescan_interval_secs = 3600
 mass_delete_threshold = ` + strconv.FormatFloat(threshold, 'f', -1, 64) + `
 machine_name = "` + machine + `"
 quarantine_retention_days = 30

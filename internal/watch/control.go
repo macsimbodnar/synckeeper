@@ -123,7 +123,6 @@ func (w *Watcher) applyReload(ticker *time.Ticker) reloadResult {
 	w.Eng.Cfg.Engine.Ignore = cfg.Engine.Ignore
 	w.Eng.Cfg.Engine.MassDeleteThreshold = cfg.Engine.MassDeleteThreshold
 	w.Eng.Cfg.Engine.QuarantineRetentionDays = cfg.Engine.QuarantineRetentionDays
-	w.Eng.Cfg.Engine.FullRescanIntervalSecs = cfg.Engine.FullRescanIntervalSecs
 	if cfg.Engine.PollIntervalSecs != old.Engine.PollIntervalSecs {
 		w.Poll = time.Duration(cfg.Engine.PollIntervalSecs) * time.Second
 		ticker.Reset(w.Poll)
