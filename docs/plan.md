@@ -1,57 +1,91 @@
-# Synckeeper — Execution Plan
+# Synckeeper — Implementation Plan
 
-Master tracking document. The spec in [spec.md](spec.md) is the contract; this file tracks how and in what order it gets built. Each phase has a detailed task file; check off tasks there and update the status table here.
+Master tracking document. The spec in [spec.md](spec.md) is the contract; this file tracks how and in what order the delta between spec and code gets built. Rewritten 2026-07-17 against the revised spec: the phase system (0–7) is retired as history; new work is organized in workstreams.
 
-## Status
+## Phase history (done, kept for reference)
 
-| Phase | Doc | Goal | Exit criterion | Status |
-|---|---|---|---|---|
-| 0 | [phase-0.md](phase-0.md) | Skeleton: auth + plumbing | Authenticate and list the Drive folder; all four binaries build | done 2026-07-07 |
-| 1 | [phase-1.md](phase-1.md) | One-shot bidirectional sync | Scenario tests S1–S8 pass | done 2026-07-08 |
-| 2 | [phase-2.md](phase-2.md) | Safety hardening | Fault tests F1–F5 pass | done 2026-07-08 |
-| 3 | [phase-3.md](phase-3.md) | Continuous mode (`watch` + services) | 2-hour soak with random edits on both sides, no divergence | done 2026-07-09 |
-| 4 | [phase-4.md](phase-4.md) | Multi-machine rollout (`init --adopt`) | 3 machines, offline concurrent edit matrix passes | code + matrix tests done 2026-07-14; manual rollout pending |
-| 5 | [phase-5.md](phase-5.md) | Cross-platform hardening | Full test suite green on Linux, macOS, Windows | **deferred to last** (other architectures) — 2026-07-14 replan |
-| 6 | [phase-6.md](phase-6.md) | Daemon control & monitoring | Live `status`/`sync`/`pause` reach the running daemon; `service status` reports autostart | Stages 1–2 done 2026-07-14; tray GUI (3) → folded into phase 7 |
-| 7 | [phase-7.md](phase-7.md) | macOS experience | Native-feeling status & control on macOS (quick wins, tray, Finder badges) | in progress — quick wins first (2026-07-14) |
+| Phase | Doc | Outcome |
+|---|---|---|
+| 0 | [phase-0.md](phase-0.md) | Skeleton: auth, config, DB, Drive client interface — done 2026-07-07 |
+| 1 | [phase-1.md](phase-1.md) | One-shot bidirectional sync, S1–S8 — done 2026-07-08 |
+| 2 | [phase-2.md](phase-2.md) | Safety hardening, F1–F5 — done 2026-07-08 |
+| 3 | [phase-3.md](phase-3.md) | Continuous mode + 2 h soak — done 2026-07-09 |
+| 4 | [phase-4.md](phase-4.md) | `init --adopt` + matrix tests — done 2026-07-14 (real rollout pending, now W6) |
+| 5 | [phase-5.md](phase-5.md) | Cross-platform hardening — superseded by W7/W8 |
+| 6 | [phase-6.md](phase-6.md) | Daemon monitoring + control socket — stages 1–2 done 2026-07-14; tray → W9 |
+| 7 | [phase-7.md](phase-7.md) | macOS quick wins — activity direction + case-collision done; Finder sidebar abandoned (no API); rest folded into W3/W9 |
 
-## Revised roadmap (2026-07-14) — macOS-first
+## Workstreams
 
-The tool is correct and daily-usable on macOS (phases 0–4, 6.1–6.2). Remaining work is reprioritized to polish the **macOS** experience first and defer everything specific to **other architectures** (Windows/Linux) to the end. Ordering now:
+Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`. Work strictly in order within a workstream; W1 blocks everything else (correctness first). W2–W5 order is the recommended sequence on the primary platform; W6+ follow the spec roadmap.
 
-1. **Near-term — macOS experience ([phase 7](phase-7.md)):** quick wins (activity remote/local labeling, add folder to Finder sidebar, case-collision safety — APFS is case-insensitive, so this matters here), then the macOS menu-bar tray icon (phase 6 stage 3), then Finder sync badges.
-2. **Middle — needs a second Mac (same architecture):** phase 4 real multi-machine rollout; phase 3 `service install` + reboot check.
-3. **Last — other architectures ([phase 5](phase-5.md)):** Windows name hardening (reserved names, illegal chars, long paths, NTFS atomicity), cross-platform tray variants (Linux DBus, Windows Shell_NotifyIcon), and the full suite run on real Linux + Windows.
+### W1 — Correctness fixes (from the 2026-07-17 review) — `not started`
 
-Note: the case-collision item lives in phase 7 (it affects macOS/APFS) even though phase-5.md still lists it; the rest of phase 5 is the deferred Windows/Linux work.
+Reproduced bugs first; each fix lands with its regression test (testing.md R1/R2, plus rows below).
 
-Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`.
+1. **[R1] Conflict-backup vs move ordering — data loss.** Remote rename to a lexicographically smaller path + remote edit + local edit: `ConflictBackup` sorts before the `MoveLocal` that feeds it (`internal/reconcile/plan.go` moves sort), backup fails, download overwrites the moved local edit; cycle 2 plans nothing. Fix per spec §4.5: in the conflict branch, when the remote moved the file, emit the backup from the file's *current* local path and drop the dependent move; additionally, a download must not execute if its protecting backup failed (failure propagation in the executor).
+2. **[R2] MkdirLocal-before-MoveLocal — permanent livelock.** Remote same-id dir rename + new remote subdir inside it: the mkdir stage `MkdirAll`s the move destination; `MoveLocal` then fails `file exists` every cycle. Fix per spec §4.5: order local dir moves ahead of local mkdirs (they depend only on baseline paths), or make `moveLocal` merge into a destination that exists only as plan-created empty scaffold. Prefer the ordering fix.
+3. **`init --force` leaves a stale remote mirror** (`cmd/synckeeper/init.go`): resets the page token without rebuilding the cache → silently missed remote changes. Fix per spec §12: force the same full walk as `doctor --repair`.
+4. **Download overwrite window** (`internal/executor/executor.go`): re-stat the target before the atomic rename; abandon + requeue when size/mtime moved since the scan (spec §7).
+5. **Read-only commands can migrate the DB without the lock** (`cmd/synckeeper/readenv.go`): open read-path DBs without running migrations; refuse politely when the schema is behind/ahead (spec §14).
+6. Sweep: transient unique-constraint failures on cross-rename swaps self-heal — verify with a test, document as accepted noise if so.
+
+### W2 — Spec alignment & hygiene — `not started`
+
+1. Remove `full_rescan_interval_secs` (config, validation, reload, docs) — spec §13.
+2. Unicode normalization folding: extend the fold in `remotedelta.Snapshot` + `names.CaseInsensitiveFS`-style probe to NFC/NFD (spec §5); tests N2.
+3. Stale text: `cmd/synckeeper/config.go` still says live reload is future; phase-7 exit criterion still lists the abandoned Finder-sidebar item.
+4. Credentials (decided 2026-07-17, spec §9 — rclone model): (a) keep the author's client id/secret embedded via `internal/auth/credentials.go` as the shipping default; (b) add the BYO override — load `credentials.json` from the config dir (or config keys) with precedence over embedded; (c) `account` reports which credentials are in use; (d) README gains an rclone-style "use your own client id for dedicated quota" page and, at publication time, a donation note (funds future Google verification if the ~100-user unverified cap is ever reached); (e) hygiene: drop the stray `client_secret_*.json` from the repo root — `credentials.go` is the single embedded source. Optional (owner: Max): rotate the client in the console anyway, since publishing makes the historical secret live forever.
+5. README: update build instructions for the native-build policy (no cross-compile matrix, cgo allowed).
+
+### W3 — Watcher modularization + FSEvents (spec §10) — `not started`
+
+1. Extract the `fswatch` module interface from `internal/watch`; current fsnotify backend becomes one implementation; poll-only stays the universal fallback; keep the latch/rebuild belt-and-braces.
+2. FSEvents implementation for the primary platform (cgo; directory-tree stream, no per-file descriptors). Native build only — first cgo in the repo, Makefile/CI adjusted.
+3. **[W1-scale]** acceptance test: ≥50k-file tree under the daemon, no fd exhaustion; watcher kill → polling degradation → recovery.
+4. Retire what the fd-exhaustion era no longer needs (rlimit raise stays; per-cycle rebuild cadence re-evaluated per backend).
+
+### W4 — Confidence: randomized sync testing (spec §16.7) — `not started`
+
+1. **[FZ1]** Seeded fuzzer over the fake backend: N simulated machines, random op streams (create/edit/move/delete/case-rename/conflict), random crash points at executor checkpoints, interleaved syncs. Invariants: eventual convergence, no content loss (every written content survives somewhere legitimate), idempotence of replays. Deterministic replay from seed on failure.
+2. Wire into CI as a bounded-time run; long runs manual. Re-run the 2 h soak after W3 lands.
+
+### W5 — Daemon-first polish (spec §1, §8) — `not started`
+
+1. `init` offers `service install` at the end (daemon-first onboarding).
+2. `account` gains the Google email via one `about.get` call (graceful offline).
+3. Persist-pause-across-restart: decide (currently in-memory by design; spec documents it — revisit only if it annoys).
+
+### W6 — Real multi-machine rollout — `blocked (needs second machine)`
+
+Spec §16.10: adopt on a second real machine, a day under `watch`, clean `doctor` on both. Then service reboot check.
+
+### W7 — Second platform (Linux, spec roadmap) — `not started`
+
+fswatch/inotify verification, names rules, service (systemd unit exists), native build, full suite + soak on real hardware.
+
+### W8 — Third platform (Windows) — `not started`
+
+Names hardening (reserved names, illegal chars, trailing dots/spaces, long paths), fswatch/RDCW, rename-replace semantics under the journal (F3 on-platform), Task Scheduler, native build, full suite + soak.
+
+### W9 — UI (after CLI is solid, spec roadmap) — `not started`
+
+Tray/menu-bar app as a separate binary on the control socket (mode icon, sync now, pause/resume, open folder/logs); then file-manager badges where the OS has an API. Strictly a client; no sync logic.
 
 ## Working process
 
-1. Work phases strictly in order; a phase starts only when the previous phase's exit criterion is met and recorded here.
-2. Within a phase, tasks are listed in dependency order in the phase doc. Check off tasks (`- [x]`) as they complete; note deviations inline under the task.
-3. Every scope change, spec deviation, or non-obvious technical choice gets a dated entry in [decisions.md](decisions.md) before or alongside the code change.
-4. Tests are written with the feature, not after. The test matrix in [testing.md](testing.md) tracks which scenario/fault/guard tests exist and pass.
-5. The [README](../README.md) build/run/test instructions must stay correct at every commit — if a Makefile target or command changes, update the README in the same change.
-6. Phase 1 is the "usable daily" milestone: after it, real files can be trusted to the tool via manual `sync` runs.
+1. A workstream item is done when its code, tests, and doc updates land together; check items off here with a date.
+2. Every scope change, spec deviation, or non-obvious choice gets a dated entry in [decisions.md](decisions.md) before or alongside the change.
+3. [testing.md](testing.md) rows are the acceptance ledger — add the row with the feature, not after.
+4. README build/run instructions stay correct at every commit.
+5. The spec is kept current: behavior changes edit spec.md in the same change, marked with a dated note.
 
-## Build order rationale
-
-- **Phase 0 before everything**: auth, config, DB, and the Drive client interface are dependencies of every other package. Getting `driveclient` defined as an interface early is what makes the whole test strategy (in-memory fake) possible.
-- **`reconcile` is built pure and test-first in phase 1**: it is the correctness core. The decision table in the spec maps 1:1 to table-driven test cases; write the table tests before wiring the executor.
-- **Guards land in phase 2, but stubs exist from phase 1**: `sync` calls the guard hooks from day one so phase 2 only fills in logic, not plumbing.
-- **`watch` (phase 3) reuses the phase 1 engine unchanged**: fsnotify events and remote polling only decide *when* to run a targeted reconcile; they must not introduce a second sync code path.
-- **Multi-machine (phase 4) needs only `--adopt`**: the reconcile engine is already machine-agnostic; adoption is a special first-merge planner mode.
-- **Platform quirks last (phase 5)**: `internal/names` exists from phase 1 with the mapping logic; phase 5 fills in the Windows/macOS edge cases and runs the suite on real machines.
-- **Control & monitoring (phase 6) is additive and sits on the seam**: the daemon stays headless and pure-Go; monitoring is a DB heartbeat the CLI reads, control is a local socket the CLI (and a later, separate, cgo-allowed tray binary) drives. Deferred to last because it touches no durability invariant — it observes and triggers the phase-1 engine, never a second sync path.
-
-## Key risks to watch
+## Key risks
 
 | Risk | Mitigation |
 |---|---|
-| Drive `changes.list` semantics (out-of-tree moves, trashed parents) subtler than expected | `remotedelta` keeps an in-DB parent map; live smoke tests (`SYNCKEEPER_LIVE_TEST=1`) validate the fake against real Drive behavior early in phase 1 |
-| Windows rename-with-replace not truly atomic | pending_ops journal brackets the remove+rename; F3 fault test covers the gap window |
-| fsnotify event loss / platform differences | hourly full rescan is the safety net; soak test is the exit gate |
-| mtime granularity differences across filesystems | store mtime_ns but compare with tolerance; md5 is the tiebreaker |
-| OAuth consent screen left in Testing → tokens die in 7 days | init doc + README call out Production/unverified requirement explicitly |
+| FSEvents semantics (coalescing, event replay, volume boundaries) subtler than expected | Hints are wake-ups only (spec §8.1) — correctness never depends on the watcher; poll fallback; W3 scale test |
+| First cgo in the repo complicates builds | Native-build policy (spec §10); cgo confined to the fswatch module; pure-Go fallback compiled everywhere |
+| Fuzzer flakiness / nondeterminism | Seeded runs, deterministic replay, bounded CI time |
+| Ordering fixes regress existing scenarios | R1/R2 land as reconcile-level tests plus full S/F suite; dependency rules are spec-normative now (§4.5) |
+| Drive API quota under fuzz/soak | Fake backend for both; live smoke stays small and env-gated |

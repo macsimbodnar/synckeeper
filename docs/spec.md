@@ -1,225 +1,223 @@
-# Synckeeper — Implementation Contract
+# Synckeeper — Design Document & Implementation Contract
 
-This is the authoritative specification. The execution plan in [plan.md](plan.md) breaks it into tasks; when the two disagree, this file wins. Changes to scope or invariants are recorded in [decisions.md](decisions.md).
+This is the authoritative specification: scope, detailed behavior, and acceptance criteria. The execution plan in [plan.md](plan.md) breaks it into work; when the two disagree, this file wins. Changes to scope or invariants are recorded in [decisions.md](decisions.md).
 
-## What Synckeeper is
+Revised 2026-07-17: rewritten platform-agnostically (behavior is defined by filesystem/OS *capabilities*, never by OS name), daemon-first, with an explicit OS-integration module contract and a Dropbox reference appendix. Platform order lives only in the [roadmap](#roadmap); it is not part of the feature definition.
 
-A personal bidirectional file sync tool written in Go. It keeps one designated local folder (e.g. `~/Synckeeper`) identical to one designated folder on a Google Drive account. Multiple desktop machines (Linux, macOS, Windows) each sync independently against Drive, which acts as the hub and the durable copy. Everything inside the folder is synced recursively; nothing outside it is ever touched. Files live as normal files on disk.
+## 1. What Synckeeper is
 
-Built for a single user, so distribution polish, GUI, and Google verification are skipped. Data-integrity guarantees are NOT skipped: the engine must never silently lose or corrupt a file, even across crashes, offline edits on multiple machines, or a lost state database.
+A personal bidirectional file sync tool written in Go. It keeps one designated local folder identical to one designated folder on a Google Drive account. Multiple desktop machines each sync independently against Drive, which acts as the hub and the durable copy. Everything inside the folder is synced recursively; nothing outside it is ever touched. Files live as normal files on disk.
 
-Deliverable per platform: a single statically linked binary, cross-compiled from one dev machine with `CGO_ENABLED=0`. Mobile is out of scope.
+**The daemon is the product.** The primary mode of operation is a continuously running background daemon that watches both sides and keeps them converged; the CLI (and any future UI) are thin clients of it. A standalone one-shot `sync` exists as a fallback and scripting tool, and shares the exact same sync path — there is deliberately no second sync implementation anywhere.
 
-## Personal-use shortcuts (allowed)
+Built for a single user, so distribution polish and Google verification are skipped. Data-integrity guarantees are NOT skipped: the engine must never silently lose or corrupt a file, even across crashes, offline edits on multiple machines, or a lost state database.
 
-1. Own Google Cloud project, OAuth "Desktop app" client, full `https://www.googleapis.com/auth/drive` scope. Publish the OAuth consent screen to **Production** but leave it **unverified** — click through the "unverified app" warning once per machine. Do NOT leave it in Testing status: refresh tokens in Testing expire after 7 days, which breaks a daemon.
-2. CLI only. No GUI, no installer, no auto-update, no telemetry.
-3. Token storage: JSON file with 0600 permissions in the config dir. No keyring integration in v1.
-4. Google-native files (Docs, Sheets, Slides) are ignored and reported in `status`, never synced.
-5. Remote change detection via polling `changes.list` (30–60 s), not push webhooks.
-6. Files whose names are invalid on some platform are skipped and reported, not transliterated.
-7. Local "trash" is a quarantine directory managed by Synckeeper, not OS-native trash.
+## 2. Scope
 
-## Non-negotiable durability invariants
+**In scope (v1):** bidirectional sync of regular files and directories; conflict preservation; move/rename preservation; trash/quarantine instead of deletion; multi-machine convergence via `--adopt`; continuous daemon with OS-native change detection; monitoring (`status`, `activity`) and control (`sync`, `pause`, `resume`, `reload`) of the running daemon; `doctor` self-check and additive repair; login-service autostart.
 
-1. Three-way reconcile against a persistent local baseline DB (SQLite). Never diff local vs remote directly.
-2. Atomic local writes: download to temp file in same directory, fsync, atomic rename, then commit DB row. Never commit DB before the data is durable.
-3. Deletes go to Drive trash (remote) and the local quarantine dir (local), never permanent.
-4. Mass-delete guard: refuse to propagate deletion of more than a configurable fraction of tracked files without explicit confirmation. Treat "sync dir missing/unreadable" as an error, never as "everything deleted".
-5. Conflicts produce a conflicted copy with machine name and date. Never last-writer-wins, never overwrite.
+**Someday (explicitly deferred, recorded so they shape interfaces but not schedules):** per-item ignore markers (Dropbox-style attribute), path-based ignore patterns, online-only placeholder files, pluggable storage backends (which would unlock block-level delta sync), account keyring storage, tray UI and file-manager badges (see [§10](#10-os-integration-modules)).
+
+**Out of scope (rejected, with reasons):** selective sync (single-user tool, one folder); bandwidth limits; shared drives; multiple sync folders or accounts; file-version browsing (Drive's own revision history is the backstop); mobile; push webhooks (needs a public HTTPS endpoint).
+
+## 3. Non-negotiable durability invariants
+
+1. Three-way reconcile against a persistent local baseline DB. Never diff local vs remote directly. (The baseline is the *merge base*: it is what lets the engine distinguish "changed here" from "deleted there".)
+2. Atomic local writes: download to a temp file in the destination directory, verify checksum, fsync, atomic rename, then commit the DB row. Never commit the DB before the data is durable.
+3. Deletes go to Drive trash (remote) and a dated local quarantine directory (local), never permanent.
+4. Mass-delete guard: refuse to propagate deletion of more than a configurable fraction of tracked files without explicit confirmation. Treat "sync dir missing/unreadable/empty-with-nonempty-baseline" as an error, never as "everything deleted".
+5. Conflicts produce a conflicted copy with machine name and timestamp. Never last-writer-wins, never overwrite.
 6. Every operation idempotent and crash-resumable. Killing the process at any point leaves a state a fresh run repairs.
+7. **Plan ordering is dependency-aware, and destruction never outruns protection.** An action that overwrites, moves away, or removes content must be ordered after every action that preserves that content or vacates/creates the paths it relies on — and must not execute at all if a protective action it depends on failed. Lexicographic or stage ordering alone is not sufficient. *(Added 2026-07-17 after review found two ordering bugs, one losing data — see decisions.md.)*
 
-## Language conventions
+## 4. Sync semantics
 
-Go code follows standard Go conventions (gofmt, CamelCase identifiers, lowercase package names); snake_case is used everywhere it does not fight the language: file names, DB columns, config keys, CLI flags, JSON fields.
+### 4.1 The three trees
 
-## Tech stack
+Every sync cycle builds three views keyed by `rel_path` (posix-style, relative to the sync root):
 
-- Go 1.22+. Single module `github.com/max/synckeeper` (adjust path).
-- `CGO_ENABLED=0` enforced in the Makefile. Every dependency must be pure Go; reject any transitive cgo requirement.
-- Dependencies:
-  - `google.golang.org/api/drive/v3` and `google.golang.org/api/option` (official Drive client)
-  - `golang.org/x/oauth2` + `golang.org/x/oauth2/google` (OAuth desktop loopback flow)
-  - `modernc.org/sqlite` (pure-Go SQLite driver, via `database/sql`)
-  - `github.com/fsnotify/fsnotify` (phase 3)
-  - `github.com/spf13/cobra` (CLI)
-  - `github.com/BurntSushi/toml` (config)
-  - `github.com/gofrs/flock` (single-instance lock)
-  - stdlib elsewhere: `log/slog`, `crypto/md5`, `net/http`, `os`, `path/filepath`
-- Retry/backoff: small internal helper (exponential + jitter, max 5 attempts); no external dep.
-- Config dir per OS via `os.UserConfigDir()`: `~/.config/synckeeper`, `~/Library/Application Support/synckeeper`, `%AppData%\synckeeper`. State DB at `<config_dir>/state.db`, token at `<config_dir>/token.json` (0600), quarantine at `<config_dir>/quarantine/`.
+- **base** — the baseline DB: state as of the last completed sync (file id, size, content md5, local mtime, remote md5/version).
+- **local** — a scan of the sync dir (md5 computed only when size or mtime differ from base; the baseline hash is trusted otherwise).
+- **remote** — derived from a locally cached mirror of Drive metadata, maintained incrementally from the `changes.list` feed and pruned to the synced tree.
 
-## Build and release
+Reconciliation is a **pure function** `(base, local, remote) → ordered action plan`. No I/O, no clock beyond an injected timestamp, fully unit-testable. This is the most-tested code in the project.
 
-```make
-BINARY = synckeeper
-LDFLAGS = -s -w -X main.version=$(VERSION)
+### 4.2 Decision table (per item)
 
-build-all:
-	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64 ./cmd/synckeeper
-	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64 ./cmd/synckeeper
-	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-amd64 ./cmd/synckeeper
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe ./cmd/synckeeper
-```
-
-OAuth client id/secret for a Desktop-app client are not truly secret; embed them via `-ldflags -X` or a checked-in `credentials.go` in a private repo.
-
-## Repo layout
-
-```
-cmd/synckeeper/main.go        # cobra root; wires commands
-internal/config/              # TOML load/validate, config dir resolution
-internal/auth/                # oauth loopback flow, token load/save/refresh
-internal/driveclient/         # thin Drive v3 wrapper: list, changes, upload, download, trash, mkdir, move; retries/backoff live here; defined as an interface for test fakes
-internal/statedb/             # sqlite schema, migrations, typed accessors, transactions
-internal/scanner/             # local full scan and targeted rescan -> local snapshot
-internal/remotedelta/         # changes.list consumption -> remote snapshot updates, tree membership tracking
-internal/reconcile/           # pure function: (baseline, local_snapshot, remote_snapshot) -> action plan; no I/O, fully unit-testable
-internal/executor/            # applies action plan with atomic write protocol and DB commits; pending_ops journal replay
-internal/guards/              # mass-delete guard, missing-dir check, instance lock, quarantine management
-internal/conflicts/           # conflict naming and materialization
-internal/names/               # path <-> drive mapping, invalid name detection, case collision detection
-internal/watch/               # phase 3: fsnotify watch manager + remote polling loop, debounce/coalesce
-internal/service/             # phase 3: systemd/launchd/task scheduler wrapper generation
-```
-
-`reconcile` must stay pure (no filesystem, no network, no DB handles), taking snapshots in and returning a `[]Action`. This is the most-tested package.
-
-## Config file (`config.toml`)
-
-```toml
-[drive]
-folder_name = "Synckeeper"     # created at Drive root if absent on first init
-
-[local]
-sync_dir = "~/Synckeeper"
-
-[engine]
-poll_interval_secs = 45
-full_rescan_interval_secs = 3600
-mass_delete_threshold = 0.25   # fraction of tracked files
-machine_name = "max_desktop"   # used in conflict filenames
-quarantine_retention_days = 30
-ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]
-```
-
-## State DB schema
-
-```sql
-pragma journal_mode = wal;
-
-create table items (
-  drive_file_id   text primary key,
-  rel_path        text not null unique,   -- posix-style, relative to sync root
-  is_dir          integer not null,
-  size            integer,
-  content_md5     text,                   -- md5 of content as last synced
-  local_mtime_ns  integer,                -- mtime observed after last sync
-  drive_md5       text,                   -- md5Checksum reported by Drive at last sync
-  drive_version   integer,                -- Drive 'version' field at last sync
-  synced_at       integer not null
-);
-
-create table meta (
-  key   text primary key,                 -- 'page_token', 'root_folder_id', 'machine_id', 'schema_version'
-  value text not null
-);
-
-create table pending_ops (                -- journal for crash resume
-  op_id         integer primary key autoincrement,
-  op_type       text not null,            -- upload | download | trash_remote | quarantine_local | mkdir_remote | mkdir_local | move_remote | move_local
-  rel_path      text,
-  drive_file_id text,
-  payload       text,                     -- json extras (temp path, target path, expected md5)
-  state         text not null default 'planned'  -- planned | in_progress | done
-);
-```
-
-Access through `database/sql` with a single writer goroutine or a mutex around write transactions (modernc/sqlite + WAL tolerates one writer).
-
-## Reconcile algorithm
-
-Inputs per item key (join on `drive_file_id` when known, else on `rel_path`):
-- `base`: row from `items` (may be nil = new item).
-- `loc`: local snapshot entry: exists, size, mtime_ns, md5 (compute md5 only when size or mtime differ from base; trust base otherwise).
-- `rem`: remote snapshot entry: exists (not trashed), md5, version, parents, name.
-
-Classify: `local_changed = loc differs from base`, `remote_changed = rem differs from base` (version or md5). Decision table:
+`local_changed` = local differs from base (md5); `remote_changed` = remote differs from base (md5/version).
 
 | base | local | remote | action |
 |---|---|---|---|
 | absent | new | absent | upload, insert row |
 | absent | absent | new | download, insert row |
 | absent | new | new, same md5 | adopt: record row, no transfer |
-| absent | new | new, diff md5 | conflict: rename local to conflicted copy, download remote |
-| present | unchanged | unchanged | nothing |
+| absent | new | new, diff md5 | conflict: local becomes the conflicted copy, download remote |
+| present | unchanged | unchanged | nothing (refresh row if metadata drifted) |
 | present | changed | unchanged | upload new revision |
 | present | unchanged | changed | download (atomic replace) |
 | present | changed | changed, same md5 | record, no transfer |
-| present | changed | changed, diff md5 | conflict: local becomes conflicted copy, remote wins the canonical name |
+| present | changed | changed, diff md5 | conflict: local becomes the conflicted copy, remote wins the canonical name |
 | present | deleted | unchanged | trash remote, delete row (guarded) |
 | present | unchanged | trashed/deleted | quarantine local file, delete row |
-| present | changed | trashed | resurrect: re-upload local as new file (edit beats delete) |
-| present | deleted | changed | download remote (edit beats delete) |
+| present | changed | trashed | resurrect: re-upload local (edit beats delete) |
+| present | deleted | changed **or moved** | download remote (edit beats delete) |
+| present | deleted | trashed/deleted | forget row |
 
-Moves/renames:
-- Remote: same `drive_file_id`, new name or parent inside the tree → local rename/move. Moved out of tree → treat as remote delete. Moved into tree → treat as remote create.
-- Local: scanner sees delete+create. Before executing, pair deletions and creations with identical md5 and size; convert pairs into `move_remote` (files.update with new name/parent) to avoid re-upload. Unpaired remain delete+create.
+**Edit beats delete, always, in both directions.** A resurrected file is a nuisance; a lost edit is data loss.
 
-Directories: created before children, trashed only when empty after children resolved. Delete-folder vs add-file-inside resolves as resurrect the folder.
+**Remote wins the canonical name in conflicts** — deterministic across machines (they all agree on what Drive holds); the local version is preserved as the conflicted copy *and uploaded*, so every machine sees both versions. Conflict copy naming: `<stem> (conflict <machine_name> <YYYY-MM-DD_HHMMSS>)<suffix>`.
 
-Ordering: mkdirs (top-down), moves, uploads/downloads, deletes (bottom-up). All actions written to `pending_ops` first, marked `in_progress` when started, `done` plus `items` update in one transaction when finished. On startup, re-verify and replay any non-done ops (idempotent: check current state before acting).
+### 4.3 Moves and renames
 
-Concurrency: transfers may run in a small worker pool (e.g. 4 goroutines) but plan generation and DB commits are serialized; two actions touching the same rel_path or ancestor/descendant paths never run concurrently.
+Moves are preserved as moves — never delete + re-transfer:
 
-## Atomic write protocol (downloads and replacements)
+- **Remote-driven:** same file id at a new name/parent inside the tree → local rename/move. Moved out of the tree → remote delete. Moved into the tree → remote create (with a one-time subtree walk, since the changes feed does not enumerate descendants of a moved folder).
+- **Local-driven:** the scanner sees delete + create; before executing, deletions and creations with identical md5+size are paired into a remote move (rename/reparent by id). Unpaired remainders stay delete + create. A case-only rename on a case-folding filesystem is therefore a move, not a trash + upload.
+- A remote directory move is applied as **one** local directory rename; descendants' path changes are explained by it rather than fanned out into per-file moves.
 
-1. Download to `.synckeeper.tmp.<random>` in the destination directory, streaming, computing md5 on the fly.
-2. Verify md5 against Drive's `md5Checksum`.
-3. `File.Sync()`, close, `os.Rename` onto the target (atomic on same filesystem; on Windows use rename-with-replace semantics: remove-then-rename guarded by the pending_ops journal, or `MoveFileEx` semantics via `os.Rename` which replaces on modern Go/Windows). Fsync the parent directory on POSIX.
-4. Stat the result, then commit the `items` row with observed mtime_ns in the same transaction that marks the op done.
+### 4.4 Directories
 
-Uploads: hash the file before upload; upload with chunked resumable media (`googleapi.ChunkSize(8MB)`) for files > 5 MB, simple upload otherwise. Only update `items` after Drive returns the new `version` and `md5Checksum` and it matches the pre-upload hash. If the local file's mtime changed during upload, mark dirty and requeue.
+Created before children (top-down), removed only when empty after children resolved (bottom-up). Delete-folder vs add-file-inside resolves as resurrect-the-folder. A locally deleted folder whose remote gained new content survives; the new content syncs down.
 
-## Guards and quarantine
+### 4.5 Plan ordering (normative — invariant 7)
 
-- `mass_delete_guard`: if a planned batch trashes/quarantines more than `mass_delete_threshold` of tracked files (and more than 10 absolute), abort with a report; require `synckeeper sync --confirm-deletes`.
-- `sync_dir` missing, empty-but-DB-nonempty, or unreadable: hard error, no plan executed.
-- Instance lock via `gofrs/flock` on `<config_dir>/lock`.
-- Quarantine: local deletions move files to `<config_dir>/quarantine/<YYYY-MM-DD>/<rel_path>` preserving structure; entries older than `quarantine_retention_days` are purged at the end of a successful sync. `synckeeper status` lists quarantine size.
+Stage order: mkdirs (top-down) → moves and conflict backups → transfers → deletes (bottom-up, files before their parent dirs). Within and across stages the following dependencies are binding:
 
-## Drive API usage
+- A **conflict backup** must run against the path where the local content *currently* is — i.e. it must be sequenced before (or expressed independently of) any local move that relocates that content. A download onto a canonical path must not run if the conflict backup protecting that path's previous content failed.
+- A **local directory creation** (`MkdirAll` included) must not create the destination path of a pending local move; moves into or out of a path order before creations of that path.
+- Actions touching the same rel_path, or an ancestor/descendant pair, never run concurrently. Transfers may otherwise run in a small worker pool; plan generation and DB commits are serialized.
 
-- Scope: `https://www.googleapis.com/auth/drive`.
-- Auth: `oauth2` loopback flow (spin up localhost listener, open browser, exchange code). Token JSON persisted 0600; auto-refresh via `oauth2.TokenSource`, re-persist on refresh.
-- Initial walk: `Files.List` with `q = "'<parent_id>' in parents and trashed = false"`, fields `id,name,mimeType,md5Checksum,size,version,parents`, paginate.
-- Deltas: `Changes.List(pageToken)` with `includeRemoved=true`; maintain an in-DB parent map to answer "is this change inside the tree". Store the new page token only after the batch is fully processed.
-- Upload: `Files.Create` / `Files.Update` with `Media(...)`.
-- Download: `Files.Get(id).Download()` streaming.
-- Delete: `Files.Update` setting `trashed=true`. Never `Files.Delete`.
-- Skip any file whose mimeType starts with `application/vnd.google-apps` (report in status).
-- Retries: exponential backoff with jitter on 403 rate/quota, 429, 5xx; max 5 attempts; hard failures stay in `pending_ops` for the next run.
-- Duplicate names in one Drive folder: keep the first by id, report the rest as quarantined (do not download duplicates in v1).
+### 4.6 Crash resume
 
-## Conflict naming
+Every action is journaled (`pending_ops`) before execution, marked in-progress when started, and marked done in the same transaction that commits its baseline row. Recovery is **discard-and-replan**: stale ops are dropped and orphan temp files removed at cycle start; the fresh plan self-heals partial effects (e.g. an uploaded-but-uncommitted file reappears as both-new-same-md5 → adopt).
 
-`<stem> (conflict <machine_name> <YYYY-MM-DD_HHMMSS>)<suffix>`, e.g. `notes (conflict max_desktop 2026-07-06_142200).md`. The conflicted copy is uploaded too, so every machine sees both versions.
+## 5. Name mapping, collisions, and skips
 
-## CLI (cobra)
+rel_paths are posix-style, never absolute, no `.`/`..` segments. Behavior adapts to **probed filesystem capabilities**, not OS identity:
 
-- `synckeeper init [--adopt]`: auth, find/create Drive folder, create DB, store start page token. `--adopt` performs first-merge on a non-empty Drive folder plus non-empty local dir: union of both, md5-equal pairs adopted, differing pairs to conflict copies, nothing deleted.
-- `synckeeper sync [--dry-run] [--confirm-deletes]`
-- `synckeeper watch`
-- `synckeeper status`
-- `synckeeper doctor [--repair]`
-- `synckeeper service install|uninstall` (phase 3)
+- **Case folding** (probed by creating a temp file and statting a case-toggled name): when the local FS folds case, remote siblings differing only by case collapse — first by file id wins, the rest are skipped and reported. Nothing is ever silently clobbered.
+- **Unicode normalization folding** (probed the same way with an NFC/NFD-toggled name): when the local FS is normalization-insensitive, remote siblings differing only by normalization collapse identically. Names are compared under case+normalization fold wherever the local FS folds them. *(Adopted 2026-07-17; Dropbox normalizes server-side to NFC — we fold at the mapping layer instead, since we do not control the server.)*
+- **Duplicate names** in one Drive folder (Drive allows them): first by file id wins; the rest are skipped and reported.
+- **Invalid names** (empty, `.`, `..`, path separators, NUL; per-platform rules added by the OS module): skipped and reported, never transliterated.
+- **Skipped, always reported, never silent:** Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, and anything matching the ignore patterns.
+- **Ignore patterns (v1):** glob patterns matched against the base name only (defaults: `*.tmp`, `~$*`, `.DS_Store`, `Thumbs.db`, `*.swp`, `.synckeeper*`). Path-based patterns and per-item markers are *someday* items.
 
-## Testing strategy
+## 6. Guards
 
-`go test ./...`. `driveclient` is an interface; tests use an in-memory fake implementing the same semantics (ids, versions, md5, trash, changes feed). A small live smoke suite runs only when `SYNCKEEPER_LIVE_TEST=1` against a throwaway Drive folder. `reconcile` gets table-driven tests covering the full decision matrix. Fault injection via an executor hook that panics/exits at named checkpoints.
+- **Mass delete:** a plan that trashes/quarantines more than `mass_delete_threshold` of tracked items (and more than 10 absolute) aborts with a report; requires `--confirm-deletes`. The daemon never self-confirms; it logs loudly, surfaces the block in `status`, and keeps syncing everything else.
+- **Sync dir sanity:** missing, unreadable, not-a-directory, or empty-while-baseline-nonempty → hard error, no plan executed.
+- **Single instance:** file lock in the config dir. Read-only commands never take it.
 
-The full scenario/fault/guard/platform test matrix lives in [testing.md](testing.md).
+## 7. Transfer protocol
 
-## Explicit non-goals for v1
+- **Downloads:** stream to `.synckeeper.tmp.<random>` in the destination directory, md5 computed on the fly and verified against Drive's checksum, fsync, atomic rename onto the target, fsync parent dir, then commit. **Overwrite guard:** immediately before the rename, the target is re-statted; if size/mtime no longer match what the cycle's scan observed, the download is abandoned and requeued (the local edit wins this round and reconciles next cycle). *(Added 2026-07-17.)*
+- **Uploads:** hash before upload; chunked resumable media (8 MB chunks) above 5 MB, simple upload otherwise. Commit only after Drive returns metadata whose checksum matches the pre-upload hash; if the file changed mid-upload, commit nothing new — the next scan sees it dirty and re-uploads.
+- **Retries:** exponential backoff with jitter on rate-limit/quota and 5xx errors, max 5 attempts; hard failures stay journaled for the next cycle.
 
-GUI, installer, Google verification/CASA, selective sync, bandwidth limits, file versioning UI (Drive's own revision history is the backstop), shared drives, multiple sync folders, mobile.
+## 8. The daemon
+
+### 8.1 Sync loop
+
+One serialized loop owns the engine. Triggers: (a) coalesced local-change hints from the watcher, debounced (default 500 ms); (b) a remote polling tick (`poll_interval_secs`, default 45 s); (c) an explicit `sync` command. **Every trigger runs the same full cycle** (full local scan + remote delta). Change hints only ever *wake* the loop — they never carry truth, so lost or duplicated events are harmless and dropped events are recovered within one poll interval. Cycle failures back off exponentially (capped at 10× the poll interval) without exiting; guard blocks wait loudly for the human.
+
+### 8.2 Monitoring (no IPC required)
+
+The daemon records to its DB: a heartbeat (10 s) from a dedicated goroutine so long cycles can't fake death; per-action **activity** entries (capped ring) labeled with direction — `local→drive`, `drive→local`, `conflict`; the last cycle summary, next poll estimate, and any guard block. A failed cycle records an error entry, never per-action success claims. `status`/`activity` read this without the lock and work when the daemon is down. Liveness: control-socket ping (authoritative) → else heartbeat freshness → else recorded state.
+
+### 8.3 Control (local socket)
+
+A local control socket (filesystem permissions are the whole access model; never a TCP port) speaks line-delimited JSON with a protocol-version handshake. Commands: `ping`, `sync [confirm_deletes]`, `pause`, `resume`, `reload`. Mutating commands hand work to the sync loop via channels; the loop remains sole owner of engine and config. `pause` suspends automatic triggers only (explicit `sync` still runs; pause state is in-memory and clears on restart). `reload` applies hot fields (poll interval, ignore globs, thresholds, retention) live and reports identity/path fields as needing a restart. If the socket can't be created the daemon logs and runs on — control is a convenience, never a dependency.
+
+### 8.4 CLI-daemon interplay
+
+When the daemon runs, `sync` delegates over the socket and waits by watching recorded status; `sync --dry-run` requires a standalone run and says so. `service install|uninstall|status` manages the login service through the OS module. Re-authentication (`login`) takes the instance lock — which usefully forces the daemon to be stopped first, since it holds the old token in memory.
+
+## 9. Storage backend: Google Drive
+
+- OAuth Desktop-app client; full `drive` scope; consent screen published to Production but unverified (Testing status expires refresh tokens in 7 days, which kills a daemon).
+- **Credential distribution model** *(decided 2026-07-17)*: the app ships with the author's client id/secret embedded as the working default — a desktop client secret is not confidential by design, and this gives zero-setup onboarding. Users who want dedicated API quota ("more speed") can supply their **own** client credentials, which take precedence over the embedded ones (lookup order: `credentials.json` in the config dir → config keys → embedded). Consequences accepted: all default-credential users share the author's per-project quota (per-user rate limits still isolate them from each other); the unverified full-drive scope caps the default client at ~100 users and shows a consent warning. Growth path if the cap is ever reached: Google verification (funded by donations) or the BYO instructions. API calls themselves are free — quota is rate-limited, not billed.
+- OAuth loopback flow; token JSON at 0600, atomically replaced, auto-refreshed and re-persisted.
+- Remote change detection by polling `changes.list` with a persisted page token, applied to the local metadata mirror; the token is persisted only after its batch is fully applied. Initial state via a full recursive walk.
+- Trash via metadata update, never permanent delete. Skip `application/vnd.google-apps.*` (except folders).
+- **Accepted limitations imposed by the backend:** whole-file transfers only (no block-level delta, no LAN/peer sync, no streaming-while-uploading), no push notifications. Revisit only behind a pluggable-backend design.
+
+## 10. OS integration modules
+
+Functionality is agnostic; implementations are modular per OS and **should exploit the OS's native APIs** for robustness and efficiency. Each module is a small interface with per-OS files; porting to the next OS means implementing the modules, nothing else. Everything above this section must not mention or depend on a specific OS.
+
+| Module | Contract | Native implementations (in rollout order) |
+|---|---|---|
+| **fswatch** | Register a root; receive coalesced change hints (best-effort, may drop/duplicate — the sync loop treats them as wake-ups only). Report degradation; the daemon falls back to pure polling and periodically retries. | FSEvents (macOS; directory-tree stream, zero per-file descriptors); inotify (Linux, per-directory watches); ReadDirectoryChangesW (Windows, one recursive handle). Universal fallback: poll-only. |
+| **fsprobe** | Capability probes of the sync dir: case folding, normalization folding. Safe default: no folding (never collapse distinct names). | Shared probe-by-creation implementation; per-OS only if needed. |
+| **names** | Per-platform validity rules layered on the common ones. | Reserved device names, illegal characters, length limits added per OS as its port lands. |
+| **service** | Install/uninstall/status of the login service running `watch`. | launchd agent; systemd user unit; Task Scheduler. |
+| **ui (future)** | Separate binary; strictly a client of the control socket and status DB; holds no sync logic, cannot threaten data integrity. | Menu-bar/tray app; file-manager badge extensions where the OS offers an API. |
+
+**Build policy** *(changed 2026-07-17)*: binaries are built natively on each target platform; cross-compilation is not a requirement. cgo is permitted — required for FSEvents — with pure Go preferred where it is equally good (the SQLite driver stays pure-Go `modernc.org/sqlite`; no reason to churn). The fd-exhaustion mitigations (rlimit raise, watcher rebuild, polling latch) remain as belt-and-braces around whatever backend runs.
+
+## 11. Multi-machine
+
+A new machine joins with `init --adopt`: adoption is the ordinary first sync over an **empty baseline**, which structurally cannot produce a delete (delete-class actions require a baseline row missing on one side). Union merge: local-only uploads, remote-only downloads, md5-equal pairs adopt, divergent pairs conflict. Plain `init` on a non-empty Drive folder refuses and points at `--adopt`, persisting nothing so the retry is clean. Machine identity: a random persisted `machine_id` plus a human `machine_name` used in conflict filenames.
+
+## 12. Repair
+
+`doctor` cross-checks DB vs disk vs Drive and reports divergence. `doctor --repair` **only ever adds**: restores metadata (folder id by name, machine id, fresh page token), force-rebuilds the remote mirror, adopts md5-equal pairs into the baseline, clears stale journal rows and orphan temps. It never trashes, quarantines, or overwrites; after a lost DB, one-sided files become plain uploads/downloads on the next sync. `init --force` (re-init over an existing DB) must leave the remote mirror coherent — it performs the same forced full walk as repair. *(Clarified 2026-07-17; previously it silently reset the page token over a stale mirror.)*
+
+## 13. Configuration
+
+TOML in the per-OS config dir (`os.UserConfigDir()`-based); state DB, token, quarantine, lock, and control socket live alongside it.
+
+```toml
+[drive]
+folder_name = "Synckeeper"      # created at Drive root if absent on first init
+
+[local]
+sync_dir = "~/Synckeeper"
+
+[engine]
+poll_interval_secs = 45          # remote poll cadence; also the full-rescan cadence (hot-reloadable)
+mass_delete_threshold = 0.25     # fraction of tracked files (hot)
+machine_name = "max_mbp"         # conflict filenames; sanitized (restart)
+quarantine_retention_days = 30   # purge after a fully successful sync (hot)
+ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # (hot)
+```
+
+`full_rescan_interval_secs` is **removed** *(2026-07-17)*: every cycle is a full rescan by design, so the knob was dead. Unknown keys are rejected to catch typos; missing keys fall back to defaults.
+
+## 14. State DB
+
+SQLite via `database/sql`, WAL, single connection, writes serialized. Versioned migrations; a binary refuses a schema newer than it knows, and **read-only commands must not migrate** — migrations run only under the instance lock *(2026-07-17)*. Tables: `items` (baseline; keyed by file id, unique rel_path), `meta` (page token, root folder id, machine id, schema version), `pending_ops` (journal), `remote_nodes` (Drive metadata mirror), `daemon_status` (heartbeat singleton), `activity` (capped ring with direction).
+
+## 15. CLI surface
+
+`init [--adopt|--force]` · `login` · `sync [--dry-run] [--confirm-deletes]` · `watch` · `status [--json] [--watch]` · `activity [-n]` · `pause` / `resume` / `reload` · `config` · `account` · `doctor [--repair]` · `service install|uninstall|status`. Human output first; `--json` where a future UI needs it.
+
+## 16. Acceptance criteria
+
+The test matrix in [testing.md](testing.md) is the ledger; a feature is done when its rows pass. Summary of what must hold:
+
+1. **Reconcile:** every decision-table row covered by table-driven tests; move pairing; directory ordering; dependency ordering of §4.5 (regression tests R1, R2).
+2. **Scenarios S1–S8** on the fake backend: create/edit/delete/rename each direction, conflicts preserved on all machines, edit-beats-delete both orders, deep trees.
+3. **Faults F1–F5:** crash at every checkpoint then rerun converges; lost DB repaired additively; unmounted dir is a hard error.
+4. **Guards G1–G2** block without confirmation and surface in `status`.
+5. **Names N1–N3:** case-collision collapse, normalization collapse (both probe-gated), duplicates — nothing silently clobbered, everything reported.
+6. **Daemon:** heartbeat/liveness classification, activity with direction labels, control round-trips, reload hot/cold split, degradation to polling and recovery, guard block visible and clearable while the daemon keeps running.
+7. **Randomized convergence (FZ1):** a seeded fuzzer drives random op sequences (edits/moves/deletes/conflicts across N simulated machines, random crash points) and asserts convergence and no-content-loss; failures replay deterministically from the seed. *(Adopted 2026-07-17 from Dropbox's testing approach.)*
+8. **Watcher scale (W1):** a tree of ≥50k files syncs under the daemon without descriptor exhaustion; killing the native watcher degrades to polling and recovers.
+9. **Soak:** 2-hour random-edit soak on both sides converges with no divergence — part of the release ritual, re-run per platform port.
+10. **Multi-machine:** the adopt matrix passes simulated; a real ≥2-machine rollout runs a day under `watch` ending in a clean `doctor`.
+
+## Roadmap
+
+Ordering only — nothing here changes the behavior defined above.
+
+1. **macOS** (daily driver): correctness fixes → watcher module with FSEvents → fuzzer + soak → daemon-first polish → real multi-machine rollout.
+2. **Linux**: fswatch/inotify + names + suite run on real hardware.
+3. **Windows**: names hardening (reserved names, separators, length), fswatch/RDCW, rename-replace semantics verification, suite run.
+4. **UI, after the CLI is solid** (Dropbox-style): tray/menu-bar app on the control socket; file-manager badges where an API exists.
+
+## Appendix: Dropbox as reference model
+
+Adopted (validated against public Dropbox engineering material): the three-tree model with the synced tree as merge base (§4.1 — identical to Nucleus); node identity by id, not path (§4.3); single-owner control loop with offloaded I/O (§4.5, §8.1); daemon + thin clients over local IPC (§8); conflicted-copy semantics (§4.2); staged atomic writes (§7); OS-native watching, per platform (§10); normalization handling (§5, adapted to client-side folding); seeded randomized sync testing with deterministic replay (§16.7).
+
+Not adopted, with reasons: block-level delta sync, LAN sync, streaming sync (require a block-speaking server; Drive replaces whole files — §9); online-only placeholders (deep OS integration; someday); push notifications (need a public endpoint; polling instead).

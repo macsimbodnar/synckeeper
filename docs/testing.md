@@ -95,6 +95,20 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | `applyReload` hot-swaps poll/threshold, reports cold fields as needing restart | passing (2026-07-14) |
 | End-to-end against the real daemon: ping/pause/resume/delegated-sync/reload/stopped | passing (2026-07-14, macOS) |
 
+## Review regressions & new acceptance rows (2026-07-17, spec §16)
+
+| ID | Case | Status |
+|---|---|---|
+| R1 | Remote rename to smaller path + remote edit + local edit → conflict copy survives, no data loss (was: download overwrote the moved local edit) | todo — repro exists from the 2026-07-17 review |
+| R2 | Remote same-id dir rename + new remote subdir → converges (was: mkdir created the move destination; livelock) | todo — repro exists from the 2026-07-17 review |
+| R3 | `init --force` rebuilds the remote mirror (no silently missed remote changes) | todo |
+| R4 | Local edit landing between scan and download is not overwritten (requeued) | todo |
+| R5 | Read-only commands neither migrate nor break on schema mismatch | todo |
+| R6 | Cross-rename swap (a↔b same cycle) self-heals within bounded cycles | todo |
+| N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | todo |
+| FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay | todo |
+| W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

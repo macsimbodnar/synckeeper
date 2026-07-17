@@ -13,6 +13,29 @@ Format:
 
 ---
 
+## 2026-07-17 — Credential distribution: embedded author defaults + BYO override (rclone model)
+
+**Context:** Max wants to publish the app and source without operational surprises from binding every user to his Google Cloud project. Alternatives considered: bring-your-own-credentials only (best isolation, but ~10 minutes of Cloud-console onboarding for every user), an auth proxy (rejected: requires running a server, against the project's principles), `drive.file` scope to dodge verification (rejected: the app couldn't see files added via the Drive web UI — breaks the hub model).
+
+**Decision:** ship with Max's OAuth **client** credentials embedded as the working default (a desktop client secret is non-confidential by design — Google's own docs say so), and support user-supplied client credentials with precedence (`credentials.json` in config dir → config keys → embedded) for anyone who wants dedicated quota. Terminology guard: what is shared is the app's client identity, never a token — each user authenticates their own Google account.
+
+**Consequences:** default users share the author's per-project API quota (per-user rate limits still apply individually); the unverified consent screen warns on first auth and caps the default client at ~100 users on the restricted full-drive scope. Growth path: Google verification + security assessment, potentially donation-funded — API usage itself is free, so verification is the only real monetary cost in this model. README gets BYO instructions and (at publication) a donation note; the stray `client_secret_*.json` leaves the repo root, `credentials.go` stays the single embedded source. Rotating the client remains optional hygiene since publication makes the historical secret permanent anyway. Spec §9 amended; plan W2.4 concretized.
+
+## 2026-07-17 — Design doc overhaul: platform-agnostic spec, daemon-first, Dropbox as reference, cross-compile dropped
+
+**Context:** a full review (build, docs, and code walkthrough with runnable repros) found two ordering bugs — one losing data (conflict backup sorted after the move feeding it → download overwrites the local edit; reproduced), one livelocking (mkdir creates a pending move's destination; reproduced) — plus gaps: `init --force` leaves a stale remote mirror, downloads can overwrite an edit made mid-cycle, read-only commands run migrations without the lock, no Unicode-normalization folding, and a dead `full_rescan_interval_secs` knob. Iterating on the design with Max produced new directions.
+
+**Decisions:**
+- **spec.md rewritten platform-agnostically**: behavior is defined by probed filesystem capabilities, never OS names; platforms appear only in the roadmap (macOS → Linux → Windows; CLI first, UI later).
+- **Daemon-first**: the daemon is the product; `sync` is a thin client/fallback. Spec §1, §8.
+- **New durability invariant 7**: plan ordering is dependency-aware and destruction never outruns protection — the design-level lesson of both reproduced bugs (spec §4.5).
+- **Dropbox adopted as reference model** (spec appendix): our three-tree reconcile matches Nucleus exactly (kept); adopted OS-native watching per platform, normalization folding (client-side), and seeded randomized sync testing with deterministic replay. Rejected with reasons: block-delta/LAN/streaming sync (Drive replaces whole files), placeholders, push.
+- **Cross-compilation requirement dropped** (Max builds natively per platform) → `CGO_ENABLED=0` is no longer an invariant; cgo permitted where the OS's best API needs it (FSEvents), pure Go preferred where equal (SQLite driver stays modernc). OS-touching subsystems become per-OS modules behind interfaces (spec §10).
+- **Knob removed**: `full_rescan_interval_secs` had no effect (every cycle is a full rescan); deleted rather than implemented.
+- plan.md rewritten as workstreams W1–W9; phases 0–7 retired as history. Correctness fixes (W1) block everything else.
+
+**Consequences:** spec and plan are the source of truth again; testing.md gains rows R1, R2, N2, FZ1, W1-scale. The committed OAuth client secret is explicitly private-repo-only; posture decision (keep vs rotate+untrack) is W2.4, owner Max.
+
 ## 2026-07-14 — Phase 4 built: `init --adopt` is empty-baseline first-merge
 
 **Context:** a second/third machine must join an existing non-empty Drive folder without a separate, risky merge planner.

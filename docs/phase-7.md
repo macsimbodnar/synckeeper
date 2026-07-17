@@ -1,7 +1,7 @@
 # Phase 7 — macOS experience
 
 **Goal:** make Synckeeper feel native on macOS (the primary platform): visible sync status and control, before any cross-platform work.
-**Exit criterion:** activity shows change direction; the Synckeeper folder is in the Finder sidebar; case collisions are handled safely; a working macOS menu-bar icon drives the daemon.
+**Exit criterion (amended 2026-07-16/17):** activity shows change direction; case collisions are handled safely. (Finder sidebar abandoned — no viable API, see decisions.md 2026-07-16; tray and badges moved to plan.md workstream W9.)
 **Status:** in progress — quick wins first (chosen 2026-07-14). Sequenced ahead of phase 5's Windows/Linux specifics per the 2026-07-14 replan (macOS-first; other architectures last).
 
 ## Quick wins (first)
