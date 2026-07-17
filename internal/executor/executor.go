@@ -56,8 +56,9 @@ type Executor struct {
 	QuarantineDir string
 	RootID        string
 
-	mu      sync.Mutex
-	pathIDs map[string]string // rel_path -> drive file id, for parent lookup
+	mu            sync.Mutex
+	pathIDs       map[string]string // rel_path -> drive file id, for parent lookup
+	failedBackups map[string]bool   // ConflictBackup sources that failed this run (invariant 7)
 }
 
 // Summary reports what happened.
@@ -79,6 +80,7 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 	for _, it := range items {
 		x.pathIDs[it.RelPath] = it.DriveFileID
 	}
+	x.failedBackups = map[string]bool{}
 
 	ops := make([]statedb.PendingOp, len(plan))
 	for i, a := range plan {
@@ -98,6 +100,7 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 	run := func(i int) {
 		a := plan[i]
 		if err := x.DB.SetOpState(ids[i], statedb.OpInProgress); err != nil {
+			x.noteFailure(a)
 			sumMu.Lock()
 			sum.Failed++
 			sum.Errors = append(sum.Errors, fmt.Sprintf("%s %s: journal: %v", a.Type, a.RelPath, err))
@@ -108,6 +111,7 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 		sumMu.Lock()
 		defer sumMu.Unlock()
 		if err != nil {
+			x.noteFailure(a)
 			sum.Failed++
 			sum.Errors = append(sum.Errors, fmt.Sprintf("%s %s: %v", a.Type, a.RelPath, err))
 			slog.Error("action failed", "type", a.Type, "rel_path", a.RelPath, "err", err)
@@ -215,7 +219,29 @@ func (x *Executor) setPathID(rel, id string) {
 	x.pathIDs[rel] = id
 }
 
+// noteFailure records a failed conflict backup so actions it protects are
+// refused for the rest of the run (invariant 7).
+func (x *Executor) noteFailure(a reconcile.Action) {
+	if a.Type != reconcile.ConflictBackup {
+		return
+	}
+	x.mu.Lock()
+	x.failedBackups[a.RelPath] = true
+	x.mu.Unlock()
+}
+
 func (x *Executor) execute(ctx context.Context, opID int64, a reconcile.Action) error {
+	// Invariant 7: destruction never outruns protection. Backups run in the
+	// serial moves stage, so their outcomes are known before any protected
+	// transfer starts.
+	if a.ProtectedBy != "" {
+		x.mu.Lock()
+		failed := x.failedBackups[a.ProtectedBy]
+		x.mu.Unlock()
+		if failed {
+			return fmt.Errorf("not executed: the conflict backup of %s failed and this action depends on it; local content preserved, replanning next cycle", a.ProtectedBy)
+		}
+	}
 	switch a.Type {
 	case reconcile.MkdirLocal:
 		return x.mkdirLocal(opID, a)

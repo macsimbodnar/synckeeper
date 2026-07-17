@@ -34,10 +34,10 @@ func remDir(id string, version int64) RemoteItem {
 }
 
 type step struct {
-	t          Type
-	rel        string
-	newRel     string
-	fileID     string
+	t      Type
+	rel    string
+	newRel string
+	fileID string
 }
 
 func runPlan(t *testing.T, in Input, want []step) {
@@ -374,5 +374,43 @@ func TestTypeClashSkipsAndReports(t *testing.T) {
 	})
 	if len(skips) != 1 || skips[0].RelPath != "a.txt" {
 		t.Fatalf("skips = %+v, want one for a.txt", skips)
+	}
+}
+
+// R1 regression (2026-07-17, testing.md): a remote move combined with a true
+// conflict must not route the local content through a MoveLocal — the backup
+// acts on the file's current location and protects both transfers.
+func TestRemoteMovePlusConflictBacksUpFromCurrentPath(t *testing.T) {
+	got, _ := Plan(Input{
+		Base:    map[string]BaseItem{"z.txt": baseFile("f1", "m1", 3)},
+		Local:   map[string]LocalItem{"z.txt": locFile("mLocal", 5)},
+		Remote:  map[string]RemoteItem{"a.txt": remFile("f1", "mRemote", 4, 2)},
+		Machine: "test_box",
+		Now:     testNow,
+	})
+	cp := "z" + conflictSuffix + ".txt"
+	want := []step{
+		{t: ConflictBackup, rel: "z.txt", newRel: cp},
+		{t: Download, rel: "a.txt", fileID: "f1"},
+		{t: Upload, rel: cp},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("plan length = %d, want %d\ngot: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Type != w.t || g.RelPath != w.rel {
+			t.Errorf("step %d = %s %q, want %s %q", i, g.Type, g.RelPath, w.t, w.rel)
+		}
+	}
+	for _, a := range got {
+		switch a.Type {
+		case MoveLocal:
+			t.Errorf("plan contains MoveLocal %q -> %q; the conflict must not depend on a move", a.RelPath, a.NewRelPath)
+		case Upload, Download:
+			if a.ProtectedBy != "z.txt" {
+				t.Errorf("%s %s ProtectedBy = %q, want %q", a.Type, a.RelPath, a.ProtectedBy, "z.txt")
+			}
+		}
 	}
 }

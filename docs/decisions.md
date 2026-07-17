@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-17 — R1 fix: conflicts never depend on moves; `ProtectedBy` failure propagation
+
+**Context:** W1.1 — the reproduced data-loss bug. In a true conflict combined with a remote rename, the plan emitted `MoveLocal` + `ConflictBackup` whose correctness depended on lexicographic sort order of the moves stage; in the losing order the backup failed on a not-yet-existing path and the canonical download overwrote the only copy of the local edit.
+
+**Decision (agent, implementing spec §4.5; approach pre-agreed in plan W1.1):** two mechanisms, both general rather than a spot patch. (1) *A true conflict never routes local content through a move*: the backup acts on the file's **current** local path — same-directory rename, conflict copy named after the local location (`z (conflict …).txt` even though the canonical becomes `a.txt`) — and the `MoveLocal` is simply not emitted for that file; the download materializes the canonical path itself. (2) *`reconcile.Action` gains `ProtectedBy`*: conflict uploads and downloads name the backup that protects them, and the executor refuses any protected action whose backup failed (backups run in the serial moves stage, so outcomes are known before transfers start). All three conflict sites (both-changed, replaced-under-same-path, both-new) carry the protection, fixing the same latent overwrite in the two sites the repro didn't hit.
+
+**Consequences:** the unmoved conflict case is byte-identical to before (backup source == canonical path). Failure of a backup now cleanly parks the whole conflict for the next cycle instead of half-executing it. Regression coverage at three levels (testing.md R1); suite + `-race` green. The conflict-copy-keeps-the-old-name choice is deliberate: it marks where the losing version actually lived, matching the Dropbox conflicted-copy convention.
+
 ## 2026-07-17 — Docs restructured as permanent inter-agent memory
 
 **Context:** phases 0–7 are done and retired; work now happens in workstreams. Max wants any future agent (or future Max) to grasp immediately: the last, current, and next task; the goal; and every decision's what/when/who/why — without archaeology.

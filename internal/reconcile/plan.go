@@ -106,12 +106,18 @@ func Plan(in Input) ([]Action, []Skip) {
 		if remOK {
 			pathNow = ra.path
 			remoteMoved = ra.path != expected
-			if remoteMoved && locOK {
-				moves = append(moves, Action{Type: MoveLocal, RelPath: expected, NewRelPath: ra.path, FileID: b.FileID})
-			}
 		}
 		localChanged := locOK && loc.MD5 != b.MD5
 		remoteContentChanged := remOK && ra.item.MD5 != b.DriveMD5
+		// A remote move normally becomes a local move — except in a true
+		// conflict, where the local content leaves through its conflict
+		// backup instead, taken from where the content actually sits
+		// (invariant 7): routing it through a move first would make the
+		// backup depend on an ordering the plan must never get wrong.
+		trueConflict := locOK && remOK && localChanged && remoteContentChanged && loc.MD5 != ra.item.MD5
+		if remoteMoved && locOK && !trueConflict {
+			moves = append(moves, Action{Type: MoveLocal, RelPath: expected, NewRelPath: ra.path, FileID: b.FileID})
+		}
 
 		switch {
 		case !locOK && !remOK:
@@ -140,9 +146,10 @@ func Plan(in Input) ([]Action, []Skip) {
 				cp := conflicts.Path(p, in.Machine, in.Now)
 				moves = append(moves, Action{Type: ConflictBackup, RelPath: p, NewRelPath: cp})
 				transfers = append(transfers,
-					Action{Type: Upload, RelPath: cp},
+					Action{Type: Upload, RelPath: cp, ProtectedBy: p},
 					Action{Type: Download, RelPath: p, FileID: newRem.FileID,
-						MD5: newRem.MD5, Size: newRem.Size, Version: newRem.Version})
+						MD5: newRem.MD5, Size: newRem.Size, Version: newRem.Version,
+						ProtectedBy: p})
 				claimed[p] = true
 			case localChanged:
 				// Resurrect: edit beats delete; re-upload as a new file.
@@ -171,14 +178,17 @@ func Plan(in Input) ([]Action, []Skip) {
 				transfers = append(transfers, Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
 					MD5: loc.MD5, Size: loc.Size, Version: ra.item.Version})
 			default:
-				// True conflict: local becomes the conflicted copy, remote
-				// keeps the canonical name; the copy is uploaded too.
-				cp := conflicts.Path(pathNow, in.Machine, in.Now)
-				moves = append(moves, Action{Type: ConflictBackup, RelPath: pathNow, NewRelPath: cp})
+				// True conflict: local becomes the conflicted copy — backed
+				// up from its current location — and remote keeps the
+				// canonical name; the copy is uploaded too. Upload and
+				// download both carry the backup as their protector.
+				cp := conflicts.Path(expected, in.Machine, in.Now)
+				moves = append(moves, Action{Type: ConflictBackup, RelPath: expected, NewRelPath: cp})
 				transfers = append(transfers,
-					Action{Type: Upload, RelPath: cp},
+					Action{Type: Upload, RelPath: cp, ProtectedBy: expected},
 					Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
-						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version})
+						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
+						ProtectedBy: expected})
 			}
 		}
 	}
@@ -210,9 +220,10 @@ func Plan(in Input) ([]Action, []Skip) {
 				cp := conflicts.Path(p, in.Machine, in.Now)
 				moves = append(moves, Action{Type: ConflictBackup, RelPath: p, NewRelPath: cp})
 				transfers = append(transfers,
-					Action{Type: Upload, RelPath: cp},
+					Action{Type: Upload, RelPath: cp, ProtectedBy: p},
 					Action{Type: Download, RelPath: p, FileID: r.FileID,
-						MD5: r.MD5, Size: r.Size, Version: r.Version})
+						MD5: r.MD5, Size: r.Size, Version: r.Version,
+						ProtectedBy: p})
 			}
 			claimed[p] = true
 			continue

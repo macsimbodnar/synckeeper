@@ -99,7 +99,7 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | ID | Case | Status |
 |---|---|---|
-| R1 | Remote rename to smaller path + remote edit + local edit → conflict copy survives, no data loss (was: download overwrote the moved local edit) | todo — repro exists from the 2026-07-17 review |
+| R1 | Remote rename to smaller path + remote edit + local edit → conflict copy survives, no data loss (was: download overwrote the moved local edit) | passing (2026-07-17) — `TestR1RemoteMoveEditVsLocalEditConflict` (engine), `TestRemoteMovePlusConflictBacksUpFromCurrentPath` (reconcile), `TestProtectedDownloadRefusedWhenBackupFails` (executor) |
 | R2 | Remote same-id dir rename + new remote subdir → converges (was: mkdir created the move destination; livelock) | todo — repro exists from the 2026-07-17 review |
 | R3 | `init --force` rebuilds the remote mirror (no silently missed remote changes) | todo |
 | R4 | Local edit landing between scan and download is not overwritten (requeued) | todo |

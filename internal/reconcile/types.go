@@ -71,6 +71,12 @@ type Action struct {
 	Size       int64
 	MD5        string // expected content md5 (download verify, record rows)
 	Version    int64  // remote version for record rows
+
+	// ProtectedBy names the ConflictBackup (by its RelPath) that preserves
+	// the content this action would otherwise destroy or depend on. The
+	// executor must not run the action if that backup failed — durability
+	// invariant 7: destruction never outruns protection.
+	ProtectedBy string
 }
 
 // Skip is a reported, non-fatal exclusion (invalid name, type clash, ...).

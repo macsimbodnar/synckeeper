@@ -19,11 +19,11 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 
 Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`. Work strictly in order within a workstream; W1 blocks everything else (correctness first). W2–W5 order is the recommended sequence on the primary platform; W6+ follow the spec roadmap.
 
-### W1 — Correctness fixes (from the 2026-07-17 review) — `not started`
+### W1 — Correctness fixes (from the 2026-07-17 review) — `in progress`
 
 Reproduced bugs first; each fix lands with its regression test (testing.md R1/R2, plus rows below).
 
-1. **[R1] Conflict-backup vs move ordering — data loss.** Remote rename to a lexicographically smaller path + remote edit + local edit: `ConflictBackup` sorts before the `MoveLocal` that feeds it (`internal/reconcile/plan.go` moves sort), backup fails, download overwrites the moved local edit; cycle 2 plans nothing. Fix per spec §4.5: in the conflict branch, when the remote moved the file, emit the backup from the file's *current* local path and drop the dependent move; additionally, a download must not execute if its protecting backup failed (failure propagation in the executor).
+1. **[R1] Conflict-backup vs move ordering — data loss.** — **done 2026-07-17.** Remote rename to a lexicographically smaller path + remote edit + local edit: `ConflictBackup` sorted before the `MoveLocal` that fed it, backup failed, download overwrote the moved local edit; cycle 2 planned nothing. Fixed per spec §4.5: a true conflict never routes the local content through a move — the backup acts on the file's current location (conflict copy named after it) — and actions carry `ProtectedBy`, refused by the executor when their backup failed. Tests: see testing.md R1 (engine + reconcile + executor levels).
 2. **[R2] MkdirLocal-before-MoveLocal — permanent livelock.** Remote same-id dir rename + new remote subdir inside it: the mkdir stage `MkdirAll`s the move destination; `MoveLocal` then fails `file exists` every cycle. Fix per spec §4.5: order local dir moves ahead of local mkdirs (they depend only on baseline paths), or make `moveLocal` merge into a destination that exists only as plan-created empty scaffold. Prefer the ordering fix.
 3. **`init --force` leaves a stale remote mirror** (`cmd/synckeeper/init.go`): resets the page token without rebuilding the cache → silently missed remote changes. Fix per spec §12: force the same full walk as `doctor --repair`.
 4. **Download overwrite window** (`internal/executor/executor.go`): re-stat the target before the atomic rename; abandon + requeue when size/mtime moved since the scan (spec §7).
