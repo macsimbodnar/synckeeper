@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
+	"github.com/macsimbodnar/synckeeper/internal/engine"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
@@ -124,6 +126,60 @@ func TestInitializeRefusesNonEmptyWithoutAdopt(t *testing.T) {
 	}
 	if id, _ := db.GetMeta(statedb.MetaRootFolderID); id != folder.ID {
 		t.Errorf("root folder id = %s, want %s", id, folder.ID)
+	}
+}
+
+// R3 regression (2026-07-17, testing.md): `init --force` must rebuild the
+// remote mirror. Resetting only the page token silently skipped every remote
+// change made since the last consumed batch: the stale mirror said "remote
+// unchanged", the newer revision was never downloaded, and a later local
+// edit would have uploaded over it — invisible divergence.
+func TestR3ForceReinitSeesPriorRemoteChanges(t *testing.T) {
+	ctx := context.Background()
+	fake := driveclient.NewFake()
+	db := openTestDB(t)
+	cfg := config.Default()
+
+	rootID, err := initialize(ctx, fake, db, cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A remote file appears and one sync consumes it.
+	remote, err := fake.Upload(ctx, rootID, "f.txt", strings.NewReader("v1"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(syncDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	eng := &engine.Engine{DB: db, Client: fake, Cfg: cfg, SyncDir: syncDir,
+		QuarantineDir: filepath.Join(base, "quarantine"), RootID: rootID}
+	if res, err := eng.Sync(ctx, engine.Options{}); err != nil || res.Failed > 0 {
+		t.Fatalf("first sync: err=%v result=%+v", err, res)
+	}
+
+	// The file changes remotely while this machine is not syncing…
+	if _, err := fake.Update(ctx, remote.ID, strings.NewReader("v2-remote"), 9); err != nil {
+		t.Fatal(err)
+	}
+	// …then the user re-inits (`init --force --adopt`: force passes the
+	// reinit gate, adopt passes the non-empty-folder gate) and syncs.
+	if _, err := initialize(ctx, fake, db, cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := eng.Sync(ctx, engine.Options{}); err != nil || res.Failed > 0 {
+		t.Fatalf("post-reinit sync: err=%v result=%+v", err, res)
+	}
+
+	got, err := os.ReadFile(filepath.Join(syncDir, "f.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "v2-remote" {
+		t.Errorf("f.txt = %q after force re-init; the pre-reinit remote edit was silently dropped (want %q)", got, "v2-remote")
 	}
 }
 

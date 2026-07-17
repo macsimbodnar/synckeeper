@@ -18,6 +18,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/engine"
 	"github.com/macsimbodnar/synckeeper/internal/guards"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
+	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
@@ -181,15 +182,16 @@ func initialize(ctx context.Context, client driveclient.Client, db *statedb.DB, 
 		return "", fmt.Errorf("Drive folder %q already contains %d item(s); re-run `synckeeper init --adopt` to join it by merging both sides (union; nothing is deleted)",
 			cfg.Drive.FolderName, len(children))
 	}
-	startToken, err := client.StartPageToken(ctx)
-	if err != nil {
-		return "", err
-	}
 	if err := db.SetMeta(statedb.MetaRootFolderID, folder.ID); err != nil {
 		return "", err
 	}
-	if err := db.SetMeta(statedb.MetaPageToken, startToken); err != nil {
-		return "", err
+	// Build — on --force: REBUILD — the remote mirror together with a fresh
+	// page token. Resetting only the token would silently skip every remote
+	// change since the last consumed batch and leave a stale mirror that
+	// hides remote edits (spec §12). On a fresh DB this pre-warms the mirror
+	// the first sync would otherwise build.
+	if err := remotedelta.ForceFullWalk(ctx, client, db, folder.ID); err != nil {
+		return "", fmt.Errorf("build remote mirror: %w", err)
 	}
 	if _, err := db.GetMeta(statedb.MetaMachineID); errors.Is(err, statedb.ErrNotFound) {
 		id := make([]byte, 8)

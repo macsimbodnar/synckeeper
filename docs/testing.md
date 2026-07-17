@@ -101,7 +101,7 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 |---|---|---|
 | R1 | Remote rename to smaller path + remote edit + local edit → conflict copy survives, no data loss (was: download overwrote the moved local edit) | passing (2026-07-17) — `TestR1RemoteMoveEditVsLocalEditConflict` (engine), `TestRemoteMovePlusConflictBacksUpFromCurrentPath` (reconcile), `TestProtectedDownloadRefusedWhenBackupFails` (executor) |
 | R2 | Remote same-id dir rename + new remote subdir → converges (was: mkdir created the move destination; livelock) | passing (2026-07-17) — `TestR2RemoteDirRenameWithNewSubdir` (engine), `TestDirMoveOrdersBeforeMkdirLocal` (reconcile) |
-| R3 | `init --force` rebuilds the remote mirror (no silently missed remote changes) | todo |
+| R3 | `init --force` rebuilds the remote mirror (no silently missed remote changes) | passing (2026-07-17) — `TestR3ForceReinitSeesPriorRemoteChanges` (cmd) |
 | R4 | Local edit landing between scan and download is not overwritten (requeued) | todo |
 | R5 | Read-only commands neither migrate nor break on schema mismatch | todo |
 | R6 | Cross-rename swap (a↔b same cycle) self-heals within bounded cycles | todo |
