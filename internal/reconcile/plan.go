@@ -190,7 +190,12 @@ func Plan(in Input) ([]Action, []Skip) {
 				// Unchanged local will be replaced in place by the new
 				// remote item (handled in pass 3); no quarantine.
 			default:
-				deletes = append(deletes, Action{Type: QuarantineLocal, RelPath: p, FileID: b.FileID})
+				// The quarantine carries the scanned stat (R13/A7): the
+				// executor refuses to quarantine a file that drifted since
+				// the scan — an edit landing mid-cycle wins the cycle
+				// ("edit beats delete", §4.2).
+				deletes = append(deletes, Action{Type: QuarantineLocal, RelPath: p, FileID: b.FileID,
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
 			}
 
 		default: // both exist

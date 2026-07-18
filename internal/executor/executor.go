@@ -39,6 +39,7 @@ const (
 	CPUploadBeforeCommit   = "upload_before_commit"   // remote has the file, DB does not
 	CPDownloadTempWritten  = "download_temp_written"  // temp complete, target untouched
 	CPDownloadBeforeCommit = "download_before_commit" // target replaced, DB row still old
+	CPQuarantineBeforeMove = "quarantine_before_move" // quarantine decided, file untouched
 )
 
 func checkpoint(name string) error {
@@ -189,7 +190,7 @@ func CleanStaleState(db *statedb.DB, syncDir string) error {
 		}
 		if !d.IsDir() && strings.HasPrefix(d.Name(), names.TempPrefix) {
 			slog.Info("removing orphan temp file", "path", p)
-			os.Remove(p)
+			removeOwnTemp(p)
 		}
 		return nil
 	})
@@ -319,26 +320,12 @@ func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	// or content only reconcile knew to preserve — must never be silently
 	// clobbered. LocalExists is set only when reconcile saw a destination
 	// occupant whose bytes are safe on Drive (e.g. a swap); the pinned stat
-	// then guarantees a racing write is refused instead of lost.
-	cur, statErr := os.Lstat(to)
-	switch {
-	case statErr == nil:
-		if !a.LocalExists {
-			return fmt.Errorf("move destination %s is occupied by an unexpected file; leaving it alone, replanning next cycle", a.NewRelPath)
-		}
-		if !cur.Mode().IsRegular() || cur.Size() != a.LocalSize || cur.ModTime().UnixNano() != a.LocalMtimeNS {
-			return fmt.Errorf("move destination %s changed since the scan; leaving it alone, replanning next cycle", a.NewRelPath)
-		}
-	case os.IsNotExist(statErr):
-		// Absent — the expected state for most moves, and fine even when an
-		// occupant was expected (a sibling move may have vacated it first).
-	default:
-		return statErr
-	}
-	if err := os.Rename(from, to); err != nil {
+	// then guarantees a racing write is refused instead of lost. Absence is
+	// fine even when an occupant was expected — a sibling move may have
+	// vacated it first.
+	if err := guardedRename(from, to, "move destination "+a.NewRelPath, expFromAction(a), allowVanished); err != nil {
 		return err
 	}
-	fsyncDir(filepath.Dir(to))
 	x.renamePathIDs(a.RelPath, a.NewRelPath)
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 		return statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath)
@@ -376,16 +363,12 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 func (x *Executor) conflictBackup(opID int64, a reconcile.Action) error {
 	// The conflict copy is a rescue artifact; it must never overwrite an
 	// existing file (a crash-leftover copy with a colliding timestamped name).
-	// Refuse and replan — the next cycle's timestamp yields a fresh name.
-	if _, err := os.Lstat(x.abs(a.NewRelPath)); err == nil {
-		return fmt.Errorf("conflict-copy path %s already exists; refusing to overwrite it, replanning next cycle", a.NewRelPath)
-	} else if !os.IsNotExist(err) {
+	// The zero expectation means "destination absent": anything there refuses
+	// and replans — the next cycle's timestamp yields a fresh name.
+	if err := guardedRename(x.abs(a.RelPath), x.abs(a.NewRelPath),
+		"conflict-copy destination "+a.NewRelPath, expectation{}, refuseVanished); err != nil {
 		return err
 	}
-	if err := os.Rename(x.abs(a.RelPath), x.abs(a.NewRelPath)); err != nil {
-		return err
-	}
-	fsyncDir(filepath.Dir(x.abs(a.RelPath)))
 	// No row change: the canonical path's row is replaced by the download;
 	// the backup is uploaded as a brand-new file.
 	return x.DB.CompleteOp(opID, nil)
@@ -469,7 +452,7 @@ func (x *Executor) download(ctx context.Context, opID int64, a reconcile.Action)
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op after successful rename
+	defer removeOwnTemp(tmpName) // no-op after successful rename
 
 	body, err := x.Client.Download(ctx, a.FileID)
 	if err != nil {
@@ -502,29 +485,11 @@ func (x *Executor) download(ctx context.Context, opID int64, a reconcile.Action)
 	// plan assumed is here (the scanned file, or nothing). A local write
 	// racing this cycle wins it; the refused download is replanned — and by
 	// then it is a local change, so the decision table conflicts it instead
-	// of overwriting. A sub-microsecond race between this stat and the
-	// rename remains and is accepted.
-	cur, statErr := os.Lstat(target)
-	switch {
-	case statErr == nil:
-		if !a.LocalExists {
-			return fmt.Errorf("a file appeared at the target after the scan; leaving it alone, replanning next cycle")
-		}
-		if !cur.Mode().IsRegular() || cur.Size() != a.LocalSize || cur.ModTime().UnixNano() != a.LocalMtimeNS {
-			return fmt.Errorf("target changed after the scan (size %d mtime %d, scanned size %d mtime %d); leaving the local file alone, replanning next cycle",
-				cur.Size(), cur.ModTime().UnixNano(), a.LocalSize, a.LocalMtimeNS)
-		}
-	case os.IsNotExist(statErr):
-		if a.LocalExists {
-			return fmt.Errorf("target disappeared after the scan; replanning next cycle")
-		}
-	default:
-		return statErr
-	}
-	if err := os.Rename(tmpName, target); err != nil {
+	// of overwriting. Disappearance refuses too (R4: one rule — reality must
+	// match the plan or the cycle replans).
+	if err := guardedRename(tmpName, target, "download target "+a.RelPath, expFromAction(a), refuseVanished); err != nil {
 		return err
 	}
-	fsyncDir(dir)
 	if err := checkpoint(CPDownloadBeforeCommit); err != nil {
 		return err
 	}
@@ -547,18 +512,17 @@ func (x *Executor) record(opID int64, a reconcile.Action) error {
 		Size: a.Size, ContentMD5: a.MD5, DriveMD5: a.MD5, DriveVersion: a.Version,
 	}
 	if !a.IsDir {
-		info, err := os.Stat(x.abs(a.RelPath))
-		if err != nil {
-			return err
-		}
 		// A record overwrites the baseline's truth, so the file present must
 		// be the one the plan observed (invariant 7) — renames preserve size
 		// and mtime, so the scanned stat still identifies it after a move.
 		// Recording a planned md5 against a different file would poison the
 		// baseline: the scanner would trust the wrong hash from then on.
-		if a.LocalExists && (info.Size() != a.LocalSize || info.ModTime().UnixNano() != a.LocalMtimeNS) {
-			return fmt.Errorf("local file does not match what the plan observed (size %d mtime %d, scanned %d/%d); refusing to record, replanning next cycle",
-				info.Size(), info.ModTime().UnixNano(), a.LocalSize, a.LocalMtimeNS)
+		info, err := guardedStat(x.abs(a.RelPath), "record target "+a.RelPath, expFromAction(a), refuseVanished)
+		if err != nil {
+			return err
+		}
+		if info == nil {
+			return fmt.Errorf("record target %s is missing; replanning next cycle", a.RelPath)
 		}
 		item.Size = info.Size()
 		item.LocalMtimeNS = info.ModTime().UnixNano()
@@ -584,7 +548,7 @@ func (x *Executor) quarantineLocal(opID int64, a reconcile.Action) error {
 		// Children were quarantined first (bottom-up); the dir should be
 		// empty now. A non-empty dir means something unexpected survives —
 		// leave it and fail the op rather than lose data.
-		if err := os.Remove(abs); err != nil {
+		if err := guardedRemoveEmptyDir(abs); err != nil {
 			return fmt.Errorf("remove dir (should be empty after children): %w", err)
 		}
 	} else {
@@ -592,7 +556,13 @@ func (x *Executor) quarantineLocal(opID int64, a reconcile.Action) error {
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
-		if err := moveFile(abs, dest); err != nil {
+		if err := checkpoint(CPQuarantineBeforeMove); err != nil {
+			return err
+		}
+		// R13 (spec §4.2 "edit beats delete", A7): the source must still be
+		// the file the scan observed — an edit landing between scan and
+		// execution wins the cycle instead of being quarantined.
+		if err := guardedMoveFile(abs, dest, "quarantine source "+a.RelPath, expFromAction(a)); err != nil {
 			return err
 		}
 	}
@@ -617,35 +587,6 @@ func (x *Executor) renamePathIDs(from, to string) {
 		}
 	}
 	x.pathIDs = updated
-}
-
-// moveFile renames, falling back to copy+remove across filesystems (the
-// quarantine dir may live on a different volume than the sync dir).
-func moveFile(from, to string) error {
-	if err := os.Rename(from, to); err == nil {
-		return nil
-	}
-	src, err := os.Open(from)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	dst, err := os.Create(to)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(dst, src); err != nil {
-		dst.Close()
-		return err
-	}
-	if err := dst.Sync(); err != nil {
-		dst.Close()
-		return err
-	}
-	if err := dst.Close(); err != nil {
-		return err
-	}
-	return os.Remove(from)
 }
 
 func hashFile(path string) (string, error) {

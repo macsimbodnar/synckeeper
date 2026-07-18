@@ -380,3 +380,51 @@ func findConflictCopy(t *testing.T, dir string) string {
 	}
 	return found[0]
 }
+
+// R13 (engine level): remote deletes a file; the user edits it locally
+// after the scan but before the quarantine executes. The edit must win the
+// cycle ("edit beats delete", spec §4.2) and re-upload next cycle.
+func TestR13MidCycleEditWinsOverQuarantine(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "a.txt", "v1")
+	a.sync(t)
+
+	items, err := a.db.AllItems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fake.Trash(context.Background(), items[0].DriveFileID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The mid-cycle edit, injected between the scan and the quarantine move.
+	target := filepath.Join(a.dir, "a.txt")
+	executor.FaultHook = func(cp string) error {
+		if cp == executor.CPQuarantineBeforeMove {
+			if err := os.WriteFile(target, []byte("edited mid-cycle"), 0o644); err != nil {
+				t.Error(err)
+			}
+		}
+		return nil
+	}
+	defer func() { executor.FaultHook = nil }()
+
+	res, err := a.eng.Sync(context.Background(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor.FaultHook = nil
+	if got := a.read(t, "a.txt"); got != "edited mid-cycle" {
+		t.Fatalf("local content = %q; the mid-cycle edit must survive in place (cycle: executed=%d failed=%d errors=%v)",
+			got, res.Executed, res.Failed, res.Errors)
+	}
+
+	// Next cycle: edit beats delete — the file resurrects to Drive.
+	a.sync(t)
+	b := newMachine(t, "b", fake, rootID)
+	b.sync(t)
+	if got := b.read(t, "a.txt"); got != "edited mid-cycle" {
+		t.Fatalf("machine b sees %q, want the resurrected edit", got)
+	}
+}

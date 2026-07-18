@@ -2,11 +2,13 @@
 
 The single answer to "where are we?". Read this first; **rewrite it before ending any work session** (sections replaced in place — history lives in `git log` and [decisions.md](decisions.md), not here).
 
-**Updated:** 2026-07-18 — adversarial round 3, over the **code** (the third code round: W1.7 → W1.8 → this). **W1.8 still blocks everything else; W1.9 is new and runs right after it.** No production code changed this session: five defects were reproduced with throwaway probes (deleted, tree clean), decided, and planned.
+**Updated:** 2026-07-18 — **W1.8 implementation has started: item 1 (the local-write gate) is done.** W1.8 still blocks everything else; W1.9 runs right after it.
 
 ## Last completed
 
-**Adversarial code analysis round 3 + its fix plan (2026-07-18).** Five reproduced defects, two inspection items — full check report in [decisions.md](decisions.md) 2026-07-18 "W1.9". The short version:
+**W1.8.1 — the local-write gate (2026-07-18).** `internal/executor/localwrite.go` is now the only file in the package that mutates a local path; all five primitives ported (download, moveLocal, conflictBackup, record, and the previously unguarded quarantineLocal — A7 closed, reconcile stat-pins the quarantine); `moveFile` and temp cleanup live inside the gate. The AST test enforces the exclusivity mechanically and was verified to catch a planted violation. Discipline held: R13 red first (executor + engine), then the gate, suite + `-race` green. Rows: R13 + gate, both passing.
+
+Earlier the same day: **adversarial code analysis round 3 + its fix plan.** Five reproduced defects, two inspection items — full check report in [decisions.md](decisions.md) 2026-07-18 "W1.9". The short version:
 
 - **C1 (critical): `moveRemote`'s commit is a sixth unguarded Record.** It stamps the *scanned* md5 onto the destination's *current* stat; a mid-cycle edit → poisoned baseline → local "v2", Drive "v1", every later cycle plans nothing, reported as success. The R6 class, missed at one more site. **Folded into W1.8.2** (same lines as the `IsDir` trap): the commit never restates local truth. Test R18.
 - **C2 (high): cross-tree fold collisions unhandled** — fold comparison existed only among remote siblings. Reproduced: local `Readme.txt` vs remote `README.txt` → a permanent case-duplicate minted on Drive, then the user's file *quarantined*; the §4.2 conflict never fired. Decided: targeted fold-match (fold-keyed sibling index fires the ordinary adopt/conflict; fold-shadowed baseline rows are skips, never remote-deletes). W1.9.1, test R19.
@@ -26,7 +28,7 @@ Nothing in flight. Docs committed on master (**not pushed** — Max pushes). No 
 
 ## Next
 
-**W1.8 — adversarial correctness fixes, round 2** ([plan.md](plan.md) W1.8): eight open items (item 9's doc half is done; its remainder is one small named test), **in the listed order**. Item 1 is the local-write gate, because everything after it is written against that gate; items 2–3 (directory renames as moves, guard counts files) are the highest user-visible impact. Discipline is W1.7's: **red-first regression test, then the fix, then the testing.md row**, suite + `-race` green at every commit.
+**W1.8 — adversarial correctness fixes, round 2** ([plan.md](plan.md) W1.8), **in the listed order**. Item 1 (the gate) is **done**; **next is item 2** — A1 directory renames as moves, which now also carries C1/R18 (the move commit never restates local truth) — then item 3 (guard counts files); those two are the highest user-visible impact. Item 9's remainder is one small named test. Discipline is W1.7's: **red-first regression test, then the fix, then the testing.md row**, suite + `-race` green at every commit.
 
 Every design question is closed — including, as of the plan review, the §4.4 edge W1.8.2 previously left to "check": remote-side rows under a locally renamed dir resolve under the new name. plan.md carries the decided approach inline, decisions.md carries the reasoning and the rejected alternatives. **Implement, don't re-derive** — and honor the two scoping corrections (R12 and the W4 oracle cover the concurrent transfer stage only). If something in the plan turns out to be wrong when it meets the code, that is a decisions.md entry, not a silent deviation (W1.6 is the precedent: the analysis was wrong, the test proved it, and the correction was recorded).
 
