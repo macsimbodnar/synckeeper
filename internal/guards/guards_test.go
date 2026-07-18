@@ -54,3 +54,35 @@ func TestCheckMassDelete(t *testing.T) {
 		t.Errorf("small fraction should pass: %v", err)
 	}
 }
+
+func dirDeletionPlan(n int) []reconcile.Action {
+	plan := make([]reconcile.Action, n)
+	for i := range plan {
+		plan[i] = reconcile.Action{Type: reconcile.TrashRemote, IsDir: true}
+	}
+	return plan
+}
+
+// R10 (spec §6, G4): the guard counts content, not containers — directory
+// deletions are excluded from the count, and the denominator is tracked
+// FILES. An empty folder disappearing is not the loss the guard exists to
+// catch, and counting containers wedged the daemon on ordinary folder
+// reorganisation (A2).
+func TestR10GuardCountsContentNotContainers(t *testing.T) {
+	// 21 directory deletions, zero file deletions: never a mass delete.
+	if err := CheckMassDelete(dirDeletionPlan(21), 21, 0.25, false); err != nil {
+		t.Errorf("directory-only deletions must not trip the guard: %v", err)
+	}
+	// Mixed plan: the 12 file deletions still trip against 20 tracked files,
+	// regardless of how many containers go with them.
+	mixed := append(dirDeletionPlan(30), deletionPlan(12)...)
+	if err := CheckMassDelete(mixed, 20, 0.25, false); err == nil {
+		t.Error("12 file deletions of 20 tracked files must trip the guard")
+	}
+	// 11 file deletions of 100 tracked files: over the absolute floor but a
+	// small fraction — allowed, dirs still ignored.
+	small := append(dirDeletionPlan(40), deletionPlan(11)...)
+	if err := CheckMassDelete(small, 100, 0.25, false); err != nil {
+		t.Errorf("small file fraction must pass regardless of dir count: %v", err)
+	}
+}

@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -593,5 +594,65 @@ func TestR18MoveRemoteCommitKeepsLocalTruth(t *testing.T) {
 	body.Close()
 	if got := string(buf[:n]); got != "v2" {
 		t.Errorf("drive content = %q, want the mid-cycle edit uploaded (silent divergence)", got)
+	}
+}
+
+// R10 / G4 (spec §6): renaming a tree of empty folders — no pairing
+// evidence, so it legitimately syncs as delete + create — must not trip the
+// mass-delete guard: only file-class deletions count.
+func TestR10EmptyFolderTreeRenameDoesNotTripGuard(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "keep.txt", "content")
+	for i := 1; i <= 12; i++ {
+		if err := os.MkdirAll(filepath.Join(a.dir, "docs", fmt.Sprintf("sub%02d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.sync(t)
+
+	a.rename(t, "docs", "papers")
+	res, err := a.eng.Sync(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("one-shot sync tripped the guard on a folder reorganisation: %v", err)
+	}
+	if res.Failed > 0 {
+		t.Fatalf("cycle had failures: %v", res.Errors)
+	}
+	if res2 := a.sync(t); len(res2.Plan) != 0 {
+		t.Errorf("did not converge in one cycle: %+v", res2.Plan)
+	}
+	if !a.exists("papers/sub07") || a.exists("docs") {
+		t.Error("rename did not converge locally")
+	}
+}
+
+// R10 / G4, the daemon half: with DeferMassDelete set (as the daemon runs),
+// the same reorganisation must not leave a standing guard block.
+func TestR10EmptyFolderTreeRenameDoesNotWedgeDaemon(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "keep.txt", "content")
+	for i := 1; i <= 12; i++ {
+		if err := os.MkdirAll(filepath.Join(a.dir, "docs", fmt.Sprintf("sub%02d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.sync(t)
+
+	a.rename(t, "docs", "papers")
+	res, err := a.eng.Sync(context.Background(), Options{DeferMassDelete: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.GuardBlocked {
+		t.Fatalf("daemon guard-blocked on a folder reorganisation: %s", res.GuardReason)
+	}
+	res2, err := a.eng.Sync(context.Background(), Options{DeferMassDelete: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.GuardBlocked || len(res2.Plan) != 0 {
+		t.Errorf("standing block or non-convergence: blocked=%v plan=%+v", res2.GuardBlocked, res2.Plan)
 	}
 }

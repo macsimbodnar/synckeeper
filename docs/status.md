@@ -2,11 +2,13 @@
 
 The single answer to "where are we?". Read this first; **rewrite it before ending any work session** (sections replaced in place — history lives in `git log` and [decisions.md](decisions.md), not here).
 
-**Updated:** 2026-07-18 — **W1.8 items 1 and 2 are done** (the local-write gate; A1 directory renames as moves + C1/R18). W1.8 still blocks everything else; W1.9 runs right after it. **Reminder for every W1.8/W1.9 fix: the fix's commit also removes its Known-bugs entry from MANUAL.md.**
+**Updated:** 2026-07-18 — **W1.8 items 1–3 are done** (the local-write gate; A1 renames-as-moves + C1/R18; A2 guard counts content). W1.8 still blocks everything else; W1.9 runs right after it. **Reminder for every W1.8/W1.9 fix: the fix's commit also removes its Known-bugs entry from MANUAL.md.**
 
 ## Last completed
 
-**W1.8.2 — local directory renames are one remote move, + C1/R18 (2026-07-18).** The most load-bearing change of the workstream, landed red-first with the full suite + `-race` green:
+**W1.8.3 — the mass-delete guard counts content, not containers (2026-07-18).** Directory deletions are excluded from both sides of the fraction (`CheckMassDelete` counts file-class deletions against tracked files). With A1 landed, the live trigger was the empty-folder-tree rename — legitimately delete + create, 13 dir deletions, guard tripped, daemon wedged. Red-first at three levels (guards unit, engine one-shot, engine `DeferMassDelete`); file mass-deletes still trip regardless of container count. Rows R10 + G4 passing.
+
+Just before it — **W1.8.2 — local directory renames are one remote move, + C1/R18 (2026-07-18).** The most load-bearing change of the workstream, landed red-first with the full suite + `-race` green:
 
 - **The collapse:** a renamed folder is detected from its children's pairing evidence and becomes **one** `MoveRemote` reparent — Drive folder id preserved, zero delete-class actions, one dir-move on every other machine. Implementation insight (decisions.md "W1.8.2 implemented"): once a dir collapses, pass 1 judges its children at their **post-rename paths**, so the per-file moves are never emitted at all. Scatter and empty-dir cases stay delete + create by design; two conservative guards added (N must be a brand-new local dir; N's name free remotely).
 - **Both decided traps closed:** the moves-stage split keys on `Type == MoveLocal && IsDir` (the reparent runs after the mkdirs, before the file moves; remote mkdirs under a reparented dir defer behind it — spec §4.5 amended); `moveRemote`'s commit is now `RenameItemPath` + a Drive-fields-only update — no stat, no restated local truth, `is_dir` preserved — closing **C1/R18** (the silent-divergence corruption) in the same shape.
@@ -33,7 +35,7 @@ Nothing in flight. Docs committed on master (**not pushed** — Max pushes). No 
 
 ## Next
 
-**W1.8 — adversarial correctness fixes, round 2** ([plan.md](plan.md) W1.8), **in the listed order**. Items 1–2 are **done** (gate + R13; A1 renames-as-moves + C1/R18). **Next is item 3 — [A2] the mass-delete guard counts content, not containers** (`guards.CheckMassDelete` counts only file-class deletions against tracked non-directory items; verify both halves — one-shot no longer aborts, daemon no longer wedges; acceptance G4, test R10). Then items 4–8 in order. Item 9's remainder is one small named test. Discipline is W1.7's: **red-first regression test, then the fix, then the testing.md row**, suite + `-race` green at every commit.
+**W1.8 — adversarial correctness fixes, round 2** ([plan.md](plan.md) W1.8), **in the listed order**. Items 1–3 are **done** (gate + R13; A1 renames-as-moves + C1/R18; A2 guard counts content, R10/G4). **Next is item 4 — [A4] decision-table rows resolve at post-move paths** (pass 2 looks up `newRemoteAt(p)` at the pre-move path while emitting at `target` — the `absent | new | new, diff md5` conflict never fires and the plan emits `upload` + `download` on one rel_path; test R11). Then items 5–8 in order. Item 9's remainder is one small named test. Discipline is W1.7's: **red-first regression test, then the fix, then the testing.md row**, suite + `-race` green at every commit.
 
 Every design question is closed — including, as of the plan review, the §4.4 edge W1.8.2 previously left to "check": remote-side rows under a locally renamed dir resolve under the new name. plan.md carries the decided approach inline, decisions.md carries the reasoning and the rejected alternatives. **Implement, don't re-derive** — and honor the two scoping corrections (R12 and the W4 oracle cover the concurrent transfer stage only). If something in the plan turns out to be wrong when it meets the code, that is a decisions.md entry, not a silent deviation (W1.6 is the precedent: the analysis was wrong, the test proved it, and the correction was recorded).
 

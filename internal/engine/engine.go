@@ -129,7 +129,15 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	res.Skips = append(res.Skips, localSkips...)
 	res.Skips = append(res.Skips, planSkips...)
 
-	if guardErr := guards.CheckMassDelete(plan, len(baseItems), e.Cfg.Engine.MassDeleteThreshold, opts.ConfirmDeletes); guardErr != nil {
+	// The guard's universe is tracked files — containers are excluded on
+	// both sides of the fraction (spec §6, R10).
+	trackedFiles := 0
+	for _, it := range baseItems {
+		if !it.IsDir {
+			trackedFiles++
+		}
+	}
+	if guardErr := guards.CheckMassDelete(plan, trackedFiles, e.Cfg.Engine.MassDeleteThreshold, opts.ConfirmDeletes); guardErr != nil {
 		if !opts.DeferMassDelete {
 			return res, guardErr // interactive one-shot: abort with the hint (spec §6)
 		}

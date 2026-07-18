@@ -35,20 +35,25 @@ func CheckSyncDir(dir string, trackedItems int) error {
 }
 
 // CheckMassDelete refuses plans that delete more than threshold of tracked
-// items (and more than 10 absolute) unless the user confirmed.
-func CheckMassDelete(plan []reconcile.Action, trackedItems int, threshold float64, confirmed bool) error {
-	if confirmed || trackedItems == 0 {
+// files (and more than 10 absolute) unless the user confirmed. It counts
+// content, not containers (spec §6, R10): directory deletions are excluded
+// from the count and trackedFiles excludes directories — an empty folder
+// disappearing is not the loss the guard exists to catch, and counting
+// containers made an ordinary folder reorganisation abort the one-shot and
+// wedge the daemon in a standing block (A2).
+func CheckMassDelete(plan []reconcile.Action, trackedFiles int, threshold float64, confirmed bool) error {
+	if confirmed || trackedFiles == 0 {
 		return nil
 	}
 	deletions := 0
 	for _, a := range plan {
-		if a.Type == reconcile.TrashRemote || a.Type == reconcile.QuarantineLocal {
+		if (a.Type == reconcile.TrashRemote || a.Type == reconcile.QuarantineLocal) && !a.IsDir {
 			deletions++
 		}
 	}
-	if deletions > 10 && float64(deletions)/float64(trackedItems) > threshold {
-		return fmt.Errorf("plan deletes %d of %d tracked items (over the %.0f%% mass-delete threshold); re-run with --confirm-deletes if intended: %w",
-			deletions, trackedItems, threshold*100, ErrMassDelete)
+	if deletions > 10 && float64(deletions)/float64(trackedFiles) > threshold {
+		return fmt.Errorf("plan deletes %d of %d tracked files (over the %.0f%% mass-delete threshold); re-run with --confirm-deletes if intended: %w",
+			deletions, trackedFiles, threshold*100, ErrMassDelete)
 	}
 	return nil
 }
