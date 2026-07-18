@@ -19,6 +19,7 @@ Decisions taken (Max, on agent analysis — see [decisions.md](decisions.md) 202
 1. **The local-write gate**, with mechanical enforcement — a single file may mutate a local path, and an AST test fails any raw FS call outside it. The `internal/localtree` capability-package version was judged right-idea-wrong-time; revisit if a second component ever writes into the sync dir.
 2. **The mass-delete guard counts content, not containers** — file-class deletions against tracked non-directory items.
 3. **W4 moves ahead of W3.** Correctness never depends on the watcher (spec §8.1), and three consecutive adversarial passes have found engine bugs the suite missed. W4's oracle is strengthened first: identity stability + the §4.5 structural invariant — the originally specced oracle would have passed A1 clean.
+4. **A1's directory pairing: share the representation, not the detection.** Local-driven dir moves are collapsed out of the file pairing that already happens, under a deliberately conservative rule (a missed pairing costs a folder id; a wrong one reparents a whole remote subtree). This also corrected the spec text written earlier the same day — a renamed directory cannot pair "by file id", because the new local directory has never been synced and has no id; the only evidence is its children. Two verified implementation traps are recorded with it (the moves-stage `IsDir` split, and `moveRemote` dropping `IsDir` on commit).
 
 Docs updated this session: spec §4.2/§4.3/§4.5/§6/§7/§8.3/§16 + Roadmap; plan.md (W1.8 added, W3↔W4 execution order swapped, risk table); testing.md (R9–R17 + gate test, N1/N3 given rows and IDs, drift removed); decisions.md (two entries).
 
@@ -31,6 +32,8 @@ Nothing in flight. Docs committed on master (**not pushed** — Max pushes). No 
 ## Next
 
 **W1.8 — adversarial correctness fixes, round 2** ([plan.md](plan.md) W1.8): nine items, **in the listed order**. Item 1 is the local-write gate, because everything after it is written against that gate; items 2–3 (directory renames as moves, guard counts files) are the highest user-visible impact. Discipline is W1.7's: **red-first regression test, then the fix, then the testing.md row**, suite + `-race` green at every commit.
+
+Every design question is closed — plan.md carries the decided approach inline, decisions.md carries the reasoning and the rejected alternatives. **Implement, don't re-derive.** If something in the plan turns out to be wrong when it meets the code, that is a decisions.md entry, not a silent deviation (W1.6 is the precedent: the analysis was wrong, the test proved it, and the correction was recorded).
 
 Then **W4** (fuzzer, with the strengthened oracle), then **W3** (fswatch + FSEvents + 50k scale + soak re-run).
 

@@ -118,7 +118,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | ID | Case | Status |
 |---|---|---|
 | gate | No file in `internal/executor` outside `localwrite.go` calls a raw FS-mutating stdlib function (AST walk) | todo — the enforcement half of the local-write gate, spec §7 |
-| R9 | Local directory rename is one remote move: the Drive folder id is unchanged and the plan contains no delete-class action (was: `mkdir_remote` + `trash_remote`, id churned) | todo — reconcile + engine |
+| R9 | Local directory rename is one remote move: the Drive folder id is unchanged and the plan contains no delete-class action (was: `mkdir_remote` + `trash_remote`, id churned). Also pins the decided pairing rule: a **nested** tree rename collapses to one move; an **empty** directory pairs to nothing and stays delete + create (intended, not a bug); a **scatter** (children landing in two places) must not collapse; a directory row survives the move as `is_dir = 1` | todo — reconcile + engine |
 | R10 | Renaming a folder (and a folder tree) neither trips the mass-delete guard nor leaves the daemon in a standing block (was: 21 deletes / 41 items → one-shot aborted, daemon wedged permanently) | todo — guards unit + engine + daemon; acceptance G4 |
 | R11 | New local file inside a remotely-moved directory → conflict copy per spec §4.2, exactly one action per rel_path (was: no conflict copy, `upload` + `download` on one path) | todo — reconcile + engine |
 | R12 | The plan never emits two same-stage actions on one rel_path or an ancestor/descendant pair; a plan that does is refused, not raced (spec §4.5 made executable) | todo — reconcile property test + executor |
