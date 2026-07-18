@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/macsimbodnar/synckeeper/internal/executor"
+	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 )
 
 // R1: remote rename to a lexicographically smaller path + remote edit +
@@ -426,5 +428,170 @@ func TestR13MidCycleEditWinsOverQuarantine(t *testing.T) {
 	b.sync(t)
 	if got := b.read(t, "a.txt"); got != "edited mid-cycle" {
 		t.Fatalf("machine b sees %q, want the resurrected edit", got)
+	}
+}
+
+// R9 (engine): a local directory rename is one remote move — the Drive
+// folder keeps its id, the plan contains no delete-class action, and the
+// directory row survives as is_dir = 1. A second machine receives it as a
+// local dir move with contents intact.
+func TestR9LocalDirRenameKeepsFolderIdentity(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "docs/one.txt", "c1")
+	a.write(t, "docs/sub/two.txt", "c2")
+	a.sync(t)
+	b := newMachine(t, "b", fake, rootID)
+	b.sync(t)
+
+	items, err := a.db.AllItems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirID string
+	for _, it := range items {
+		if it.RelPath == "docs" {
+			dirID = it.DriveFileID
+		}
+	}
+	if dirID == "" {
+		t.Fatal("no baseline row for docs/")
+	}
+
+	a.rename(t, "docs", "papers")
+	res := a.sync(t)
+	for _, act := range res.Plan {
+		switch act.Type {
+		case reconcile.TrashRemote, reconcile.QuarantineLocal, reconcile.MkdirRemote:
+			t.Errorf("folder rename planned %s %s — must be a pure move", act.Type, act.RelPath)
+		}
+	}
+	items, _ = a.db.AllItems()
+	found := false
+	for _, it := range items {
+		if it.RelPath == "papers" {
+			found = true
+			if it.DriveFileID != dirID {
+				t.Errorf("folder id churned: %s -> %s", dirID, it.DriveFileID)
+			}
+			if !it.IsDir {
+				t.Error("directory row lost is_dir across the move")
+			}
+		}
+		if it.RelPath == "docs" || it.RelPath == "docs/one.txt" {
+			t.Errorf("stale baseline row at old path %s", it.RelPath)
+		}
+	}
+	if !found {
+		t.Fatal("no baseline row for papers/ after the rename")
+	}
+	if res2 := a.sync(t); len(res2.Plan) != 0 {
+		t.Errorf("second cycle not idle: %+v", res2.Plan)
+	}
+
+	b.sync(t)
+	if got := b.read(t, "papers/sub/two.txt"); got != "c2" {
+		t.Errorf("machine b papers/sub/two.txt = %q", got)
+	}
+	if b.exists("docs") {
+		t.Error("machine b still has the old docs/ dir")
+	}
+}
+
+// R9 (engine): a file added remotely while the dir is renamed locally lands
+// under the NEW name; no zombie source dir, folder id stable.
+func TestR9ConcurrentRemoteAddUnderRenamedDir(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "docs/one.txt", "c1")
+	a.sync(t)
+
+	items, _ := a.db.AllItems()
+	var dirID string
+	for _, it := range items {
+		if it.RelPath == "docs" {
+			dirID = it.DriveFileID
+		}
+	}
+	if _, err := fake.Upload(context.Background(), dirID, "new.txt", strings.NewReader("fresh"), 5); err != nil {
+		t.Fatal(err)
+	}
+	a.rename(t, "docs", "papers")
+	a.sync(t)
+	a.sync(t)
+
+	if got := a.read(t, "papers/new.txt"); got != "fresh" {
+		t.Errorf("papers/new.txt = %q, want the remotely added content", got)
+	}
+	if a.exists("docs") {
+		t.Error("zombie docs/ dir resurrected locally")
+	}
+	items, _ = a.db.AllItems()
+	for _, it := range items {
+		if it.RelPath == "papers" && it.DriveFileID != dirID {
+			t.Errorf("folder id churned: %s -> %s", dirID, it.DriveFileID)
+		}
+	}
+}
+
+// R18 (spec §7): a MoveRemote commit never restates local truth. An edit
+// landing between the scan and the commit stays visibly dirty — the row
+// keeps the SCANNED stat and md5 — and uploads on the next cycle.
+func TestR18MoveRemoteCommitKeepsLocalTruth(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "a.txt", "v1")
+	a.sync(t)
+
+	items, _ := a.db.AllItems()
+	var fileID, md5v1 string
+	var sizeV1, mtimeV1 int64
+	for _, it := range items {
+		if it.RelPath == "a.txt" {
+			fileID, md5v1, sizeV1, mtimeV1 = it.DriveFileID, it.ContentMD5, it.Size, it.LocalMtimeNS
+		}
+	}
+
+	// The user renames; the scan pairs the move; then the edit lands before
+	// the executor commits — same size, new content, new mtime.
+	a.rename(t, "a.txt", "b.txt")
+	if err := os.WriteFile(filepath.Join(a.dir, "b.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Minute)
+	os.Chtimes(filepath.Join(a.dir, "b.txt"), past, past)
+
+	x := &executor.Executor{DB: a.db, Client: fake, SyncDir: a.dir,
+		QuarantineDir: filepath.Join(filepath.Dir(a.dir), "quarantine"), RootID: rootID}
+	sum, err := x.Apply(context.Background(), []reconcile.Action{{
+		Type: reconcile.MoveRemote, RelPath: "a.txt", NewRelPath: "b.txt",
+		FileID: fileID, MD5: md5v1, Size: sizeV1,
+	}})
+	if err != nil || sum.Failed != 0 {
+		t.Fatalf("move apply: %v / %+v", err, sum)
+	}
+
+	items, _ = a.db.AllItems()
+	for _, it := range items {
+		if it.RelPath != "b.txt" {
+			continue
+		}
+		if it.ContentMD5 != md5v1 || it.Size != sizeV1 || it.LocalMtimeNS != mtimeV1 {
+			t.Errorf("commit restated local truth: md5=%s size=%d mtime=%d, want scanned %s/%d/%d",
+				it.ContentMD5, it.Size, it.LocalMtimeNS, md5v1, sizeV1, mtimeV1)
+		}
+	}
+
+	// The edit must reach Drive on the next ordinary cycle.
+	a.sync(t)
+	body, err := fake.Download(context.Background(), fileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 8)
+	n, _ := body.Read(buf)
+	body.Close()
+	if got := string(buf[:n]); got != "v2" {
+		t.Errorf("drive content = %q, want the mid-cycle edit uploaded (silent divergence)", got)
 	}
 }

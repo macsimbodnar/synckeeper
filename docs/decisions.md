@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-07-18 — W1.8.2 implemented: the collapse works by judging children at post-rename paths
+
+**Context:** implementing the decided A1 design (directory pairing by children-evidence, shared representation, rewrite on the side that hasn't moved) plus C1/R18 in the same change, as planned. Three implementation choices worth recording beyond the plan's decided text.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):**
+
+1. **"Drop the per-file moves" is structural, not subtractive.** Once detection collapses D → N, pass 1 looks its children up at their post-rename local paths (§4.2's post-move rule applied to the side the user moved), so they become ordinary unchanged/edited/conflicted rows and the per-file moves are never emitted at all. Detection therefore runs a *prediction* of the pass-1/pass-2 pairing before the passes; after a collapse the real passes never re-pair those files, so the two can't disagree.
+2. **Two conservative guards added, same spirit as the decided asymmetry:** the destination N must be a brand-new local directory (a tracked destination means files merged *into* an existing folder — a merge, not a rename) and N's name must be free on the remote side (a reparent onto an occupied name would mint a Drive duplicate — the C2 class). Both refuse into today's delete + create, never into a wrong reparent.
+3. **The reparent's slot in §4.5's stage order:** after the mkdirs (its destination parent may be a folder being created), before the file moves (they resolve parent ids through it) — and remote mkdirs that target a just-reparented directory defer behind it, closing the transient parent-id failure that would otherwise cost a cycle. Spec §4.5 amended in the same change.
+
+**Consequences:** R9 passing at reconcile (6 cases incl. scatter/empty/concurrent-change) and engine (identity + `is_dir` pinned across two machines); R18 passing (the commit is `RenameItemPath` + Drive-fields-only update — no stat, no restated truth, `is_dir` preserved, closing C1 and trap 2 with one shape). MANUAL.md retires two Known-bugs entries in this same commit, per the manual rule. Folder renames now reach other machines as one local dir move.
+
 ## 2026-07-18 — README/MANUAL consolidation: one owner per audience
 
 **Context:** MANUAL.md (created earlier the same day) overlapped README in two places. README's "Run" section duplicated the manual's command reference nearly line-for-line — and had already grown the defect duplication invites: `synckeeper sync` listed twice with two different explanations. README's "Credentials" section held the *full* BYO walkthrough while the manual deferred to it — inverted ownership, since credentials setup is purely end-user material. With both sync rules active (README correct on command changes; MANUAL true on user-visible changes), every CLI change had to be written three times — code, manual, README — with no mechanism keeping the two prose copies consistent. That is the drift class this repo has already paid for three times (the testing.md N-rows, the phase-7 exit criteria, C7's spec-vs-code skip promise).

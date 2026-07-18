@@ -343,20 +343,16 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 	}
 	x.renamePathIDs(a.RelPath, a.NewRelPath)
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
+		// RenameItemPath renames the row — and, for a directory, every
+		// descendant row — leaving is_dir and the scanned stat/md5 intact.
+		// The commit never restates local truth (R18, spec §7): an edit
+		// landing after the scan must stay visibly dirty and upload next
+		// cycle, so only the Drive-side fields are refreshed, and the
+		// destination is never statted.
 		if err := statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath); err != nil {
 			return err
 		}
-		// Refresh the moved row's version and local stat: the local file
-		// already sits at the destination (the move was local-driven).
-		info, statErr := os.Stat(x.abs(a.NewRelPath))
-		if statErr != nil {
-			return statErr
-		}
-		return statedb.UpsertItem(tx, statedb.Item{
-			DriveFileID: f.ID, RelPath: a.NewRelPath, Size: info.Size(),
-			ContentMD5: a.MD5, LocalMtimeNS: info.ModTime().UnixNano(),
-			DriveMD5: f.MD5, DriveVersion: f.Version,
-		})
+		return statedb.UpdateItemDrive(tx, a.FileID, f.MD5, f.Version)
 	})
 }
 

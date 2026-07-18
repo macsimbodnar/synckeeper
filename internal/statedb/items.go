@@ -127,3 +127,13 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// UpdateItemDrive refreshes only the Drive-side fields of an item row.
+// Deliberately narrow (R18, spec §7): a move's commit must never restate
+// the row's local truth — the scanned size/mtime/md5 stay untouched, so an
+// edit landing after the scan remains visibly dirty to the next scan.
+func UpdateItemDrive(tx *sql.Tx, driveFileID, driveMD5 string, version int64) error {
+	_, err := tx.Exec(`update items set drive_md5 = ?, drive_version = ? where drive_file_id = ?`,
+		driveMD5, version, driveFileID)
+	return err
+}
