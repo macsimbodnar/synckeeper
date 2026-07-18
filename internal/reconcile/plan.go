@@ -299,32 +299,40 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		loc := in.Local[p]
 		target := rewrite(p)
+		// Every row resolves at the path the item will occupy when the
+		// action runs (§4.2, R11): under a remotely-moved ancestor the new
+		// local file meets its remote counterpart at the POST-move path —
+		// looking up the pre-move path silently skipped the both-new rows
+		// and emitted an upload and a download onto one rel_path.
 		if loc.IsDir {
-			if r, ok := newRemoteAt(p); ok && r.IsDir {
-				transfers = append(transfers, Action{Type: Record, RelPath: p, FileID: r.FileID,
+			if r, ok := newRemoteAt(target); ok && r.IsDir {
+				transfers = append(transfers, Action{Type: Record, RelPath: target, FileID: r.FileID,
 					IsDir: true, Version: r.Version})
-				claimed[p] = true
+				claimed[target] = true
 			} else if _, taken := in.Remote[target]; !taken {
 				mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: target, IsDir: true})
 			}
 			continue
 		}
-		if r, ok := newRemoteAt(p); ok && !r.IsDir {
+		if r, ok := newRemoteAt(target); ok && !r.IsDir {
 			if r.MD5 == loc.MD5 {
 				// Adopt: identical content already on both sides.
-				transfers = append(transfers, Action{Type: Record, RelPath: p, FileID: r.FileID,
+				transfers = append(transfers, Action{Type: Record, RelPath: target, FileID: r.FileID,
 					MD5: r.MD5, Size: r.Size, Version: r.Version,
 					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
 			} else {
-				cp := conflicts.Path(p, in.Machine, in.Now)
-				moves = append(moves, Action{Type: ConflictBackup, RelPath: p, NewRelPath: cp})
+				// Both-new conflict: the backup acts at the post-move path,
+				// where the ancestor's MoveLocal (hoisted before it) has
+				// already put the local content.
+				cp := conflicts.Path(target, in.Machine, in.Now)
+				moves = append(moves, Action{Type: ConflictBackup, RelPath: target, NewRelPath: cp})
 				transfers = append(transfers,
-					Action{Type: Upload, RelPath: cp, ProtectedBy: p},
-					Action{Type: Download, RelPath: p, FileID: r.FileID,
+					Action{Type: Upload, RelPath: cp, ProtectedBy: target},
+					Action{Type: Download, RelPath: target, FileID: r.FileID,
 						MD5: r.MD5, Size: r.Size, Version: r.Version,
-						ProtectedBy: p})
+						ProtectedBy: target})
 			}
-			claimed[p] = true
+			claimed[target] = true
 			continue
 		}
 		// Move pairing: a deleted baseline file with identical content

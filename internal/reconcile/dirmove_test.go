@@ -143,3 +143,45 @@ func TestR9RemoteNewChildUnderLocallyRenamedDir(t *testing.T) {
 		{t: Download, rel: "Papers/new.txt", fileID: "f9"},
 	})
 }
+
+// R11 (spec §4.2, A4): rows are decided at the path the item will occupy
+// when the action runs. A new local file inside a remotely-moved directory
+// must meet its new remote counterpart at the POST-move path — the
+// both-new conflict fires, one action per rel_path.
+func TestR11NewLocalFileUnderRemotelyMovedDirConflicts(t *testing.T) {
+	runPlan(t, Input{
+		Base: map[string]BaseItem{"A": baseDir("d1")},
+		Local: map[string]LocalItem{
+			"A":   locDir(),
+			"A/x": locFile("m-local", 7),
+		},
+		Remote: map[string]RemoteItem{
+			"B":   remDir("d1", 2),
+			"B/x": remFile("f2", "m-remote", 9, 1),
+		},
+	}, []step{
+		{t: MoveLocal, rel: "A", newRel: "B"},
+		{t: ConflictBackup, rel: "B/x", newRel: "B/x" + conflictSuffix},
+		{t: Download, rel: "B/x", fileID: "f2"},
+		{t: Upload, rel: "B/x" + conflictSuffix},
+	})
+}
+
+// R11 adopt half: same content on both sides adopts at the post-move path,
+// no transfer, no duplicate.
+func TestR11NewLocalFileUnderRemotelyMovedDirAdopts(t *testing.T) {
+	runPlan(t, Input{
+		Base: map[string]BaseItem{"A": baseDir("d1")},
+		Local: map[string]LocalItem{
+			"A":   locDir(),
+			"A/x": locFile("m-same", 7),
+		},
+		Remote: map[string]RemoteItem{
+			"B":   remDir("d1", 2),
+			"B/x": remFile("f2", "m-same", 7, 1),
+		},
+	}, []step{
+		{t: MoveLocal, rel: "A", newRel: "B"},
+		{t: Record, rel: "B/x", fileID: "f2"},
+	})
+}

@@ -656,3 +656,55 @@ func TestR10EmptyFolderTreeRenameDoesNotWedgeDaemon(t *testing.T) {
 		t.Errorf("standing block or non-convergence: blocked=%v plan=%+v", res2.GuardBlocked, res2.Plan)
 	}
 }
+
+// R11 (engine): machine B renames a folder remotely and adds x.txt inside
+// it; machine A creates its own x.txt under the old folder name before
+// syncing. The two must meet at the post-move path as an ordinary both-new
+// conflict — both versions survive, exactly one x.txt on Drive.
+func TestR11NewLocalFileUnderRemotelyMovedDirBecomesConflict(t *testing.T) {
+	ctx := context.Background()
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "docs/seed.txt", "seed")
+	a.sync(t)
+
+	items, _ := a.db.AllItems()
+	var dirID string
+	for _, it := range items {
+		if it.RelPath == "docs" {
+			dirID = it.DriveFileID
+		}
+	}
+	if _, err := fake.Move(ctx, dirID, rootID, "papers"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.Upload(ctx, dirID, "x.txt", strings.NewReader("remote-x"), 8); err != nil {
+		t.Fatal(err)
+	}
+	a.write(t, "docs/x.txt", "local-x")
+
+	a.sync(t)
+	if got := a.read(t, "papers/x.txt"); got != "remote-x" {
+		t.Errorf("canonical papers/x.txt = %q, want remote content", got)
+	}
+	cp := findConflictCopy(t, a.dir)
+	if got := a.read(t, cp); got != "local-x" {
+		t.Errorf("conflict copy %s = %q, want the local version preserved", cp, got)
+	}
+	kids, err := fake.List(ctx, dirID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := 0
+	for _, k := range kids {
+		if k.Name == "x.txt" {
+			named++
+		}
+	}
+	if named != 1 {
+		t.Errorf("drive holds %d files named x.txt in the folder, want exactly 1 (no duplicate upload)", named)
+	}
+	if res := a.sync(t); len(res.Plan) != 0 {
+		t.Errorf("did not converge: %+v", res.Plan)
+	}
+}
