@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -33,6 +34,27 @@ type Watcher struct {
 	// config.toml. Both empty in tests that don't exercise control.
 	ControlSocket string
 	ConfigDir     string
+
+	// ignore is the published ignore-glob snapshot (spec §8.3, R14). The
+	// sync loop owns the config, but the fsnotify event pump reads the
+	// globs on every event from its own goroutine — so a `reload` must
+	// publish a new snapshot here, never write the slice in place.
+	ignore atomic.Pointer[[]string]
+}
+
+// publishIgnore makes globs the snapshot every off-loop reader sees.
+func (w *Watcher) publishIgnore(globs []string) {
+	w.ignore.Store(&globs)
+}
+
+// ignoreGlobs is safe from any goroutine. Before Run publishes (direct
+// applyReload in tests) it falls back to the loop-owned config, which is
+// single-goroutine in that situation.
+func (w *Watcher) ignoreGlobs() []string {
+	if p := w.ignore.Load(); p != nil {
+		return *p
+	}
+	return w.Eng.Cfg.Engine.Ignore
 }
 
 // rebuildEvery: sync cycles between fsnotify watcher rebuilds. On kqueue a
@@ -48,6 +70,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if w.Debounce <= 0 {
 		w.Debounce = 500 * time.Millisecond
 	}
+	w.publishIgnore(w.Eng.Cfg.Engine.Ignore)
 	fdLimitOnce.Do(raiseFDLimit)
 
 	rec := newRecorder(w.Eng.DB)
@@ -231,7 +254,7 @@ func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (*fsn
 				if !ok {
 					return
 				}
-				if names.Ignored(filepath.Base(ev.Name), w.Eng.Cfg.Engine.Ignore) {
+				if names.Ignored(filepath.Base(ev.Name), w.ignoreGlobs()) {
 					continue
 				}
 				if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
@@ -276,7 +299,7 @@ func (w *Watcher) watchSubtree(fw *fsnotify.Watcher, root string) int {
 		if !d.IsDir() {
 			return nil
 		}
-		if names.Ignored(d.Name(), w.Eng.Cfg.Engine.Ignore) && p != root {
+		if names.Ignored(d.Name(), w.ignoreGlobs()) && p != root {
 			return filepath.SkipDir
 		}
 		if err := fw.Add(p); err != nil {

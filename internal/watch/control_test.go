@@ -3,9 +3,11 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,8 +19,9 @@ import (
 
 // startWatcherWithControl runs a watcher with a control socket at a short
 // path (the long $TMPDIR would overflow the sun_path limit) and returns the
-// socket path once it answers a ping.
-func startWatcherWithControl(t *testing.T, m *machine, poll time.Duration) string {
+// socket path once it answers a ping. cfgDir is where `reload` re-reads
+// config.toml; "" for tests that never reload.
+func startWatcherWithControl(t *testing.T, m *machine, poll time.Duration, cfgDir string) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "skwatch")
 	if err != nil {
@@ -29,7 +32,7 @@ func startWatcherWithControl(t *testing.T, m *machine, poll time.Duration) strin
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	w := &Watcher{Eng: m.eng, Poll: poll, Debounce: 50 * time.Millisecond, ControlSocket: sock}
+	w := &Watcher{Eng: m.eng, Poll: poll, Debounce: 50 * time.Millisecond, ControlSocket: sock, ConfigDir: cfgDir}
 	go func() {
 		defer close(done)
 		if err := w.Run(ctx); err != nil {
@@ -82,7 +85,7 @@ func remoteHasName(t *testing.T, fake *driveclient.Fake, root, name string) bool
 func TestControlPauseSuppressesSyncThenResume(t *testing.T) {
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
-	sock := startWatcherWithControl(t, a, time.Hour)
+	sock := startWatcherWithControl(t, a, time.Hour, "")
 
 	call(t, sock, control.CmdPause, nil)
 	waitFor(t, "paused recorded", 3*time.Second, func() bool {
@@ -112,7 +115,7 @@ func TestControlSyncNow(t *testing.T) {
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 	a.write(t, "trigger_me.txt", "sync now")
-	sock := startWatcherWithControl(t, a, time.Hour)
+	sock := startWatcherWithControl(t, a, time.Hour, "")
 
 	call(t, sock, control.CmdPause, nil)
 	waitFor(t, "paused", 3*time.Second, func() bool {
@@ -158,6 +161,52 @@ func TestApplyReload(t *testing.T) {
 	if w.Eng.Cfg.Engine.MachineName != "a" {
 		t.Errorf("cold field applied: machine_name = %q, want unchanged 'a'", w.Eng.Cfg.Engine.MachineName)
 	}
+}
+
+// R14 (spec §8.3, A3): `reload` while fsnotify events are flowing must be
+// race-clean. The event pump reads the ignore globs on every event, so the
+// hot swap must publish a snapshot rather than write the config in place.
+// This test's job is to generate genuine event load *during* reloads — the
+// suite was race-clean before only because nothing reloaded while events
+// flowed. Run under -race; the pre-fix code races (write in applyReload on
+// the sync loop, read in the pump goroutine).
+func TestR14ReloadUnderEventLoadIsRaceClean(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+	cfgDir := t.TempDir()
+	writeConfig(t, cfgDir, "a", 45, 0.25)
+	sock := startWatcherWithControl(t, a, time.Hour, cfgDir)
+
+	// Sustained event storm: each write is an fsnotify event the pump
+	// filters through the ignore globs. Errors are ignored — the tree is a
+	// private tempdir and the load, not the writes, is the point.
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			os.WriteFile(filepath.Join(a.dir, fmt.Sprintf("load_%04d.txt", i)),
+				[]byte("event load"), 0o644)
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	for i := 0; i < 25; i++ {
+		call(t, sock, control.CmdReload, nil)
+	}
+	close(stop)
+	wg.Wait()
+
+	// The loop survived the storm: a write after it still syncs.
+	a.write(t, "after_reload.txt", "still alive")
+	waitFor(t, "sync after reload storm", 10*time.Second, func() bool {
+		return remoteHasName(t, fake, root, "after_reload.txt")
+	})
 }
 
 func writeConfig(t *testing.T, dir, machine string, poll int, threshold float64) {

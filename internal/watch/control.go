@@ -101,7 +101,10 @@ func okData(v any) control.Response {
 // applyReload re-reads config.toml and hot-swaps the fields that can change
 // without a restart (poll interval, ignore globs, thresholds); identity and
 // path fields are reported as needing a restart and left untouched. It runs
-// on the sync loop, so no cycle is concurrently reading the config.
+// on the sync loop, so no *cycle* is concurrently reading the config — but
+// the fsnotify event pump is not the loop and reads the ignore globs per
+// event, so those are handed over via publishIgnore, never written in
+// place (spec §8.3, R14).
 func (w *Watcher) applyReload(ticker *time.Ticker) reloadResult {
 	cfg, err := config.Load(w.ConfigDir)
 	if err != nil {
@@ -119,8 +122,11 @@ func (w *Watcher) applyReload(ticker *time.Ticker) reloadResult {
 		needsRestart = append(needsRestart, "engine.machine_name")
 	}
 
-	// Hot fields: safe to apply to the live engine immediately.
+	// Hot fields: safe to apply to the live engine immediately. The ignore
+	// globs also feed the pump's snapshot; the engine field itself is only
+	// ever read by sync cycles, which run on this loop.
 	w.Eng.Cfg.Engine.Ignore = cfg.Engine.Ignore
+	w.publishIgnore(cfg.Engine.Ignore)
 	w.Eng.Cfg.Engine.MassDeleteThreshold = cfg.Engine.MassDeleteThreshold
 	w.Eng.Cfg.Engine.QuarantineRetentionDays = cfg.Engine.QuarantineRetentionDays
 	if cfg.Engine.PollIntervalSecs != old.Engine.PollIntervalSecs {

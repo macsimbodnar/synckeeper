@@ -122,7 +122,6 @@ Confirmed, reproduced, and scheduled — tracked in [docs/plan.md](docs/plan.md)
 - **A folder deleted remotely can get stuck locally if it contains an ignored file** (W1.9.2), typically a `.DS_Store`: the daemon repeats a `directory not empty` error. *Workaround: delete the leftover file yourself.*
 - **Two quarantines of the same path on the same day keep only the newer rescue copy** (W1.9.3). The older version is still in Drive's trash.
 - **A name that is a file on one side and a folder on the other** causes a repeating error and can create a stray same-name entry in Drive (W1.9.4). *Workaround: rename one of the two.*
-- **`reload` during heavy file activity has a race** (W1.8.6). *Workaround: `pause`, `reload`, `resume`.*
 - **The daemon can exit instead of degrading to polling** if the file watcher fails to rebuild under file-descriptor pressure (W1.8.7). In service mode launchd restarts it automatically, so this self-heals; in foreground `watch` you'd have to restart it.
 
 ## 9. Known limitations (by design)

@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.8.6 implemented: the ignore globs are a published snapshot; `w.Poll` was never racy
+
+**Context:** implementing the decided A3 fix (hot config published safely, spec §8.3). Two things worth recording beyond the decided text: the synchronization mechanism, and a narrowing of the plan's analysis.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):** an **atomic snapshot** (`atomic.Pointer` on the Watcher, `publishIgnore`/`ignoreGlobs`) rather than a mutex or a channel handoff: the pump filters every event through the globs, so the read path must stay a single pointer load; a mutex would serialize the pump against the loop for no benefit, and a channel handoff would need pump-side state plumbing for `watchSubtree`, which both goroutines call. `Run` publishes at startup, `applyReload` republishes on swap; each snapshot is a fresh slice from `config.Load`, never mutated after publication. **The plan's "`w.Poll` is the same shape" claim narrowed:** verified at implementation, every `w.Poll` read is on the sync-loop goroutine (the pump reads only `Debounce`, which is set before any goroutine starts), so `Poll` stays a plain loop-owned field — the confirmed race was the ignore globs alone. Per the W1.6 precedent this correction is recorded here rather than silently deviated into.
+
+**Consequences:** spec §8.3 implemented note; plan W1.8.6 done; testing R14 passing (`-race` regression with a genuine event storm during 25 reloads — red before the fix, exactly the predicted write/read pair). MANUAL.md retires the "reload during heavy file activity" Known-bugs entry in the same commit. Other hot fields (thresholds, retention, poll) are loop-owned end to end and stay plain writes.
+
 ## 2026-07-19 — W1.8.5 implemented: the dir-Record exemption from the ancestor rule
 
 **Context:** implementing the decided A5 assertion (transfer-stage no-overlap, scoped per the 2026-07-18 plan review), the rule as decided — refuse any same-rel_path or ancestor/descendant pair — turned out to refuse a *correct* plan: a directory adopt (`Record`, DB row only) plus a download of a child file, the ordinary shape when both machines already hold the same folder. The F1 lesson one level down: the blanket check confuses a metadata commit with file I/O.
