@@ -58,13 +58,14 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 ## Platform tests (phase 5)
 
-| Case | Status |
-|---|---|
-| Case collision (Drive has `a.txt` + `A.txt`, case-insensitive local FS) | todo |
-| Windows reserved names skipped and reported | todo |
-| Windows long paths (`\\?\` prefix) | todo |
-| Illegal chars / trailing dots and spaces skipped | todo |
-| Symlinks not followed, reported | todo |
+Names criteria N1–N3 are spec §16.5; they live in the regression table below with the other IDs. This table holds the remaining per-platform work.
+
+| ID | Case | Status |
+|---|---|---|
+| — | Windows reserved names skipped and reported | todo |
+| — | Windows long paths (`\\?\` prefix) | todo |
+| — | Illegal chars / trailing dots and spaces skipped | todo |
+| — | Symlinks not followed, reported | todo |
 
 ## Soak (phase 3)
 
@@ -108,9 +109,31 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | R6 | Cross-rename swap (a↔b same cycle) converges to the correct state within bounded cycles (transient move failures accepted; no lying records) | passing (2026-07-17) — `TestR6RemoteFileSwapConverges` (engine); found + fixed silent divergence via unprotected Record |
 | R7 | Remote move onto an untracked local file → the occupant is preserved as a conflict copy (backed up + uploaded), never clobbered by `MoveLocal` (adversarial analysis; was: silent local data loss reported as success) | passing (2026-07-17) — `TestR7RemoteMoveOntoUntrackedLocalFilePreserved` (engine), `TestRemoteMoveOntoUntrackedLocalFilePreserved` (reconcile), `TestR7MoveLocalRefusesUnexpectedOccupant` (executor) |
 | R8 | `ConflictBackup` refuses to overwrite an existing file at its destination (crash-leftover copy) | passing (2026-07-17) — `TestR8ConflictBackupRefusesExistingDestination` (executor) |
+| N1 | Case siblings collapse on case-insensitive FS (`a.txt` + `A.txt`); first by id kept, rest skipped and reported | passing (2026-07-14) — `TestSnapshotCaseCollision` (remotedelta), `TestCaseInsensitiveFS` (names), `TestCaseOnlyRenameBecomesMove` (engine, macOS/APFS) |
 | N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | passing (2026-07-18) — `TestSnapshotNormalizationCollision` (remotedelta), `TestNormalizationInsensitiveFS` + `TestFoldKey` (names, probe validated on real APFS) |
-| FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay | todo |
-| W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo |
+| N3 | Duplicate names in one Drive folder collapse; first by id kept, rest skipped and reported | passing (2026-07-08) — covered by the `remotedelta.Snapshot` dedup suite; needs its own named case |
+
+### W1.8 — adversarial round 2 (2026-07-18); all `todo`, red-first
+
+| ID | Case | Status |
+|---|---|---|
+| gate | No file in `internal/executor` outside `localwrite.go` calls a raw FS-mutating stdlib function (AST walk) | todo — the enforcement half of the local-write gate, spec §7 |
+| R9 | Local directory rename is one remote move: the Drive folder id is unchanged and the plan contains no delete-class action (was: `mkdir_remote` + `trash_remote`, id churned) | todo — reconcile + engine |
+| R10 | Renaming a folder (and a folder tree) neither trips the mass-delete guard nor leaves the daemon in a standing block (was: 21 deletes / 41 items → one-shot aborted, daemon wedged permanently) | todo — guards unit + engine + daemon; acceptance G4 |
+| R11 | New local file inside a remotely-moved directory → conflict copy per spec §4.2, exactly one action per rel_path (was: no conflict copy, `upload` + `download` on one path) | todo — reconcile + engine |
+| R12 | The plan never emits two same-stage actions on one rel_path or an ancestor/descendant pair; a plan that does is refused, not raced (spec §4.5 made executable) | todo — reconcile property test + executor |
+| R13 | `QuarantineLocal` refuses a source that drifted since the scan — an edit landing mid-cycle wins the cycle instead of being quarantined ("edit beats delete", §4.2) | todo — executor + engine; the gate's first customer |
+| R14 | `reload` under sustained fsnotify event load is race-clean (must generate event load — the current suite is clean only because no test reloads while events flow) | todo — `internal/watch`, `-race` |
+| R15 | A watcher rebuild failure degrades to polling and the daemon survives (was: `return err` killed it) | todo — `internal/watch` |
+| R16 | A crashed directory move (renamed on disk, DB uncommitted) does not plan a remote trash for the empty dir | todo — reconcile + engine |
+| R17 | `remotedelta.Snapshot` terminates on a cyclic parent chain in the cache | todo — remotedelta |
+
+### Deferred acceptance
+
+| ID | Case | Status |
+|---|---|---|
+| FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay, **identity stability**, **§4.5 structural invariant** (oracle strengthened 2026-07-18) | todo — W4, now ahead of W3 |
+| W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo — W3 |
 
 ## Live smoke (any phase, manual)
 
