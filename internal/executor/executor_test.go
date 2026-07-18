@@ -376,3 +376,45 @@ func TestR13QuarantineLocalProceedsWhenPinMatches(t *testing.T) {
 		t.Fatalf("rescue copy missing or wrong: %q, %v", got, err)
 	}
 }
+
+// R12: a plan with two transfer-stage actions on one rel_path is refused
+// before anything executes — a planner mistake surfaces as a refused plan,
+// not a race (spec §4.5).
+func TestR12ApplyRefusesOverlappingTransferStage(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(syncDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := statedb.Open(filepath.Join(base, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	fake := driveclient.NewFake()
+	folder, err := fake.Mkdir(ctx, driveclient.FakeRootID, "Synckeeper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(syncDir, "x"), []byte("local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
+		QuarantineDir: filepath.Join(base, "quarantine"), RootID: folder.ID}
+	_, err = x.Apply(ctx, []reconcile.Action{
+		{Type: reconcile.Upload, RelPath: "x"},
+		{Type: reconcile.Download, RelPath: "x", FileID: "someid"},
+	})
+	if err == nil {
+		t.Fatal("overlapping transfer stage must refuse the whole plan")
+	}
+	n, err := db.PendingOpCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("refused plan left %d journaled ops; nothing may execute", n)
+	}
+}

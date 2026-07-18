@@ -45,6 +45,11 @@ func runPlan(t *testing.T, in Input, want []step) {
 	in.Machine = "test_box"
 	in.Now = testNow
 	got, _ := Plan(in)
+	// Property net (R12): every planned scenario in the suite must satisfy
+	// the §4.5 transfer-stage no-overlap invariant.
+	if err := ValidateTransferStage(got); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v\nplan: %+v", err, got)
+	}
 	if len(got) != len(want) {
 		t.Fatalf("plan length = %d, want %d\ngot: %+v", len(got), len(want), got)
 	}

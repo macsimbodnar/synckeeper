@@ -73,6 +73,11 @@ type Summary struct {
 // collected, not fatal: the rest of the plan proceeds where safe and the
 // next run replans.
 func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary, error) {
+	// §4.5 enforced, not assumed (R12): a plan whose concurrent transfer
+	// stage overlaps on a rel_path is refused before anything runs.
+	if err := reconcile.ValidateTransferStage(plan); err != nil {
+		return Summary{}, err
+	}
 	items, err := x.DB.AllItems()
 	if err != nil {
 		return Summary{}, err
