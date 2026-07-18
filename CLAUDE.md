@@ -20,7 +20,7 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 | `docs/testing.md` | acceptance ledger — rows are the criteria | with the feature, never after |
 | `docs/ideas.md` | Max's informal wishlist / inbox | triage items into spec + plan |
 | `docs/history/` | retired phase docs 0–7 (the pre-2026-07-17 phase system) | never — read-only archive |
-| `README.md` | human build/run/test instructions | same change that alters a command or Makefile target |
+| `README.md` | repo landing page: pitch, doc map, build/test instructions — **deliberately no usage sections** (those live in `MANUAL.md`; don't re-grow them) | same change that alters a Makefile target or the build/test procedure |
 | `MANUAL.md` | **end-user manual**: commands, configuration, behavior, known bugs & limitations | **any commit that changes user-visible behavior or bug status** — same commit, never after |
 
 ## Project state model

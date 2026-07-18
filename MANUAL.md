@@ -56,7 +56,7 @@ Global flag: `-v` / `--verbose` — debug logging.
 
 ## 4. Configuration
 
-`config.toml` lives in the per-OS config dir — macOS: `~/Library/Application Support/synckeeper/` — alongside the state DB, token, quarantine, and control socket. Unknown keys are rejected (typo protection); missing keys use the defaults shown.
+`config.toml` lives in the per-OS config dir — macOS: `~/Library/Application Support/synckeeper/`, Linux: `~/.config/synckeeper/`, Windows: `%AppData%\synckeeper\` — alongside the state DB (`state.db`), token (`token.json`), quarantine folder, control socket, and the optional `credentials.json` (§5). Unknown keys are rejected (typo protection); missing keys use the defaults shown.
 
 ```toml
 [drive]
@@ -77,7 +77,22 @@ ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # 
 
 ## 5. Using your own Google client (optional)
 
-By default all users share the author's API quota. For dedicated quota: create your own OAuth "Desktop app" client in the Google Cloud console, download its JSON, and save it as `credentials.json` in the config dir — exactly as downloaded, no editing. It takes precedence over the embedded default; `synckeeper account` shows which client is active. (Full walkthrough in README "Credentials".)
+Synckeeper ships with the author's OAuth client embedded, so there is nothing to set up — `synckeeper init` just works. All default-credential users share one Google Cloud project's Drive-API quota; per-user rate limits keep them isolated from each other, but a heavy user may want more headroom.
+
+**Bring your own client (for dedicated quota):**
+
+1. Create a personal Google Cloud project and enable the **Drive API**.
+2. Add an OAuth client of type **Desktop app**.
+3. Publish the consent screen to **Production** — unverified is fine, but **Testing** status expires refresh tokens after 7 days, which kills the daemon.
+4. Download the client JSON and drop it in the config dir (§4) as `credentials.json`, exactly as downloaded — no editing:
+
+```sh
+cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeeper/credentials.json"
+synckeeper login          # re-authenticate against your own client
+synckeeper account        # confirms: oauth client: credentials.json in the config dir
+```
+
+Lookup order is `credentials.json` in the config dir → the embedded default. A desktop-app client secret is not truly confidential (it ships in every binary), so this file is not sensitive — but it is still yours. `synckeeper account` always shows which client is active.
 
 ## 6. How syncing behaves
 

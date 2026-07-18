@@ -27,43 +27,14 @@ make build        # supported: native binary for the host platform → dist/
 make build-all    # legacy cross-compile matrix; works only while the tree is pure Go (until cgo/FSEvents lands, W3)
 ```
 
-## Run
+## Use
 
 ```sh
-synckeeper init             # OAuth flow, find/create Drive folder, create state DB
-synckeeper init --adopt     # join an existing non-empty Drive folder (safe first merge)
-synckeeper login            # re-authenticate (refresh an expired/revoked token); stop the daemon first
-synckeeper sync             # one-shot bidirectional sync
-synckeeper sync --dry-run   # print the plan, change nothing
-synckeeper watch            # continuous mode (fsnotify + remote polling)
-synckeeper status           # daemon state, config, counts, recent activity (--json, --watch)
-synckeeper activity [-n 20] # recent actions recorded by the watch daemon
-synckeeper config           # print the effective configuration
-synckeeper account          # active OAuth client + token status (presence/expiry)
-synckeeper sync             # delegates to the running daemon if up, else one-shot
-synckeeper pause | resume   # suspend / resume automatic syncing in the daemon
-synckeeper reload           # re-read config.toml in the running daemon
-synckeeper doctor [--repair]
-synckeeper service install|uninstall|status   # run watch as a login service (launchd/systemd/Task Scheduler)
+synckeeper init             # sign in with Google, create the Drive + local folders
+synckeeper service install  # keep syncing in the background from login
 ```
 
-Config lives at the platform config dir (`~/.config/synckeeper` on Linux, `~/Library/Application Support/synckeeper` on macOS, `%AppData%\synckeeper` on Windows): `config.toml`, `state.db`, `token.json`, `quarantine/`, and (optional) `credentials.json`.
-
-## Credentials
-
-Synckeeper ships with the author's OAuth client embedded, so there's nothing to set up — `synckeeper init` just works. All default-credential users share one Google Cloud project's Drive-API quota; per-user rate limits keep them isolated, but a heavy user may want more headroom.
-
-**Bring your own client (for dedicated quota).** Create a personal Google Cloud project, enable the Drive API, add a **Desktop app** OAuth client, and publish the consent screen to **Production** (unverified is fine; Testing status expires refresh tokens in 7 days and would kill the daemon). Download the client JSON and drop it in the config dir as `credentials.json`:
-
-```sh
-# config dir: ~/Library/Application Support/synckeeper (macOS),
-#             ~/.config/synckeeper (Linux), %AppData%\synckeeper (Windows)
-cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeeper/credentials.json"
-synckeeper login          # re-authenticate against your own client
-synckeeper account        # confirms: oauth client: credentials.json in the config dir
-```
-
-Lookup order is `credentials.json` in the config dir → the embedded default. A desktop-app client secret is not truly confidential (it ships in every binary), so this file is not sensitive — but it is still yours. `account` always shows which client is active. See spec §9.
+Everything else a user needs — the **full command reference, configuration (including bring-your-own OAuth client), sync behavior, recovery, and known bugs** — lives in **[MANUAL.md](MANUAL.md)**, kept true at every commit under its own rule (CLAUDE.md doc map). This README deliberately carries no usage sections beyond the quick start above; don't re-grow them here.
 
 ## Test
 
@@ -75,4 +46,4 @@ SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h
 
 ---
 
-Keep this README's build/run/test sections correct at every commit — update it in the same change that alters a command or Makefile target.
+Keep this README's build/test sections correct at every commit — update it in the same change that alters a Makefile target or the build/test procedure. Everything user-facing lives in [MANUAL.md](MANUAL.md) under its own same-commit rule (see CLAUDE.md); usage sections do not belong here.

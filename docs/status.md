@@ -40,5 +40,5 @@ Then **W4** (fuzzer, with the strengthened oracle — its op menu now includes t
 
 - **W6** (real multi-machine rollout): needs a second physical machine — Max's step.
 - **Optional, Max:** rotate the OAuth client in the Google console before publication (hygiene; the decided credential model doesn't require it).
-- **Deferred to publication:** the README donation note (W2.4d) — repo is still private.
+- **Deferred to publication:** the donation note (W2.4d; lands in MANUAL.md §5 since the README/MANUAL consolidation) — repo is still private.
 - **Carried into W3 to size, not a defect:** every cycle that writes files fires its own fsnotify events, re-triggering the loop. Converges and is harmless at personal scale; measure under the W1-scale test before deciding whether a backend should suppress self-inflicted events.

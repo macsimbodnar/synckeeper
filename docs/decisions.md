@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-07-18 — README/MANUAL consolidation: one owner per audience
+
+**Context:** MANUAL.md (created earlier the same day) overlapped README in two places. README's "Run" section duplicated the manual's command reference nearly line-for-line — and had already grown the defect duplication invites: `synckeeper sync` listed twice with two different explanations. README's "Credentials" section held the *full* BYO walkthrough while the manual deferred to it — inverted ownership, since credentials setup is purely end-user material. With both sync rules active (README correct on command changes; MANUAL true on user-visible changes), every CLI change had to be written three times — code, manual, README — with no mechanism keeping the two prose copies consistent. That is the drift class this repo has already paid for three times (the testing.md N-rows, the phase-7 exit criteria, C7's spec-vs-code skip promise).
+
+**Decision (Max, agent-proposed):** **one owner per audience — for the next agent, the whole rule is: if it documents how to *use* the software, it goes in MANUAL.md, full stop.**
+
+- **MANUAL.md owns everything end-user:** commands, configuration (now listing all three platform config dirs), the full BYO-credentials walkthrough absorbed from README (including the Production-consent warning — Testing status kills the daemon in 7 days), behavior, recovery, known bugs. The publication-time donation note (W2.4d) follows the credentials section into the manual.
+- **README is the repo landing page for developers:** pitch, status, doc map, build, test — plus a deliberate three-line quick start (`init` / `service install`: the stable core, ~zero drift risk, high landing-page value) and a pointer to the manual. **It carries no other usage content, by design; both README's footer and the CLAUDE.md doc map now say so explicitly to stop it re-growing.**
+- **Rules narrowed to match:** README's sync duty is now build/test only (a user-visible change touches MANUAL alone; README changes only with a Makefile target or the build/test procedure). Deliberately still duplicated: the intro pitch (different audiences, no factual reference content to drift) and the doc table (navigation).
+
+**Consequences:** README −Run −Credentials +Use pointer, footer narrowed; MANUAL §4 gains the platform paths, §5 the full walkthrough; CLAUDE.md doc-map row for README rewritten; plan.md W2.4d annotated with the relocation; status.md blocker line updated. No code, no behavior change.
+
 ## 2026-07-18 — MANUAL.md: an end-user manual, kept true at every commit
 
 **Context:** the doc set is complete as *development* memory (spec/plan/status/decisions/testing), but nothing describes the software from the end user's side — how to install, use, and configure it, what its commands do, and which bugs are currently known. Max wants that as a first-class, root-level document with a standing sync rule, so it can never rot the way phase-7's exit criteria once did.
