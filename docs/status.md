@@ -2,7 +2,7 @@
 
 The single answer to "where are we?". Read this first; **rewrite it before ending any work session** (sections replaced in place — history lives in `git log` and [decisions.md](decisions.md), not here).
 
-**Updated:** 2026-07-18 — **W1.8 implementation has started: item 1 (the local-write gate) is done.** W1.8 still blocks everything else; W1.9 runs right after it.
+**Updated:** 2026-07-18 — **W1.8 item 1 (the local-write gate) is done**, and the repo gained **MANUAL.md + its sync rule** (end-user manual, updated in the same commit as any user-visible change or bug-status change — see CLAUDE.md hard rules; decisions.md "MANUAL.md"). W1.8 still blocks everything else; W1.9 runs right after it. **Reminder for every W1.8/W1.9 fix from here on: the fix's commit also removes its Known-bugs entry from MANUAL.md.**
 
 ## Last completed
 

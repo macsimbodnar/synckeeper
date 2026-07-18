@@ -13,7 +13,13 @@ Format:
 
 ---
 
-## 2026-07-18 — W1.9: adversarial round 3, over the code — the moveRemote commit, cross-tree folds, and three wedges
+## 2026-07-18 — MANUAL.md: an end-user manual, kept true at every commit
+
+**Context:** the doc set is complete as *development* memory (spec/plan/status/decisions/testing), but nothing describes the software from the end user's side — how to install, use, and configure it, what its commands do, and which bugs are currently known. Max wants that as a first-class, root-level document with a standing sync rule, so it can never rot the way phase-7's exit criteria once did.
+
+**Decision (Max):** create **`MANUAL.md` in the project root** — commands, configuration, behavior (conflicts, deletes/quarantine, guards, skips), recovery, known bugs, known limitations — written for the end user, not the developer. **New repo rule (CLAUDE.md hard rules + doc map, plan.md working process):** the manual is updated **in the same commit** as any change to commands, flags, configuration, defaults, or user-visible behavior, and any change in known-bug status — a bug *found* enters the Known-bugs list with its workaround, a bug *fixed* leaves the list in the fix's own commit.
+
+**Consequences:** MANUAL.md written from the code (not the spec's aspirations): CLI surface from `cmd/synckeeper`, config fields and hot/restart split as implemented, quarantine/log/config paths as implemented, and the Known-bugs list seeded from the confirmed open W1.8/W1.9 items with user-phrased workarounds (folder-rename churn + guard block, rename-then-edit divergence, cross-tree case collisions, the `.DS_Store` quarantine wedge, same-day quarantine overwrite, type clashes, the reload race, the watcher-exit). README's doc table links it first. This makes W1.8/W1.9 fixes slightly wider (each fix commit now also deletes its manual entry) — deliberate: the manual doubles as a user-facing burn-down of the correctness backlog.
 
 **Context — the check report.** A third adversarial code pass (after the round-2 plan was frozen and reviewed), same evidence bar as rounds 1–2: every behavioral claim reproduced with a throwaway probe before being reported; probes deleted, tree left clean, suite green. Five reproduced defects, two inspection items:
 

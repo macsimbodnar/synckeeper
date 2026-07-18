@@ -134,6 +134,7 @@ Tray/menu-bar app as a separate binary on the control socket (mode icon, sync no
 3. [testing.md](testing.md) rows are the acceptance ledger — add the row with the feature, not after.
 4. README build/run instructions stay correct at every commit.
 5. The spec is kept current: behavior changes edit spec.md in the same change, marked with a dated note.
+6. **`MANUAL.md` (project root) is the end-user manual and ships true at every commit** *(rule added 2026-07-18)*: any user-visible change — commands, flags, config, defaults, behavior — and any known-bug status change (found or fixed) updates it in the same commit. A fix that closes a Known-bugs entry removes that entry in the fix's own commit.
 
 ## Key risks
 

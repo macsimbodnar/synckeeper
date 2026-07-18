@@ -10,6 +10,7 @@ Start with [CLAUDE.md](CLAUDE.md) (the guide for agents and humans alike: read o
 
 | Doc | Purpose |
 |---|---|
+| [MANUAL.md](MANUAL.md) | **User manual**: commands, configuration, behavior, known bugs |
 | [docs/status.md](docs/status.md) | Live state: last / current / next task |
 | [docs/spec.md](docs/spec.md) | Design doc & implementation contract (authoritative) |
 | [docs/plan.md](docs/plan.md) | Workstream backlog + retired phase history |

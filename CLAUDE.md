@@ -21,6 +21,7 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 | `docs/ideas.md` | Max's informal wishlist / inbox | triage items into spec + plan |
 | `docs/history/` | retired phase docs 0–7 (the pre-2026-07-17 phase system) | never — read-only archive |
 | `README.md` | human build/run/test instructions | same change that alters a command or Makefile target |
+| `MANUAL.md` | **end-user manual**: commands, configuration, behavior, known bugs & limitations | **any commit that changes user-visible behavior or bug status** — same commit, never after |
 
 ## Project state model
 
@@ -34,6 +35,7 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 - `go build ./... && go vet ./... && go test ./...` green at every commit.
 - Builds are **native per platform** (no cross-compile requirement); cgo is permitted where the OS's best API needs it (spec §10). Pure Go preferred where equal.
 - Tests land with the feature, as `docs/testing.md` rows.
+- **`MANUAL.md` stays true at every commit.** Any change to commands, flags, configuration, defaults, or user-visible behavior — and any change to known-bug status, a bug *found or fixed* — updates the manual in the same commit. A fixed bug leaves the Known-bugs list in that fix's commit.
 - Durability invariants (spec §3) are non-negotiable; invariant 7 (dependency-aware plan ordering) exists because ordering bugs shipped once — see decisions.md 2026-07-17.
 - The credential model (spec §9): Max's OAuth client credentials stay embedded as the default; never "fix" that by removing them.
 
