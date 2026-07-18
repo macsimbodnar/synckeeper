@@ -127,6 +127,17 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | R15 | A watcher rebuild failure degrades to polling and the daemon survives (was: `return err` killed it) | todo — `internal/watch` |
 | R16 | A crashed directory move (renamed on disk, DB uncommitted) does not plan a remote trash for the empty dir | todo — reconcile + engine |
 | R17 | `remotedelta.Snapshot` terminates on a cyclic parent chain in the cache | todo — remotedelta |
+| R18 | A local rename's `MoveRemote` commit never restates local truth: an edit landing between scan and commit stays visibly dirty and uploads next cycle (was: the commit stamped the scanned md5 onto the edited file's stat → silent permanent divergence, the R6 class; reproduced 2026-07-18, round 3) | todo — executor + engine; lands with W1.8.2 |
+
+### W1.9 — adversarial round 3, code analysis (2026-07-18); all `todo`, red-first
+
+| ID | Case | Status |
+|---|---|---|
+| R19 | Cross-tree fold collision (local `Readme.txt` vs remote `README.txt`, both new, diff content): the §4.2 conflict fires — conflict copy + one canonical Drive file in the remote's byte-form; no blind upload of a fold-duplicate, no quarantine. A baseline row whose id was fold-skipped from the snapshot is a reported skip, never a remote-delete (was: Drive gained a permanent case-duplicate and the local file was quarantined) | todo — reconcile + engine (probe-gated, APFS) |
+| R20 | Remote deletion of a folder whose local copy holds only ignored/temp leftovers (`.DS_Store`) quarantines cleanly — leftovers travel to quarantine with the dir; an unexpected survivor still refuses (was: `directory not empty` every cycle, forever) | todo — engine |
+| R21 | Two same-day quarantines of one rel_path keep both rescue copies (destination uniquifies; `moveFile` refuses an existing destination) (was: the second silently overwrote the first) | todo — executor + engine |
+| R22 | Type clash at one rel_path (remote dir vs local file, and the mirror): reported skip, no transfer, no delete, no standing failure loop, no same-name pair minted on Drive (was: `mkdir_local` error loop + a file uploaded beside the folder) | todo — reconcile + engine |
+| R23 | The OAuth auth URL carries an S256 PKCE challenge and the token exchange carries its verifier | todo — auth |
 
 ### Deferred acceptance
 
