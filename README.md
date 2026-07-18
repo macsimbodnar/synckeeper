@@ -19,11 +19,11 @@ Start with [CLAUDE.md](CLAUDE.md) (the guide for agents and humans alike: read o
 
 ## Build
 
-Requires Go 1.22+. Binaries are built **natively on each target platform** (no cross-compile requirement; cgo permitted for OS-native integrations — see spec §10).
+Requires Go 1.26+ (see the `go` directive in `go.mod`). Binaries are built **natively on each target platform** (no cross-compile requirement; cgo permitted for OS-native integrations — see spec §10).
 
 ```sh
-make build        # binary for the host platform → dist/
-make build-all    # legacy cross-compile matrix; still works until cgo lands (workstream W3)
+make build        # supported: native binary for the host platform → dist/
+make build-all    # legacy cross-compile matrix; works only while the tree is pure Go (until cgo/FSEvents lands, W3)
 ```
 
 ## Run
