@@ -6,3 +6,7 @@ token.json
 .DS_Store
 .vscode
 .claude
+
+# BYO OAuth client lives in the config dir, never the repo
+credentials.json
+client_secret_*.json

@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-18 — W2.4: BYO credentials via `credentials.json` only; the "config keys" tier dropped
+
+**Context:** implementing the credential model decided 2026-07-17 (spec §9). The decided lookup order was `credentials.json` in the config dir → config keys → embedded. Implementing the middle tier means adding `client_id`/`client_secret` to the TOML — which `synckeeper config` prints to the terminal (and anywhere that output is piped/logged), exposing the secret unnecessarily.
+
+**Decision (agent-proposed refinement of the 2026-07-17 model):** implement `credentials.json` (config dir) → embedded, and **drop the config-keys tier**. `credentials.json` accepts the exact JSON the Cloud Console downloads for a Desktop-app client — the `installed`/`web` block, or a flat `{client_id, client_secret}` — so BYO is copy-one-file with zero transcription (the rclone model). `internal/auth/credentials.go` stays the single embedded source; `resolveClient(configDir)` does the lookup; `oauthConfig` threads the config dir through `TokenSource`/`Login`; `account` reports the active client + client id (never the secret). The stray `client_secret_*.json` left the repo root and `.gitignore` now blocks `credentials.json` / `client_secret_*.json` so a BYO file dropped near the repo during testing can't be committed.
+
+**Consequences:** amends spec §9 (lookup order, implemented note). Reversible — if Max wants config-key credentials, add the keys and a redaction path in `config` output. Tests: `internal/auth/credentials_test.go` (embedded default, BYO file wins, malformed file errors, installed/web/flat parsing). README gains a "Credentials / bring your own client" section; the publication-time donation note stays deferred (repo is still private).
+
 ## 2026-07-18 — W2.2: combined case+normalization fold uses NFC → lower → NFC
 
 **Context:** implementing the normalization folding adopted 2026-07-17 (spec §5). On a filesystem that folds *both* case and Unicode normalization (macOS APFS), two Drive siblings like `CAFÉ.txt` (NFC) and `café.txt` (NFD) map to one local path and must collapse — but a naive `NFC(name)` then `ToLower(...)` does not collapse them, because `ToLower` can denormalize (lowercasing a precomposed letter and a base+combining pair yields different byte sequences).

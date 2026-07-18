@@ -38,7 +38,7 @@ synckeeper watch            # continuous mode (fsnotify + remote polling)
 synckeeper status           # daemon state, config, counts, recent activity (--json, --watch)
 synckeeper activity [-n 20] # recent actions recorded by the watch daemon
 synckeeper config           # print the effective configuration
-synckeeper account          # Google credential status (token presence/expiry)
+synckeeper account          # active OAuth client + token status (presence/expiry)
 synckeeper sync             # delegates to the running daemon if up, else one-shot
 synckeeper pause | resume   # suspend / resume automatic syncing in the daemon
 synckeeper reload           # re-read config.toml in the running daemon
@@ -46,9 +46,23 @@ synckeeper doctor [--repair]
 synckeeper service install|uninstall|status   # run watch as a login service (launchd/systemd/Task Scheduler)
 ```
 
-Config lives at the platform config dir (`~/.config/synckeeper` on Linux, `~/Library/Application Support/synckeeper` on macOS, `%AppData%\synckeeper` on Windows): `config.toml`, `state.db`, `token.json`, `quarantine/`.
+Config lives at the platform config dir (`~/.config/synckeeper` on Linux, `~/Library/Application Support/synckeeper` on macOS, `%AppData%\synckeeper` on Windows): `config.toml`, `state.db`, `token.json`, `quarantine/`, and (optional) `credentials.json`.
 
-First-time setup needs a personal Google Cloud project with the Drive API enabled and a Desktop-app OAuth client, consent screen published to **Production** (unverified is fine; Testing status expires tokens in 7 days). See [docs/history/phase-0.md](docs/history/phase-0.md). (Planned, spec §9: released binaries will ship with embedded default credentials, with bring-your-own as an override for dedicated quota.)
+## Credentials
+
+Synckeeper ships with the author's OAuth client embedded, so there's nothing to set up — `synckeeper init` just works. All default-credential users share one Google Cloud project's Drive-API quota; per-user rate limits keep them isolated, but a heavy user may want more headroom.
+
+**Bring your own client (for dedicated quota).** Create a personal Google Cloud project, enable the Drive API, add a **Desktop app** OAuth client, and publish the consent screen to **Production** (unverified is fine; Testing status expires refresh tokens in 7 days and would kill the daemon). Download the client JSON and drop it in the config dir as `credentials.json`:
+
+```sh
+# config dir: ~/Library/Application Support/synckeeper (macOS),
+#             ~/.config/synckeeper (Linux), %AppData%\synckeeper (Windows)
+cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeeper/credentials.json"
+synckeeper login          # re-authenticate against your own client
+synckeeper account        # confirms: oauth client: credentials.json in the config dir
+```
+
+Lookup order is `credentials.json` in the config dir → the embedded default. A desktop-app client secret is not truly confidential (it ships in every binary), so this file is not sensitive — but it is still yours. `account` always shows which client is active. See spec §9.
 
 ## Test
 

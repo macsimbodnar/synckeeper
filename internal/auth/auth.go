@@ -21,17 +21,24 @@ import (
 
 const driveScope = "https://www.googleapis.com/auth/drive"
 
-// ErrNoCredentials is returned when the embedded client id/secret are unset.
+// ErrNoCredentials is returned when neither a credentials.json nor the
+// embedded client id/secret provide OAuth client credentials.
 var ErrNoCredentials = errors.New(
-	"no OAuth client credentials embedded: fill internal/auth/credentials.go or build with -ldflags -X overrides (see docs/phase-0.md prerequisites)")
+	"no OAuth client credentials: drop a credentials.json in the config dir, fill internal/auth/credentials.go, or build with -ldflags -X overrides")
 
-func oauthConfig() (*oauth2.Config, error) {
-	if ClientID == "" || ClientSecret == "" {
+// oauthConfig builds the OAuth config from the resolved client (a BYO
+// credentials.json in configDir wins over the embedded default; spec §9).
+func oauthConfig(configDir string) (*oauth2.Config, error) {
+	id, secret, _, err := resolveClient(configDir)
+	if err != nil {
+		return nil, err
+	}
+	if id == "" || secret == "" {
 		return nil, ErrNoCredentials
 	}
 	return &oauth2.Config{
-		ClientID:     ClientID,
-		ClientSecret: ClientSecret,
+		ClientID:     id,
+		ClientSecret: secret,
 		Endpoint:     google.Endpoint,
 		Scopes:       []string{driveScope},
 	}, nil
@@ -40,7 +47,7 @@ func oauthConfig() (*oauth2.Config, error) {
 // TokenSource returns a self-refreshing, self-persisting token source backed
 // by <configDir>/token.json. Fails if no token is stored yet (run `init`).
 func TokenSource(ctx context.Context, configDir string) (oauth2.TokenSource, error) {
-	cfg, err := oauthConfig()
+	cfg, err := oauthConfig(configDir)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +69,7 @@ func TokenSource(ctx context.Context, configDir string) (oauth2.TokenSource, err
 // Login runs the interactive loopback flow and persists the token. Returns
 // the token source for immediate use.
 func Login(ctx context.Context, configDir string) (oauth2.TokenSource, error) {
-	cfg, err := oauthConfig()
+	cfg, err := oauthConfig(configDir)
 	if err != nil {
 		return nil, err
 	}

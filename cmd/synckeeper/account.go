@@ -20,6 +20,12 @@ func newAccountCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if src, clientID, cerr := auth.CredentialInfo(configDir); cerr != nil {
+				fmt.Printf("oauth client:  error resolving credentials: %v\n", cerr)
+			} else {
+				fmt.Printf("oauth client:  %s\n", src)
+				fmt.Printf("client id:     %s\n", clientID)
+			}
 			path := auth.TokenPath(configDir)
 			tok, err := auth.LoadToken(path)
 			if err != nil {
