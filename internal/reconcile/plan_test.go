@@ -370,13 +370,16 @@ func TestRemoteReplacedInPlace(t *testing.T) {
 }
 
 func TestTypeClashSkipsAndReports(t *testing.T) {
-	_, skips := Plan(Input{
+	plan, skips := Plan(Input{
 		Base:    map[string]BaseItem{"a.txt": baseFile("f1", "m1", 3)},
 		Local:   map[string]LocalItem{"a.txt": locDir()},
 		Remote:  map[string]RemoteItem{"a.txt": remFile("f1", "m1", 3, 1)},
 		Machine: "test_box",
 		Now:     testNow,
 	})
+	if err := ValidateTransferStage(plan); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v", err)
+	}
 	if len(skips) != 1 || skips[0].RelPath != "a.txt" {
 		t.Fatalf("skips = %+v, want one for a.txt", skips)
 	}
@@ -393,6 +396,9 @@ func TestRemoteMovePlusConflictBacksUpFromCurrentPath(t *testing.T) {
 		Machine: "test_box",
 		Now:     testNow,
 	})
+	if err := ValidateTransferStage(got); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v", err)
+	}
 	cp := "z" + conflictSuffix + ".txt"
 	want := []step{
 		{t: ConflictBackup, rel: "z.txt", newRel: cp},
@@ -433,6 +439,9 @@ func TestRemoteMoveOntoUntrackedLocalFilePreserved(t *testing.T) {
 		Machine: "test_box",
 		Now:     testNow,
 	})
+	if err := ValidateTransferStage(got); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v", err)
+	}
 	cp := "b" + conflictSuffix + ".txt"
 	want := []step{
 		{t: ConflictBackup, rel: "b.txt", newRel: cp},

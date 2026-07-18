@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.8.5 implemented: the dir-Record exemption from the ancestor rule
+
+**Context:** implementing the decided A5 assertion (transfer-stage no-overlap, scoped per the 2026-07-18 plan review), the rule as decided — refuse any same-rel_path or ancestor/descendant pair — turned out to refuse a *correct* plan: a directory adopt (`Record`, DB row only) plus a download of a child file, the ordinary shape when both machines already hold the same folder. The F1 lesson one level down: the blanket check confuses a metadata commit with file I/O.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):** a **directory `Record` is exempt from the ancestor/descendant rule but not the same-path rule** — it commits a DB row and a path-id entry, touches no file, and cannot race a child's transfer I/O. File-level `Record`s stay fully checked. The validator also checks all transfer-typed actions plan-wide rather than locating the stage positionally — a conservative superset of what the executor parallelizes, so a malformed non-contiguous plan is refused rather than trusted.
+
+**Consequences:** spec §4.5 implemented note; plan W1.8.5 done; testing R12 passing (validator units incl. the exemption, executor refusal before journaling, property net in `runPlan`). *Recorded 2026-07-19 after the adversarial review of commit `ac71dd4` flagged the missing entry — the exemption had been recorded in plan/spec/status but not here; same review led to the net covering the three reconcile tests that call `Plan()` directly.* One observed nuance, no action: a dir `Record` publishes the parent path-id a concurrent child *upload* reads, so pool scheduling can transiently fail the child ("no drive id known") and replan — a safe refusal that predates W1.8.5, worth revisiting only if it ever surfaces as flake.
+
 ## 2026-07-18 — W1.8.2 implemented: the collapse works by judging children at post-rename paths
 
 **Context:** implementing the decided A1 design (directory pairing by children-evidence, shared representation, rewrite on the side that hasn't moved) plus C1/R18 in the same change, as planned. Three implementation choices worth recording beyond the plan's decided text.
