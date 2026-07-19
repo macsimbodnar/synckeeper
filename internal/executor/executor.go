@@ -569,6 +569,23 @@ func (x *Executor) quarantineDest(rel string) string {
 	return filepath.Join(x.QuarantineDir, time.Now().Format("2006-01-02"), filepath.FromSlash(rel))
 }
 
+// uniqueRescueDest returns dest, or dest with a numbered suffix before the
+// extension when an earlier rescue copy already sits there — a same-day
+// re-quarantine of one rel_path keeps every copy (invariant 3, R21).
+func uniqueRescueDest(dest string) string {
+	if _, err := os.Lstat(dest); os.IsNotExist(err) {
+		return dest
+	}
+	ext := filepath.Ext(dest)
+	stem := strings.TrimSuffix(dest, ext)
+	for i := 2; ; i++ {
+		cand := fmt.Sprintf("%s (%d)%s", stem, i, ext)
+		if _, err := os.Lstat(cand); os.IsNotExist(err) {
+			return cand
+		}
+	}
+}
+
 func (x *Executor) quarantineLocal(opID int64, a reconcile.Action) error {
 	abs := x.abs(a.RelPath)
 	if a.IsDir {
@@ -584,7 +601,7 @@ func (x *Executor) quarantineLocal(opID int64, a reconcile.Action) error {
 			return fmt.Errorf("remove dir (should be empty after children): %w", err)
 		}
 	} else {
-		dest := x.quarantineDest(a.RelPath)
+		dest := uniqueRescueDest(x.quarantineDest(a.RelPath))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}

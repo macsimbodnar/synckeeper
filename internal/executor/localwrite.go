@@ -124,9 +124,16 @@ func sweepInvisibleLeftovers(dir, dest string, ignore []string) error {
 
 // guardedMoveFile verifies the source against exp, then moves it, falling
 // back to copy+remove across filesystems (the quarantine dir may live on a
-// different volume than the sync dir).
+// different volume than the sync dir). The destination must be free: a
+// rescue copy is never overwritten (invariant 3, R21) — the caller picks a
+// fresh name and the cycle replans on a collision.
 func guardedMoveFile(from, to, what string, exp expectation) error {
 	if _, err := guardedStat(from, what, exp, refuseVanished); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(to); err == nil {
+		return fmt.Errorf("%s: destination %s is already occupied (an earlier rescue copy?); refusing to overwrite", what, to)
+	} else if !os.IsNotExist(err) {
 		return err
 	}
 	if err := os.Rename(from, to); err == nil {

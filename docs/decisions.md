@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.9.3 implemented: rescue copies uniquify Finder-style, refusal beneath
+
+**Context:** implementing the decided C4 fix (uniquify on collision; the move refuses an existing destination). One naming choice and one layering note.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):** the numbered suffix goes **before the extension**, Finder-style — `f (2).txt` — so rescue copies keep their type association when the user browses the quarantine. The two mechanisms are deliberately layered: `uniqueRescueDest` picks the free name, and `guardedMoveFile`'s new occupied-destination refusal sits beneath it as belt and braces — a collision appearing between the name pick and the rename replans instead of clobbering, the same fail-safe shape as every other §7 guard.
+
+**Consequences:** R21 passing at executor (both copies survive; the refusal companion) and engine (delete → restore → delete in one day, both versions in quarantine). Spec §3 invariant-3 note dated; MANUAL.md retires the W1.9.3 Known-bugs entry.
+
 ## 2026-07-19 — W1.9.2 implemented: the quarantine sweep, with two small boundaries
 
 **Context:** implementing the decided C3 fix (ignored-or-temp leftovers travel to quarantine with the dir). Two boundaries drawn at implementation, neither in the decided text.

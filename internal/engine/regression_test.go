@@ -863,3 +863,40 @@ func TestR20RemoteDeletedDirWithDSStoreUnwedges(t *testing.T) {
 		t.Error("rescued file.txt not found in machine b's quarantine")
 	}
 }
+
+// R21 (C4, engine): delete, restore, delete again — all in one day. Both
+// deletions quarantine the same rel_path; both rescue copies must survive
+// (was: the second silently overwrote the first).
+func TestR21SameDayRequarantineKeepsBothCopies(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "f.txt", "v1")
+	a.write(t, "keep.txt", "tree never empty")
+	a.sync(t)
+	b := newMachine(t, "b", fake, rootID)
+	b.sync(t)
+
+	a.remove(t, "f.txt")
+	a.sync(t)
+	b.sync(t) // b quarantines v1
+
+	a.write(t, "f.txt", "v2")
+	a.sync(t)
+	b.sync(t) // b downloads v2
+
+	a.remove(t, "f.txt")
+	a.sync(t)
+	b.sync(t) // b quarantines v2 — same rel_path, same day
+
+	got := map[string]bool{}
+	filepath.WalkDir(b.eng.QuarantineDir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			raw, _ := os.ReadFile(p)
+			got[string(raw)] = true
+		}
+		return nil
+	})
+	if !got["v1"] || !got["v2"] {
+		t.Errorf("machine b's quarantine holds %v, want both v1 and v2", got)
+	}
+}

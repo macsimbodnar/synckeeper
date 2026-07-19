@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -509,5 +510,95 @@ func TestR20QuarantinedDirStillRefusesUnexpectedSurvivor(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(filepath.Join(syncDir, "docs", "real.txt")); err != nil || string(raw) != "user data" {
 		t.Errorf("survivor was touched: %q, %v", raw, err)
+	}
+}
+
+// R21 (C4, spec §3 invariant 3): two same-day quarantines of one rel_path
+// keep BOTH rescue copies — the destination uniquifies with a numbered
+// suffix (was: the second os.Rename silently destroyed the first copy).
+func TestR21QuarantineNeverOverwritesRescueCopy(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(syncDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := statedb.Open(filepath.Join(base, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	fake := driveclient.NewFake()
+	folder, err := fake.Mkdir(ctx, driveclient.FakeRootID, "Synckeeper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quarantine := filepath.Join(base, "quarantine")
+	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
+		QuarantineDir: quarantine, RootID: folder.ID}
+
+	target := filepath.Join(syncDir, "f.txt")
+	quarantineOnce := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		scanned, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum, err := x.Apply(ctx, []reconcile.Action{{
+			Type: reconcile.QuarantineLocal, RelPath: "f.txt", FileID: "id-" + content,
+			LocalExists: true, LocalSize: scanned.Size(), LocalMtimeNS: scanned.ModTime().UnixNano(),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sum.Failed != 0 {
+			t.Fatalf("quarantine of %q failed: %v", content, sum.Errors)
+		}
+	}
+	quarantineOnce("v1")
+	quarantineOnce("v2")
+
+	got := map[string]bool{}
+	filepath.WalkDir(quarantine, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			raw, _ := os.ReadFile(p)
+			got[string(raw)] = true
+		}
+		return nil
+	})
+	if !got["v1"] || !got["v2"] {
+		t.Errorf("rescue copies lost: quarantine holds contents %v, want v1 and v2", got)
+	}
+}
+
+// R21 companion: guardedMoveFile itself refuses an occupied destination —
+// belt and braces beneath the uniquifier, so a race between the name pick
+// and the rename can never clobber a rescue copy.
+func TestR21GuardedMoveFileRefusesOccupiedDestination(t *testing.T) {
+	base := t.TempDir()
+	src := filepath.Join(base, "src.txt")
+	dst := filepath.Join(base, "dst.txt")
+	if err := os.WriteFile(src, []byte("moving"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("earlier rescue copy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanned, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp := expectation{exists: true, size: scanned.Size(), mtimeNS: scanned.ModTime().UnixNano()}
+	if err := guardedMoveFile(src, dst, "test move", exp); err == nil {
+		t.Fatal("occupied destination must refuse")
+	}
+	if raw, _ := os.ReadFile(dst); string(raw) != "earlier rescue copy" {
+		t.Errorf("destination clobbered: %q", raw)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("source vanished on a refused move: %v", err)
 	}
 }
