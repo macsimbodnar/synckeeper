@@ -113,7 +113,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | N2 | Unicode-normalization siblings collapse on normalization-insensitive FS; nothing clobbered, skips reported | passing (2026-07-18) — `TestSnapshotNormalizationCollision` (remotedelta), `TestNormalizationInsensitiveFS` + `TestFoldKey` (names, probe validated on real APFS) |
 | N3 | Duplicate names in one Drive folder collapse; first by id kept, rest skipped and reported | passing (2026-07-08; named case 2026-07-19) — `TestSnapshotDuplicateNameCollision` (`internal/remotedelta`: first by id kept, skip reported) plus the dedup suite |
 
-### W1.8 — adversarial round 2 (2026-07-18); all `todo`, red-first
+### W1.8 — adversarial round 2 (planned 2026-07-18); landed red-first, all rows passing (2026-07-19)
 
 | ID | Case | Status |
 |---|---|---|
@@ -129,7 +129,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | R17 | `remotedelta.Snapshot` terminates on a cyclic parent chain in the cache | passing (2026-07-19) — `TestR17SnapshotTerminatesOnParentCycle` (the root-as-own-child row, the one cycle reachable under the single-parent schema; visited set mirrors `prune`'s) |
 | R18 | A local rename's `MoveRemote` commit never restates local truth: an edit landing between scan and commit stays visibly dirty and uploads next cycle (was: the commit stamped the scanned md5 onto the edited file's stat → silent permanent divergence, the R6 class; reproduced 2026-07-18, round 3) | passing (2026-07-18) — `TestR18MoveRemoteCommitKeepsLocalTruth` (executor commit + engine re-upload in one arc) |
 
-### W1.9 — adversarial round 3, code analysis (2026-07-18); all `todo`, red-first
+### W1.9 — adversarial round 3, code analysis (planned 2026-07-18); landed red-first, all rows passing (2026-07-19)
 
 | ID | Case | Status |
 |---|---|---|

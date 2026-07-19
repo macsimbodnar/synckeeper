@@ -21,7 +21,7 @@ Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date
 
 **Execution order on the primary platform (updated 2026-07-18): W1.8 → W1.9 → W4 → W3 → W5.** W3 and W4 keep their identifiers and swap execution order — correctness never depends on the watcher (spec §8.1), so the fuzzer earns more than FSEvents does right now; see decisions.md 2026-07-18 "Roadmap". W1.9 (adversarial round 3, over the code) precedes W4 for the same reason: the fuzzer simulates machines on the real, fold-happy local filesystem, and two of round 3's reproduced defects (C2, C3) would turn its oracle red from day one. W6+ follow the spec roadmap.
 
-### W1 — Correctness fixes (from the 2026-07-17 review) — `done (2026-07-17)` · reopened as W1.7, then W1.8, by adversarial analysis
+### W1 — Correctness fixes (from the 2026-07-17 review) — `done (2026-07-17)` · reopened three times by adversarial analysis (W1.7, W1.8, W1.9 — all closed 2026-07-19)
 
 Reproduced bugs first; each fix lands with its regression test (testing.md R1/R2, plus rows below). **A later adversarial re-analysis found a critical data-loss bug this ordering-focused pass missed — see W1.7 below; that too must be green before W2.**
 
@@ -144,6 +144,6 @@ Tray/menu-bar app as a separate binary on the control socket (mode icon, sync no
 | First cgo in the repo complicates builds | Native-build policy (spec §10); cgo confined to the fswatch module; pure-Go fallback compiled everywhere |
 | Fuzzer flakiness / nondeterminism | Seeded runs, deterministic replay, bounded CI time |
 | Ordering fixes regress existing scenarios | R1/R2 land as reconcile-level tests plus full S/F suite; dependency rules are spec-normative now (§4.5) |
-| **Manual review keeps finding engine bugs the suite misses** (W1 → W1.7 → W1.8, three rounds) | W4 moved ahead of W3 with a strengthened oracle (identity stability + §4.5 structural invariant); the local-write gate makes one bug class mechanically impossible rather than review-dependent |
+| **Manual review keeps finding engine bugs the suite misses** (W1 → W1.7 → W1.8 → W1.9, four rounds — all now closed) | W4 moved ahead of W3 with a strengthened oracle (identity stability + §4.5 structural invariant); the local-write gate makes one bug class mechanically impossible rather than review-dependent |
 | **A1's fix touches the most load-bearing code in the repo** (pass 2 pairing + pass 4 resurrect rules interact) | Red-first reproduction at reconcile *and* engine level; full S1–S8 + R1–R8 suite must stay green; W4's fuzzer re-checks it with directory renames in the op menu |
 | Drive API quota under fuzz/soak | Fake backend for both; live smoke stays small and env-gated |

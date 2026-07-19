@@ -116,7 +116,7 @@ Lookup order is `credentials.json` in the config dir → the embedded default. A
 
 ## 8. Known bugs
 
-Confirmed, reproduced, and scheduled — tracked in [docs/plan.md](docs/plan.md) (W1.8/W1.9); this list shrinks as fixes land.
+Confirmed and reproduced. The three adversarial correctness rounds (W1.7–W1.9, all complete) retired every other entry; what remains is tracked as a recorded follow-up in [docs/decisions.md](docs/decisions.md).
 
 - **A folder created with the same name in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *Files* with such names now resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine — the folder case is the remaining gap. *Workaround: avoid folder names differing only in case/accents.*
 
