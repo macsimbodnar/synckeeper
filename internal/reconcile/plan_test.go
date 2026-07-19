@@ -619,3 +619,62 @@ func TestR19ShadowedBaselineDirHeldHarmless(t *testing.T) {
 		t.Fatalf("shadowed dir row must plan nothing, got %+v", plan)
 	}
 }
+
+// --- R22 (C5): type clashes are skips in every direction ---------------
+
+// R22a: a new local FILE where Drive holds a new FOLDER of the same name.
+// Was: pass 2 blind-uploaded the file (minting a same-name file-beside-
+// folder pair on Drive) while pass 3 planned a MkdirLocal that failed on
+// the local file every cycle.
+func TestR22NewLocalFileVsRemoteFolderSkips(t *testing.T) {
+	plan, skips := Plan(Input{
+		Base:    map[string]BaseItem{},
+		Local:   map[string]LocalItem{"x": locFile("m1", 3)},
+		Remote:  map[string]RemoteItem{"x": remDir("f1", 1)},
+		Machine: "test_box",
+		Now:     testNow,
+	})
+	if err := ValidateTransferStage(plan); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Fatalf("type clash must plan nothing, got %+v", plan)
+	}
+	found := false
+	for _, s := range skips {
+		if s.RelPath == "x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a type-clash skip for x, got %v", skips)
+	}
+}
+
+// R22b: the mirror — a new local FOLDER where Drive holds a new FILE.
+// Was: pass 3 planned a Download onto the local dir, refused by the
+// executor every cycle.
+func TestR22NewLocalDirVsRemoteFileSkips(t *testing.T) {
+	plan, skips := Plan(Input{
+		Base:    map[string]BaseItem{},
+		Local:   map[string]LocalItem{"x": locDir()},
+		Remote:  map[string]RemoteItem{"x": remFile("f1", "m1", 3, 1)},
+		Machine: "test_box",
+		Now:     testNow,
+	})
+	if err := ValidateTransferStage(plan); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Fatalf("type clash must plan nothing, got %+v", plan)
+	}
+	found := false
+	for _, s := range skips {
+		if s.RelPath == "x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a type-clash skip for x, got %v", skips)
+	}
+}

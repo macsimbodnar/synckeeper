@@ -352,13 +352,30 @@ func Plan(in Input) ([]Action, []Skip) {
 		// looking up the pre-move path silently skipped the both-new rows
 		// and emitted an upload and a download onto one rel_path.
 		if loc.IsDir {
-			if r, ok := newRemoteAt(target); ok && r.IsDir {
-				transfers = append(transfers, Action{Type: Record, RelPath: target, FileID: r.FileID,
-					IsDir: true, Version: r.Version})
+			if r, ok := newRemoteAt(target); ok {
+				if r.IsDir {
+					transfers = append(transfers, Action{Type: Record, RelPath: target, FileID: r.FileID,
+						IsDir: true, Version: r.Version})
+				} else {
+					// C5 (R22): a new remote FILE where the local side has a
+					// new folder — the same type-clash rule pass 1 applies:
+					// report, claim, touch nothing on either side.
+					skips = append(skips, Skip{RelPath: target,
+						Reason: "type clash: folder here, file in Drive; not synced"})
+				}
 				claimed[target] = true
 			} else if _, taken := in.Remote[target]; !taken {
 				mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: target, IsDir: true})
 			}
+			continue
+		}
+		if r, ok := newRemoteAt(target); ok && r.IsDir {
+			// C5 (R22): a new remote FOLDER where the local side has a new
+			// file. Was: a blind upload minted a same-name file beside the
+			// folder on Drive while MkdirLocal failed on the file forever.
+			skips = append(skips, Skip{RelPath: target,
+				Reason: "type clash: file here, folder in Drive; not synced"})
+			claimed[target] = true
 			continue
 		}
 		if r, ok := newRemoteAt(target); ok && !r.IsDir {
@@ -439,6 +456,16 @@ func Plan(in Input) ([]Action, []Skip) {
 		// A new remote item under a locally-renamed dir materializes at its
 		// post-reparent path — never a zombie under the dead source dir.
 		target := rewriteLD(rp)
+		if l, ok := in.Local[target]; ok && l.IsDir != r.IsDir {
+			// C5 (R22): the path is occupied by the other type locally —
+			// a MkdirLocal would fail on the file, a Download would be
+			// refused on the dir, both forever. Report and leave it; if
+			// the occupant is resolved by this plan's delete side, the
+			// next cycle materializes the remote item cleanly.
+			skips = append(skips, Skip{RelPath: target,
+				Reason: "type clash: a file on one side, a folder on the other; not synced"})
+			continue
+		}
 		if r.IsDir {
 			mkdirs = append(mkdirs, Action{Type: MkdirLocal, RelPath: target, FileID: r.FileID,
 				IsDir: true, Version: r.Version})

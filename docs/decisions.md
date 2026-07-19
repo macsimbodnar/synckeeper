@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.9.4 implemented: type-clash skips, with one convergence trade
+
+**Context:** implementing the decided C5 fix (passes 2 and 3 get pass 1's type-clash rule). One consequence of the pass-3 occupant check is worth recording.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):** pass 2 **skips-and-claims** both untracked directions — claiming stops pass 3 from planning the failing half (the MkdirLocal onto a file, the refused Download onto a dir) in the same breath that the skip stops the minting half (the blind upload beside a remote folder). Pass 3's occupant check also fires for **tracked** occupants the plan's own delete side is about to resolve: a tracked file remote-replaced by a same-name folder now quarantines the file first and materializes the folder on the *next* cycle — one cycle slower than the old interleaving, in exchange for never planning an action known to fail. The fold-name file-vs-dir compound stays with the recorded dir-arm follow-up (decisions.md "W1.9.1"), not silently half-covered here.
+
+**Consequences:** R22 passing (two reconcile directions + the engine mint-prevention case: Drive holds only the folder, the local file is untouched, the second cycle is a steady reported skip, no failures). Spec §4.2 note dated; MANUAL.md retires the W1.9.4 Known-bugs entry.
+
 ## 2026-07-19 — W1.9.3 implemented: rescue copies uniquify Finder-style, refusal beneath
 
 **Context:** implementing the decided C4 fix (uniquify on collision; the move refuses an existing destination). One naming choice and one layering note.

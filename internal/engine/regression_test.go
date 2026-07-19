@@ -900,3 +900,40 @@ func TestR21SameDayRequarantineKeepsBothCopies(t *testing.T) {
 		t.Errorf("machine b's quarantine holds %v, want both v1 and v2", got)
 	}
 }
+
+// R22 (C5, engine): a folder named x on Drive meets an untracked local
+// file x. The cycle must report the clash and touch nothing — no upload
+// minting a same-name file beside the folder, no failing mkdir loop.
+func TestR22RemoteFolderVsLocalFileNoMintNoLoop(t *testing.T) {
+	ctx := context.Background()
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	if _, err := fake.Mkdir(ctx, rootID, "x"); err != nil {
+		t.Fatal(err)
+	}
+	a.write(t, "x", "local file content")
+
+	res := a.sync(t) // was: Failed>0 (mkdir_local onto the file) + a minted upload
+	found := false
+	for _, s := range res.Skips {
+		if s.RelPath == "x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a type-clash skip for x, got %v", res.Skips)
+	}
+	children, err := fake.List(ctx, rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || !children[0].IsDir() {
+		t.Fatalf("Drive must hold only the folder, got %+v", children)
+	}
+	if got := a.read(t, "x"); got != "local file content" {
+		t.Errorf("local file touched: %q", got)
+	}
+	if res2 := a.sync(t); len(res2.Plan) != 0 {
+		t.Errorf("second cycle must plan nothing (steady skip), got %+v", res2.Plan)
+	}
+}
