@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
+	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
@@ -416,5 +417,97 @@ func TestR12ApplyRefusesOverlappingTransferStage(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("refused plan left %d journaled ops; nothing may execute", n)
+	}
+}
+
+// R20 (C3, spec §3 invariant 3): a quarantined directory carries its
+// invisible leftovers — ignored and temp files, the only content the plan
+// cannot see by design — into the quarantine destination instead of wedging
+// on "directory not empty" forever.
+func TestR20QuarantinedDirSweepsIgnoredLeftovers(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(filepath.Join(syncDir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := statedb.Open(filepath.Join(base, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	fake := driveclient.NewFake()
+	folder, err := fake.Mkdir(ctx, driveclient.FakeRootID, "Synckeeper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The two invisible leftovers: an ignored file and one of our temps.
+	if err := os.WriteFile(filepath.Join(syncDir, "docs", ".DS_Store"), []byte("finder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tmpName := names.TempPrefix + "orphan"
+	if err := os.WriteFile(filepath.Join(syncDir, "docs", tmpName), []byte("temp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	quarantine := filepath.Join(base, "quarantine")
+	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
+		QuarantineDir: quarantine, RootID: folder.ID,
+		Ignore: []string{".DS_Store"}}
+	sum, err := x.Apply(ctx, []reconcile.Action{{
+		Type: reconcile.QuarantineLocal, RelPath: "docs", FileID: "dir-id", IsDir: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Failed != 0 {
+		t.Fatalf("quarantine of a dir with only invisible leftovers failed: %v", sum.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(syncDir, "docs")); !os.IsNotExist(err) {
+		t.Error("docs still present after quarantine")
+	}
+	day := time.Now().Format("2006-01-02")
+	if _, err := os.Stat(filepath.Join(quarantine, day, "docs", ".DS_Store")); err != nil {
+		t.Errorf("ignored leftover not carried into quarantine: %v", err)
+	}
+}
+
+// R20 companion: anything the sweep does not recognize still refuses —
+// an unexpected survivor means the plan is wrong, and data stays put.
+func TestR20QuarantinedDirStillRefusesUnexpectedSurvivor(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(filepath.Join(syncDir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := statedb.Open(filepath.Join(base, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	fake := driveclient.NewFake()
+	folder, err := fake.Mkdir(ctx, driveclient.FakeRootID, "Synckeeper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(syncDir, "docs", "real.txt"), []byte("user data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
+		QuarantineDir: filepath.Join(base, "quarantine"), RootID: folder.ID,
+		Ignore: []string{".DS_Store"}}
+	sum, err := x.Apply(ctx, []reconcile.Action{{
+		Type: reconcile.QuarantineLocal, RelPath: "docs", FileID: "dir-id", IsDir: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Failed != 1 {
+		t.Fatalf("unexpected survivor must refuse the dir removal, got %+v", sum)
+	}
+	if raw, err := os.ReadFile(filepath.Join(syncDir, "docs", "real.txt")); err != nil || string(raw) != "user data" {
+		t.Errorf("survivor was touched: %q, %v", raw, err)
 	}
 }

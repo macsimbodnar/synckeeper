@@ -167,6 +167,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	x := &executor.Executor{
 		DB: e.DB, Client: e.Client, SyncDir: e.SyncDir,
 		QuarantineDir: e.QuarantineDir, RootID: e.RootID,
+		Ignore: e.Cfg.Engine.Ignore,
 	}
 	sum, err := x.Apply(ctx, plan)
 	if err != nil {

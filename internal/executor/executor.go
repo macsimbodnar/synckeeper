@@ -57,6 +57,11 @@ type Executor struct {
 	QuarantineDir string
 	RootID        string
 
+	// Ignore is the engine's ignore-glob list; the directory quarantine
+	// sweeps ignored (and temp) leftovers — the only content invisible to
+	// the plan by design — into the quarantine with the dir (R20).
+	Ignore []string
+
 	mu               sync.Mutex
 	pathIDs          map[string]string // rel_path -> drive file id, for parent lookup
 	failedProtectors map[string]bool   // failed ConflictBackup/MoveLocal sources (invariant 7)
@@ -559,17 +564,27 @@ func (x *Executor) trashRemote(ctx context.Context, opID int64, a reconcile.Acti
 	})
 }
 
+// quarantineDest is the dated quarantine location for one rel_path.
+func (x *Executor) quarantineDest(rel string) string {
+	return filepath.Join(x.QuarantineDir, time.Now().Format("2006-01-02"), filepath.FromSlash(rel))
+}
+
 func (x *Executor) quarantineLocal(opID int64, a reconcile.Action) error {
 	abs := x.abs(a.RelPath)
 	if a.IsDir {
 		// Children were quarantined first (bottom-up); the dir should be
-		// empty now. A non-empty dir means something unexpected survives —
+		// empty now except for content the plan cannot see by design —
+		// ignored and temp leftovers travel to the quarantine with the dir
+		// (R20). A survivor beyond those means something unexpected;
 		// leave it and fail the op rather than lose data.
+		if err := sweepInvisibleLeftovers(abs, x.quarantineDest(a.RelPath), x.Ignore); err != nil {
+			return fmt.Errorf("sweep invisible leftovers: %w", err)
+		}
 		if err := guardedRemoveEmptyDir(abs); err != nil {
 			return fmt.Errorf("remove dir (should be empty after children): %w", err)
 		}
 	} else {
-		dest := filepath.Join(x.QuarantineDir, time.Now().Format("2006-01-02"), filepath.FromSlash(a.RelPath))
+		dest := x.quarantineDest(a.RelPath)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}

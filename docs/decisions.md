@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.9.2 implemented: the quarantine sweep, with two small boundaries
+
+**Context:** implementing the decided C3 fix (ignored-or-temp leftovers travel to quarantine with the dir). Two boundaries drawn at implementation, neither in the decided text.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):** (1) **temp files sweep unconditionally** — `.synckeeper.tmp.*` is matched by prefix, not through the ignore list, so a user who edits the ignore patterns cannot re-open the wedge with our own crash leftovers. (2) **A cross-volume rename fails the action and replans** rather than falling back to copy+remove: a leftover may be a whole ignored subtree, the quarantine dir normally shares the sync dir's volume, and a recursive copy fallback is complexity the reproduced defect never needed. The sweep lives in `localwrite.go` per the §7 gate's exclusivity rule; the executor gained the engine's `Ignore` list.
+
+**Consequences:** spec §3 invariant-3 note dated; R20 passing at executor (sweep + refusal companion — an unexpected real file still refuses, untouched) and engine (the `.DS_Store` wedge unwedges, tracked child rescued, second cycle idle). MANUAL.md retires the W1.9.2 Known-bugs entry.
+
 ## 2026-07-19 — W1.9.1 implemented: fold matching is cross-tree for files; the directory arm is deferred, recorded
 
 **Context:** implementing the decided C2 design (fold-keyed sibling index + shadowed rows held harmless). Two boundaries were drawn at implementation, both worth recording.

@@ -94,6 +94,34 @@ func guardedRemoveEmptyDir(abs string) error {
 	return os.Remove(abs)
 }
 
+// sweepInvisibleLeftovers moves entries of dir that are ignored-or-temp —
+// the only content invisible to the plan by design — into dest, names
+// preserved, so a quarantined directory carries its invisible leftovers
+// with it instead of wedging on "directory not empty" forever (spec §3
+// invariant 3, R20). Everything else is left in place for the caller's
+// empty-dir removal to refuse: an unexpected survivor still means the plan
+// is wrong. A rename across volumes fails the action and replans — the
+// quarantine normally shares the volume, and a leftover may be a subtree.
+func sweepInvisibleLeftovers(dir, dest string, ignore []string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !names.Ignored(name, ignore) && !strings.HasPrefix(name, names.TempPrefix) {
+			continue
+		}
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(filepath.Join(dir, name), filepath.Join(dest, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // guardedMoveFile verifies the source against exp, then moves it, falling
 // back to copy+remove across filesystems (the quarantine dir may live on a
 // different volume than the sync dir).

@@ -824,3 +824,42 @@ func TestR19CrossMachineFoldConflictNoQuarantine(t *testing.T) {
 		t.Errorf("a version was lost; Drive contents = %v", contents)
 	}
 }
+
+// R20 (C3, engine): the reproduced wedge — a remotely-deleted folder whose
+// local copy holds a Finder-dropped .DS_Store repeated "directory not
+// empty" forever. Now the ignored leftover travels to quarantine with the
+// dir, the tracked child is rescued, and the next cycle is idle.
+func TestR20RemoteDeletedDirWithDSStoreUnwedges(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	a.write(t, "docs/file.txt", "rescue me")
+	a.write(t, "keep.txt", "so the tree is never empty")
+	a.sync(t)
+	b := newMachine(t, "b", fake, rootID)
+	b.sync(t)
+
+	a.remove(t, "docs")
+	a.sync(t) // the folder is now trashed on Drive
+
+	// Finder browses b's copy before b notices the deletion.
+	b.write(t, "docs/.DS_Store", "finder junk")
+	b.sync(t) // was: quarantine_local docs: directory not empty, forever
+
+	if b.exists("docs") {
+		t.Error("docs still present on machine b")
+	}
+	if res := b.sync(t); len(res.Plan) != 0 {
+		t.Errorf("second cycle not idle: %+v", res.Plan)
+	}
+	// The tracked child was rescued into the quarantine.
+	found := false
+	filepath.WalkDir(b.eng.QuarantineDir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && d.Name() == "file.txt" {
+			found = true
+		}
+		return nil
+	})
+	if !found {
+		t.Error("rescued file.txt not found in machine b's quarantine")
+	}
+}
