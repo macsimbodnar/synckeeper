@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.9.5 implemented: PKCE, proven end to end — and W1.9 closes
+
+**Context:** implementing the decided C6 fix. The mechanism is three lines of the oauth2 library; the recordable part is how it is tested, since `Login` is interactive by nature.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):** two package-level seams (`endpoint`, `openBrowserFn`) let R23 run the **whole** loopback flow in-process against a fake token endpoint, with the test playing the browser: it captures the URL the browser would get, asserts the S256 challenge is promised there, hits the real loopback callback with the state, and then verifies the exchange's `code_verifier` actually hashes to the promised challenge (RFC 7636) and the token persists. A URL-construction unit test alone was rejected: it would pass with a verifier that never reaches the exchange — the half that makes an intercepted code useless.
+
+**Consequences:** R23 passing; spec §9 dated. **W1.9 is complete** — every reproduced round-3 defect is fixed (C2 files + recorded dir arm, C3, C4, C5) and the inspection item C6 landed. MANUAL's Known-bugs list is down to one entry: the narrowed fold-folder case, owned by the recorded gate-directory-arm follow-up. Execution order now reaches **W4** (the fuzzer, with the strengthened oracle).
+
 ## 2026-07-19 — W1.9.4 implemented: type-clash skips, with one convergence trade
 
 **Context:** implementing the decided C5 fix (passes 2 and 3 get pass 1's type-clash rule). One consequence of the pass-3 occupant check is worth recording.

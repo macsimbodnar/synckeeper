@@ -21,6 +21,13 @@ import (
 
 const driveScope = "https://www.googleapis.com/auth/drive"
 
+// endpoint and openBrowserFn are test seams: R23 drives the whole loopback
+// flow against a fake token server and captures the URL a browser would get.
+var (
+	endpoint      = google.Endpoint
+	openBrowserFn = openBrowser
+)
+
 // ErrNoCredentials is returned when neither a credentials.json nor the
 // embedded client id/secret provide OAuth client credentials.
 var ErrNoCredentials = errors.New(
@@ -39,7 +46,7 @@ func oauthConfig(configDir string) (*oauth2.Config, error) {
 	return &oauth2.Config{
 		ClientID:     id,
 		ClientSecret: secret,
-		Endpoint:     google.Endpoint,
+		Endpoint:     endpoint,
 		Scopes:       []string{driveScope},
 	}, nil
 }
@@ -85,7 +92,12 @@ func Login(ctx context.Context, configDir string) (oauth2.TokenSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	// PKCE (spec §9, R23): the client secret is public by design, so an
+	// intercepted authorization code must be useless without the verifier
+	// that never leaves this process.
+	verifier := oauth2.GenerateVerifier()
+	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce,
+		oauth2.S256ChallengeOption(verifier))
 
 	type result struct {
 		code string
@@ -114,7 +126,7 @@ func Login(ctx context.Context, configDir string) (oauth2.TokenSource, error) {
 	defer server.Close()
 
 	fmt.Fprintf(os.Stderr, "Open this URL to authorize Synckeeper:\n\n  %s\n\n", authURL)
-	openBrowser(authURL)
+	openBrowserFn(authURL)
 
 	var res result
 	select {
@@ -128,7 +140,7 @@ func Login(ctx context.Context, configDir string) (oauth2.TokenSource, error) {
 		return nil, res.err
 	}
 
-	tok, err := cfg.Exchange(ctx, res.code)
+	tok, err := cfg.Exchange(ctx, res.code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("exchange authorization code: %w", err)
 	}
