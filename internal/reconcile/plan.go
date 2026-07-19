@@ -436,6 +436,16 @@ func Plan(in Input) ([]Action, []Skip) {
 				deletes = append(deletes, Action{Type: QuarantineLocal, RelPath: lp, FileID: b.FileID, IsDir: true})
 			}
 		case !locOK && remOK:
+			// A local dir already sitting at the id's current remote path is
+			// the dir alive on both sides — the crashed half of a directory
+			// move, renamed on disk with the DB commit lost (R16): the
+			// pending MoveLocal replays as a commit, and a trash here would
+			// be a remote delete no user caused (invariant 6). A dir absent
+			// from BOTH local paths stays a real local deletion and the
+			// trash propagates it.
+			if l, ok := in.Local[ra.path]; ok && l.IsDir {
+				continue
+			}
 			if !hasCreateUnder(ra.path) && !hasCreateUnder(rewriteLD(ra.path)) && !remoteAliveUnder(ra.path) {
 				deletes = append(deletes, Action{Type: TrashRemote, RelPath: ra.path, FileID: b.FileID, IsDir: true})
 			}

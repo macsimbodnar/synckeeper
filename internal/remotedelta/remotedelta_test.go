@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/text/unicode/norm"
 
@@ -260,5 +261,71 @@ func TestMoveInPopulatesSubtree(t *testing.T) {
 	}
 	if _, ok := snap["box/inner.txt"]; !ok {
 		t.Fatal("moved-in folder's child missing from snapshot: subtree walk did not run")
+	}
+}
+
+// R17 (A8): Snapshot must terminate on a cyclic parent chain in the cache.
+// prune directly above carries a visited set; Snapshot's BFS did not, so a
+// corrupted row that makes a folder its own ancestor — here the root listed
+// as its own child, the one cycle reachable from the root under the
+// single-parent schema — looped the daemon forever.
+func TestR17SnapshotTerminatesOnParentCycle(t *testing.T) {
+	fake := driveclient.NewFake()
+	db, rootID := newCache(t, fake)
+	if err := db.UpsertRemoteNode(statedb.RemoteNode{
+		FileID: rootID, ParentID: rootID, Name: "loop",
+		MimeType: driveclient.FolderMimeType,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := Snapshot(db, rootID, nil, false, false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Snapshot did not terminate: parent cycle in the cache")
+	}
+}
+
+// N3's named case (re-scoped into W1.8.9): duplicate same-name siblings in
+// one Drive folder collapse — first by id kept, the rest skipped and
+// reported — independent of any filesystem folding.
+func TestSnapshotDuplicateNameCollision(t *testing.T) {
+	ctx := context.Background()
+	fake := driveclient.NewFake()
+	db, rootID := newCache(t, fake)
+	first, err := fake.Upload(ctx, rootID, "dup.txt", strings.NewReader("first"), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fake.Upload(ctx, rootID, "dup.txt", strings.NewReader("second"), 6); err != nil {
+		t.Fatal(err)
+	}
+	refresh(t, fake, db, rootID)
+
+	snap, skips, err := Snapshot(db, rootID, nil, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap) != 1 {
+		t.Fatalf("want 1 item after dedup, got %d: %v", len(snap), snap)
+	}
+	if got := snap["dup.txt"].FileID; got != first.ID {
+		t.Errorf("kept id = %s, want first by id %s", got, first.ID)
+	}
+	found := false
+	for _, s := range skips {
+		if s.RelPath == "dup.txt" && strings.Contains(s.Reason, "duplicate name") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a duplicate-name skip for dup.txt, got %v", skips)
 	}
 }

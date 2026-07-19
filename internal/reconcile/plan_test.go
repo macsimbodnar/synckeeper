@@ -498,3 +498,30 @@ func TestDirMoveOrdersBeforeMkdirLocal(t *testing.T) {
 		{t: MkdirLocal, rel: "papers/sub", fileID: "d2"},
 	})
 }
+
+// R16 (A9, invariant 6): the crash window of a remote-driven directory move
+// — renamed on disk, DB commit lost. The baseline still holds d (id F);
+// local has only the renamed n (untracked, empty); remote holds F alive at
+// n. The plan must resolve to the MoveLocal replay alone — the executor
+// completes it as a DB commit — and never a TrashRemote: that is a remote
+// delete no user caused, and F is the folder the remote user just renamed.
+// (Non-empty dirs were already saved by hasCreateUnder — the children's
+// actions land under n.)
+func TestR16CrashedDirMoveDoesNotTrashRemote(t *testing.T) {
+	runPlan(t, Input{
+		Base:   map[string]BaseItem{"d": baseDir("F")},
+		Local:  map[string]LocalItem{"n": locDir()},
+		Remote: map[string]RemoteItem{"n": remDir("F", 2)},
+	}, []step{{t: MoveLocal, rel: "d", newRel: "n"}})
+}
+
+// R16's guard must not swallow a real deletion: the dir gone from BOTH its
+// baseline path and the id's current remote path is a local delete, and the
+// trash still propagates it (the empty-dir delete-vs-move rule unchanged).
+func TestR16LocallyDeletedDirStillTrashes(t *testing.T) {
+	runPlan(t, Input{
+		Base:   map[string]BaseItem{"d": baseDir("F")},
+		Local:  map[string]LocalItem{},
+		Remote: map[string]RemoteItem{"d": remDir("F", 1)},
+	}, []step{{t: TrashRemote, rel: "d", fileID: "F"}})
+}

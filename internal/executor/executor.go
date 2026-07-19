@@ -316,6 +316,22 @@ func (x *Executor) mkdirRemote(ctx context.Context, opID int64, a reconcile.Acti
 
 func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	from, to := x.abs(a.RelPath), x.abs(a.NewRelPath)
+	// Crash resume for directory moves (R16, spec §4.6): a previous run may
+	// have renamed the dir on disk and died before the DB commit. The replay
+	// then finds the source gone and the destination already a directory —
+	// the disk half is done, only the commit is owed. Nothing local is
+	// mutated on this path, so the write gate is not involved; a FILE move
+	// never takes it (files keep the full §7 guard below).
+	if a.IsDir {
+		if _, err := os.Lstat(from); os.IsNotExist(err) {
+			if info, err2 := os.Lstat(to); err2 == nil && info.IsDir() {
+				x.renamePathIDs(a.RelPath, a.NewRelPath)
+				return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
+					return statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath)
+				})
+			}
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
 	}

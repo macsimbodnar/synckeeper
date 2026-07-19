@@ -237,6 +237,9 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseFold, normFold
 	snapshot := map[string]reconcile.RemoteItem{}
 	var skips []reconcile.Skip
 	type frame struct{ id, relPath string }
+	// visited mirrors prune's reachable set (R17): a corrupted cache row
+	// that makes a folder its own ancestor must not hang the daemon.
+	visited := map[string]bool{rootID: true}
 	queue := []frame{{id: rootID}}
 	for len(queue) > 0 {
 		f := queue[0]
@@ -278,7 +281,8 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseFold, normFold
 				MD5:     n.MD5,
 				Version: n.Version,
 			}
-			if isDir {
+			if isDir && !visited[n.FileID] {
+				visited[n.FileID] = true
 				queue = append(queue, frame{id: n.FileID, relPath: rel})
 			}
 		}

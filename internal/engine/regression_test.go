@@ -708,3 +708,68 @@ func TestR11NewLocalFileUnderRemotelyMovedDirBecomesConflict(t *testing.T) {
 		t.Errorf("did not converge: %+v", res.Plan)
 	}
 }
+
+// R16 (A9, engine): the planted crash state of a remote-driven dir move —
+// Drive renamed d to n (same folder id), our executor renamed the empty dir
+// on disk and crashed before the DB commit. The next cycle must adopt, not
+// trash: the folder id survives on Drive, the row lands at n, and no
+// delete-class action fires (invariant 6 — a remote delete must trace to a
+// user deletion, not to our crash).
+func TestR16CrashedDirMoveKeepsRemoteFolder(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	if err := os.MkdirAll(filepath.Join(a.dir, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.sync(t)
+	items, err := a.db.AllItems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirID string
+	for _, it := range items {
+		if it.RelPath == "d" {
+			dirID = it.DriveFileID
+		}
+	}
+	if dirID == "" {
+		t.Fatal("no baseline row for d/")
+	}
+
+	// The remote rename, then the crashed local half: disk renamed, DB not.
+	if _, err := fake.Move(context.Background(), dirID, rootID, "n"); err != nil {
+		t.Fatal(err)
+	}
+	a.rename(t, "d", "n")
+
+	res := a.sync(t)
+	for _, act := range res.Plan {
+		switch act.Type {
+		case reconcile.TrashRemote, reconcile.QuarantineLocal, reconcile.MkdirRemote:
+			t.Errorf("crash recovery planned %s %s — must adopt, never delete or re-create", act.Type, act.RelPath)
+		}
+	}
+	children, err := fake.List(context.Background(), rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || children[0].ID != dirID || children[0].Name != "n" {
+		t.Fatalf("Drive after recovery = %+v, want the original folder %s alive at n", children, dirID)
+	}
+	items, _ = a.db.AllItems()
+	adopted := false
+	for _, it := range items {
+		if it.RelPath == "n" && it.DriveFileID == dirID && it.IsDir {
+			adopted = true
+		}
+		if it.RelPath == "d" {
+			t.Errorf("stale baseline row at d")
+		}
+	}
+	if !adopted {
+		t.Fatal("no baseline row for n with the original folder id")
+	}
+	if res2 := a.sync(t); len(res2.Plan) != 0 {
+		t.Errorf("second cycle not idle: %+v", res2.Plan)
+	}
+}
