@@ -35,6 +35,10 @@ type Watcher struct {
 	ControlSocket string
 	ConfigDir     string
 
+	// rebuildCadence overrides rebuildEvery when nonzero, so tests can
+	// reach the rebuild path without driving 500 cycles.
+	rebuildCadence int
+
 	// ignore is the published ignore-glob snapshot (spec §8.3, R14). The
 	// sync loop owns the config, but the fsnotify event pump reads the
 	// globs on every event from its own goroutine — so a `reload` must
@@ -63,6 +67,11 @@ func (w *Watcher) ignoreGlobs() []string {
 // full-scan poll covers the swap window. ~500 cycles ≈ 6 h at the default
 // 45 s poll, minutes under event storms — either way the leak stays bounded.
 const rebuildEvery = 500
+
+// newNotifyWatcher creates the fsnotify watcher — a test seam so R15 can
+// inject the fd-pressure creation failure without exhausting real
+// descriptors. Tests swap it only while no watcher goroutine is running.
+var newNotifyWatcher = fsnotify.NewWatcher
 
 // Run blocks until ctx is cancelled. Sync failures are logged and retried
 // with backoff; the loop only exits on cancellation.
@@ -107,15 +116,26 @@ func (w *Watcher) Run(ctx context.Context) error {
 	pollingOnly := false
 	fw, failed, err := w.startNotifier(ctx, debounce)
 	if err != nil {
-		return err
+		// Spec §10: watching is best-effort and the daemon falls back to
+		// pure polling — including at launch (fd pressure, or a platform
+		// with no working backend). The rebuild cadence retries creation.
+		slog.Warn("file watching unavailable; relying on polling and retrying periodically",
+			"err", err, "poll_interval", w.Poll)
+		pollingOnly = true
 	}
 	defer func() {
 		if fw != nil {
 			fw.Close()
 		}
 	}()
-	pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
+	if !pollingOnly {
+		pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
+	}
 
+	cadence := rebuildEvery
+	if w.rebuildCadence > 0 {
+		cadence = w.rebuildCadence
+	}
 	ticker := time.NewTicker(w.Poll)
 	defer ticker.Stop()
 	backoff := w.Poll
@@ -179,7 +199,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 			switch {
 			case pollingOnly:
-				if cycle%rebuildEvery != 0 {
+				if cycle%cadence != 0 {
 					break // stay on polling; retry only at rebuild cadence
 				}
 				nfw, failed, err := w.startNotifier(ctx, debounce)
@@ -191,10 +211,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 				fw, pollingOnly, latch = nfw, false, failureLatch{}
 				slog.Info("file watching restored; back to event-driven sync")
-			case cycle%rebuildEvery == 0:
+			case cycle%cadence == 0:
 				fw.Close() // pump goroutine exits with the channel
 				if fw, failed, err = w.startNotifier(ctx, debounce); err != nil {
-					return err
+					// Same degradation as the pollingOnly branch above on
+					// the identical error (spec §8.1 "without exiting",
+					// §10's polling fallback): the watcher is a wake-up
+					// optimization, never a dependency, and the rebuild
+					// cadence retries creation.
+					fw, pollingOnly, latch = nil, true, failureLatch{}
+					slog.Warn("watcher rebuild failed; relying on polling and retrying periodically",
+						"err", err, "poll_interval", w.Poll)
+					break
 				}
 				slog.Debug("rebuilt fsnotify watcher", "cycle", cycle)
 				pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
@@ -240,7 +268,7 @@ func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw **fsnotify.W
 // its event pump, which feeds the debounce timer until the watcher closes.
 // It also returns how many directories could not be watched.
 func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (*fsnotify.Watcher, int, error) {
-	fw, err := fsnotify.NewWatcher()
+	fw, err := newNotifyWatcher()
 	if err != nil {
 		return nil, 0, err
 	}

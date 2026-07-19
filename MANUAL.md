@@ -122,13 +122,12 @@ Confirmed, reproduced, and scheduled — tracked in [docs/plan.md](docs/plan.md)
 - **A folder deleted remotely can get stuck locally if it contains an ignored file** (W1.9.2), typically a `.DS_Store`: the daemon repeats a `directory not empty` error. *Workaround: delete the leftover file yourself.*
 - **Two quarantines of the same path on the same day keep only the newer rescue copy** (W1.9.3). The older version is still in Drive's trash.
 - **A name that is a file on one side and a folder on the other** causes a repeating error and can create a stray same-name entry in Drive (W1.9.4). *Workaround: rename one of the two.*
-- **The daemon can exit instead of degrading to polling** if the file watcher fails to rebuild under file-descriptor pressure (W1.8.7). In service mode launchd restarts it automatically, so this self-heals; in foreground `watch` you'd have to restart it.
 
 ## 9. Known limitations (by design)
 
 - One folder, one Google account, one Drive folder. No selective sync, no bandwidth limits, no shared drives.
 - Whole-file transfers (Drive has no delta API): a 1-byte change re-transfers the file.
-- Remote changes arrive within the poll interval (default 45 s); local changes sync in under a second while the daemon runs.
+- Remote changes arrive within the poll interval (default 45 s); local changes sync in under a second while the daemon runs. If file watching is ever unavailable (e.g. the system runs out of file descriptors), the daemon keeps running in a polling-only mode — everything still syncs, local changes just wait for the next poll — and restores watching automatically; `status` shows the mode.
 - The default OAuth client is unverified (consent warning, ~100-user cap) — §5 for your own client.
 - All files are kept on disk (no online-only placeholders).
 - macOS is the primary platform; Linux and Windows are planned (the code is written portably but not yet validated there).

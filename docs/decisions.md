@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.8.7 implemented: watcher-creation failure degrades at both sites, not just the rebuild
+
+**Context:** implementing the decided A6 fix (the rebuild's `return err` killed the daemon). The plan named the rebuild site; at implementation the startup `startNotifier` call turned out to have the identical shape — a daemon that cannot create a watcher at launch refused to run entirely, against §10's fswatch contract ("the daemon falls back to pure polling and periodically retries", universal fallback: poll-only) and the roadmap's own principle that correctness never depends on the watcher.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):** **both sites degrade.** The rebuild branch mirrors the `pollingOnly` retry branch exactly (nil watcher, polling-only, latch reset, cadence retries); startup logs the same warning and enters the loop polling-only, so `synckeeper watch` under fd pressure runs degraded instead of exiting — the C1-into-W1.8.2 precedent for closing the same shape in the same commit. Two test seams added, both unexported: `newNotifyWatcher` (a swappable `fsnotify.NewWatcher`, so R15 injects the fd-pressure failure without exhausting real descriptors) and `Watcher.rebuildCadence` (reach the rebuild path without driving 500 cycles). MANUAL gains a §9 note that degraded mode is visible in `status` (verified: the command prints it).
+
+**Consequences:** plan W1.8.7 done; testing R15 passing (rebuild case pins degrade → still-syncs → watching restored by the cadence retry; startup case pins polling-only from launch). No spec change — §8.1/§10 already promised this behavior; the code was the deviation. MANUAL.md retires the W1.8.7 Known-bugs entry in the same commit.
+
 ## 2026-07-19 — W1.8.6 implemented: the ignore globs are a published snapshot; `w.Poll` was never racy
 
 **Context:** implementing the decided A3 fix (hot config published safely, spec §8.3). Two things worth recording beyond the decided text: the synchronization mechanism, and a narrowing of the plan's analysis.

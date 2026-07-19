@@ -2,10 +2,14 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
@@ -167,5 +171,90 @@ func TestWatcherPollsRemote(t *testing.T) {
 	waitFor(t, "download via polling", 5*time.Second, func() bool {
 		raw, err := os.ReadFile(filepath.Join(a.dir, "polled.txt"))
 		return err == nil && string(raw) == "remote content"
+	})
+}
+
+// R15 (A6, spec §8.1/§10): a watcher rebuild failure — fsnotify.NewWatcher
+// failing under fd pressure — must degrade the daemon to polling-only and
+// keep syncing, never exit Run (was: `return err` killed the daemon; the
+// pollingOnly branch already degraded on the identical error, which was the
+// tell). The rebuild cadence then restores watching once creation succeeds.
+func TestR15WatcherRebuildFailureDegradesToPolling(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+
+	// Call 1 (startup) succeeds; call 2 (the rebuild) fails like fd
+	// exhaustion; call 3+ (the periodic retry) succeeds again.
+	var calls atomic.Int32
+	newNotifyWatcher = func() (*fsnotify.Watcher, error) {
+		if calls.Add(1) == 2 {
+			return nil, errors.New("injected: too many open files")
+		}
+		return fsnotify.NewWatcher()
+	}
+	t.Cleanup(func() { newNotifyWatcher = fsnotify.NewWatcher })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	w := &Watcher{Eng: a.eng, Poll: 50 * time.Millisecond,
+		Debounce: 10 * time.Millisecond, rebuildCadence: 3}
+	go func() {
+		defer close(done)
+		if err := w.Run(ctx); err != nil {
+			t.Errorf("Run exited: %v (a rebuild failure must degrade, not kill)", err)
+		}
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+
+	// The poll ticker drives cycles to the rebuild at cycle 3; the injected
+	// failure must surface as polling-only, not an exit.
+	waitFor(t, "degraded to polling-only", 5*time.Second, func() bool {
+		ds, err := a.db.GetDaemonStatus()
+		return err == nil && ds.Mode == ModePollingOnly
+	})
+
+	// Still syncing while degraded: polling covers the tree.
+	a.write(t, "while_degraded.txt", "polling covers me")
+	waitFor(t, "sync while polling-only", 5*time.Second, func() bool {
+		return remoteHasName(t, fake, root, "while_degraded.txt")
+	})
+
+	// The rebuild cadence retries watcher creation and watching comes back.
+	waitFor(t, "watching restored", 5*time.Second, func() bool {
+		ds, err := a.db.GetDaemonStatus()
+		return err == nil && ds.Mode == ModeWatching
+	})
+}
+
+// R15, the same shape at the startup site: a daemon that cannot create a
+// watcher at launch starts polling-only (spec §10's universal fallback)
+// instead of refusing to run, and syncs via the poll.
+func TestR15StartupWatcherFailureStartsPollingOnly(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+
+	newNotifyWatcher = func() (*fsnotify.Watcher, error) {
+		return nil, errors.New("injected: too many open files")
+	}
+	t.Cleanup(func() { newNotifyWatcher = fsnotify.NewWatcher })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	w := &Watcher{Eng: a.eng, Poll: 50 * time.Millisecond, Debounce: 10 * time.Millisecond}
+	go func() {
+		defer close(done)
+		if err := w.Run(ctx); err != nil {
+			t.Errorf("Run exited: %v (startup watcher failure must degrade, not exit)", err)
+		}
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+
+	waitFor(t, "polling-only from launch", 5*time.Second, func() bool {
+		ds, err := a.db.GetDaemonStatus()
+		return err == nil && ds.Mode == ModePollingOnly
+	})
+	a.write(t, "no_watcher.txt", "poll finds me")
+	waitFor(t, "sync without a watcher", 5*time.Second, func() bool {
+		return remoteHasName(t, fake, root, "no_watcher.txt")
 	})
 }
