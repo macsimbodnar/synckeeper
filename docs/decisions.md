@@ -13,6 +13,20 @@ Format:
 
 ---
 
+## 2026-07-19 — W1.9.1 implemented: fold matching is cross-tree for files; the directory arm is deferred, recorded
+
+**Context:** implementing the decided C2 design (fold-keyed sibling index + shadowed rows held harmless). Two boundaries were drawn at implementation, both worth recording.
+
+**Decision (agent, within the decided design; red-first, suite + `-race` green):**
+
+1. **The adopt lands via a case-only `MoveLocal` to the remote byte form, expectation pinned to the source's own stat.** "Remote wins the canonical byte-form" needs the *disk* name to change (APFS is case-preserving): a Record alone would leave row `README.txt` over disk `Readme.txt` and the literal-keyed scanner would diverge forever. The §7 gate would normally refuse the rename — the destination stat fold-resolves to the source itself — so the action pins `LocalExists` to the file's own scanned size/mtime: the gate then reads the "occupant" as exactly what the plan accounted for, and `os.Rename` performs the case-only rename natively. No executor change needed. The conflict path needs none of this: the backup vacates the fold-path and the download creates the remote byte form fresh.
+2. **The directory arm is deferred, not silently included.** A new local folder fold-equal to a remote folder still mints a duplicate folder (MkdirRemote). Both honest resolutions need a case-only rename of a *directory*, and the gate's `guardedStat` accepts only regular files — the same missing dir arm W1.8.8 recorded for the R7 occupied-destination rule. Half-measures were rejected: adopting at the remote form without the rename diverges (row/disk disagree, then pass 4 trashes); skipping the local dir strands its children in per-cycle upload errors. One recorded follow-up now covers **the gate's directory arm** (case-only dir renames, dir fold-adopts, R7-for-dirs); with C2b in place the dir gap is a capped nuisance — a duplicate folder, never a quarantine.
+3. **Shadowed means duplicate-name skips too, not only fold skips.** Both Snapshot skip shapes leave a baseline id alive-but-invisible, and both previously read as "remote-deleted" → quarantine. `Skip.FileID` (additive) carries the shadowed id; the engine folds them into `Input.ShadowedRemote`; passes 1 and 4 surface a skip and plan nothing.
+
+**Adjacent, observed, not fixed:** a *tracked* file case-only renamed on Drive (`a.txt` → `A.txt`, same id) plans `MoveLocal` with an unpinned destination — the gate fold-stats the source and refuses, an error loop. Same family as the dir arm; folded into the recorded follow-up.
+
+**Consequences:** spec §5 implemented note (file scope + deferred dir arm named); R19 passing (5 reconcile cases + probe-gated engine case: both contents survive, no quarantine, no fold-duplicate pair on Drive); MANUAL.md Known-bugs entry **narrowed to the folder case, not retired** — files now resolve correctly and quarantine-over-collision is gone.
+
 ## 2026-07-19 — W1.8.8 implemented: the crashed dir-move was worse than analyzed, and the fix is a replay, not a suppression
 
 **Context:** implementing A9, the red test corrected the round-2 analysis (the W1.6 precedent: the test outranks the analysis). The analysis said the crashed empty-dir move "converges next cycle" with only the uncaused `TrashRemote` as the defect. The actual plan for the crash shape (baseline `d`(F), local only `n`, remote F at `n`) was `MoveLocal d→n` **plus** `TrashRemote` — the MoveLocal is refused by the §7 gate every cycle (destination occupied by the renamed dir itself), and "convergence" happened only because the trash destroyed the moved folder and forced a fresh-id re-create. Suppressing the trash alone would have turned a destructive convergence into a standing error loop.

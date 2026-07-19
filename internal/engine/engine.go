@@ -117,12 +117,23 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("scan local dir: %w", err)
 	}
 
+	// Ids collapsed out of the snapshot by a duplicate or fold collision are
+	// alive on Drive; reconcile holds their baseline rows harmless (R19).
+	shadowed := map[string]bool{}
+	for _, s := range remoteSkips {
+		if s.FileID != "" {
+			shadowed[s.FileID] = true
+		}
+	}
 	plan, planSkips := reconcile.Plan(reconcile.Input{
-		Base:    base,
-		Local:   local,
-		Remote:  remote,
-		Machine: e.Cfg.Engine.MachineName,
-		Now:     nowFunc(),
+		Base:           base,
+		Local:          local,
+		Remote:         remote,
+		Machine:        e.Cfg.Engine.MachineName,
+		Now:            nowFunc(),
+		CaseFold:       e.caseInsensitive(),
+		NormFold:       e.normInsensitive(),
+		ShadowedRemote: shadowed,
 	})
 	res := &Result{Plan: plan}
 	res.Skips = append(res.Skips, remoteSkips...)

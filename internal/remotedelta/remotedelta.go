@@ -260,13 +260,17 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseFold, normFold
 				skips = append(skips, reconcile.Skip{RelPath: rel, Reason: "name not representable on disk"})
 				continue
 			case seen[n.Name]:
-				skips = append(skips, reconcile.Skip{RelPath: rel, Reason: "duplicate name in Drive folder; kept first by id"})
+				// FileID marks the id as shadowed-but-alive: reconcile holds
+				// its baseline row harmless instead of reading it as
+				// remote-deleted (C2b, R19).
+				skips = append(skips, reconcile.Skip{RelPath: rel, FileID: n.FileID,
+					Reason: "duplicate name in Drive folder; kept first by id"})
 				continue
 			}
 			if caseFold || normFold {
 				key := names.FoldKey(n.Name, caseFold, normFold)
 				if first, ok := foldSeen[key]; ok {
-					skips = append(skips, reconcile.Skip{RelPath: rel,
+					skips = append(skips, reconcile.Skip{RelPath: rel, FileID: n.FileID,
 						Reason: foldCollisionReason(n.Name, first, caseFold, normFold)})
 					continue
 				}

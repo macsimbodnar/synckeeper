@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/macsimbodnar/synckeeper/internal/conflicts"
+	"github.com/macsimbodnar/synckeeper/internal/names"
 )
 
 type remoteRef struct {
@@ -38,10 +39,47 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		return r, true
 	}
+	// Fold-keyed remote index (C2, R19): when the local FS folds names, a
+	// new local path and a new remote path whose names differ only under
+	// the fold are ONE path on disk — they must meet in the §4.2 table
+	// instead of blind-uploading a duplicate. Keyed per path segment; nil
+	// when the FS doesn't fold. Snapshot has already collapsed fold-equal
+	// remote siblings, so the index is collision-free.
+	folds := in.CaseFold || in.NormFold
+	foldPath := func(p string) string {
+		segs := strings.Split(p, "/")
+		for i, s := range segs {
+			segs[i] = names.FoldKey(s, in.CaseFold, in.NormFold)
+		}
+		return strings.Join(segs, "/")
+	}
+	var foldRemote map[string]string
+	if folds {
+		foldRemote = make(map[string]string, len(in.Remote))
+		for p := range in.Remote {
+			foldRemote[foldPath(p)] = p
+		}
+	}
 	// claimed marks new-remote paths already resolved by an earlier pass
 	// (adopted, conflicted, or replacing baseline content in place), so
 	// pass 3 does not download them a second time.
 	claimed := map[string]bool{}
+	// newRemoteAtFold: newRemoteAt through the fold — a brand-new remote
+	// item whose path fold-matches p but differs from it in byte form.
+	newRemoteAtFold := func(p string) (string, RemoteItem, bool) {
+		if !folds {
+			return "", RemoteItem{}, false
+		}
+		rp, ok := foldRemote[foldPath(p)]
+		if !ok || rp == p {
+			return "", RemoteItem{}, false
+		}
+		r, ok := newRemoteAt(rp)
+		if !ok {
+			return "", RemoteItem{}, false
+		}
+		return rp, r, true
+	}
 	// backedUp marks a local path whose untracked content a move reclaimed:
 	// it has been routed to a conflict copy, so pass 2 must not also upload it
 	// as a plain new file.
@@ -126,6 +164,15 @@ func Plan(in Input) ([]Action, []Skip) {
 		b := in.Base[p]
 		if b.IsDir {
 			continue // dirs resolved in pass 4
+		}
+		if in.ShadowedRemote[b.FileID] {
+			// C2b (R19): the id exists on Drive but a duplicate or
+			// fold-colliding sibling shadows it out of the snapshot.
+			// "Remote absent" would be a lie — hold the row harmless
+			// until the Drive-side collision is resolved.
+			skips = append(skips, Skip{RelPath: p, FileID: b.FileID,
+				Reason: "remote copy is shadowed by a duplicate or fold-colliding name in Drive; leaving both sides alone"})
+			continue
 		}
 		// Under a local-driven dir rename this row's file, if it survives,
 		// already sits at its post-rename location — every row is decided
@@ -335,6 +382,35 @@ func Plan(in Input) ([]Action, []Skip) {
 			claimed[target] = true
 			continue
 		}
+		if rp, r, ok := newRemoteAtFold(target); ok && !r.IsDir {
+			// Fold-equal both-new pair (C2, R19): one path on disk, so the
+			// ordinary §4.2 rows fire, remote winning the canonical byte
+			// form. Was: a blind Upload minted a case-duplicate on Drive
+			// and the snapshot collapse later quarantined the local file.
+			if r.MD5 == loc.MD5 {
+				// Adopt via a case-only rename to the remote byte form.
+				// The destination "occupant" is the source itself under
+				// the fold, so the §7 gate pins to the file's own stat.
+				moves = append(moves, Action{Type: MoveLocal, RelPath: target, NewRelPath: rp,
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
+				transfers = append(transfers, Action{Type: Record, RelPath: rp, FileID: r.FileID,
+					MD5: r.MD5, Size: r.Size, Version: r.Version,
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS,
+					ProtectedBy: target})
+			} else {
+				// Both-new conflict: the backup vacates the fold-path, the
+				// remote byte form downloads onto it fresh.
+				cp := conflicts.Path(target, in.Machine, in.Now)
+				moves = append(moves, Action{Type: ConflictBackup, RelPath: target, NewRelPath: cp})
+				transfers = append(transfers,
+					Action{Type: Upload, RelPath: cp, ProtectedBy: target},
+					Action{Type: Download, RelPath: rp, FileID: r.FileID,
+						MD5: r.MD5, Size: r.Size, Version: r.Version,
+						ProtectedBy: target})
+			}
+			claimed[rp] = true
+			continue
+		}
 		// Move pairing: a deleted baseline file with identical content
 		// becomes a remote move instead of delete + re-upload.
 		key := pairKey(loc.MD5, loc.Size)
@@ -413,6 +489,13 @@ func Plan(in Input) ([]Action, []Skip) {
 	for _, p := range slices.Sorted(maps.Keys(in.Base)) {
 		b := in.Base[p]
 		if !b.IsDir {
+			continue
+		}
+		if in.ShadowedRemote[b.FileID] {
+			// C2b (R19), dir flavor: a shadowed folder id is not a remote
+			// deletion; leave the local dir alone and report it.
+			skips = append(skips, Skip{RelPath: p, FileID: b.FileID,
+				Reason: "remote folder is shadowed by a duplicate or fold-colliding name in Drive; leaving both sides alone"})
 			continue
 		}
 		// A local-driven move source (or a dir inside one) lives on at its

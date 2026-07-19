@@ -118,7 +118,7 @@ Lookup order is `credentials.json` in the config dir → the embedded default. A
 
 Confirmed, reproduced, and scheduled — tracked in [docs/plan.md](docs/plan.md) (W1.8/W1.9); this list shrinks as fixes land.
 
-- **Same name with different case/accents created on two machines mis-resolves** (W1.9.1). E.g. `Readme.txt` here and `README.txt` there: a case-duplicate can appear in Drive and the local file may end up in quarantine instead of becoming a conflict copy. *Workaround: avoid names differing only in case; recover from quarantine + Drive.*
+- **A folder created with the same name in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *Files* with such names now resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine — the folder case is the remaining gap. *Workaround: avoid folder names differing only in case/accents.*
 - **A folder deleted remotely can get stuck locally if it contains an ignored file** (W1.9.2), typically a `.DS_Store`: the daemon repeats a `directory not empty` error. *Workaround: delete the leftover file yourself.*
 - **Two quarantines of the same path on the same day keep only the newer rescue copy** (W1.9.3). The older version is still in Drive's trash.
 - **A name that is a file on one side and a folder on the other** causes a repeating error and can create a stray same-name entry in Drive (W1.9.4). *Workaround: rename one of the two.*

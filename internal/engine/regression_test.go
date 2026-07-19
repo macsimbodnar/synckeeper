@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/macsimbodnar/synckeeper/internal/executor"
+	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 )
 
@@ -771,5 +773,54 @@ func TestR16CrashedDirMoveKeepsRemoteFolder(t *testing.T) {
 	}
 	if res2 := a.sync(t); len(res2.Plan) != 0 {
 		t.Errorf("second cycle not idle: %+v", res2.Plan)
+	}
+}
+
+// R19 (C2, engine): the reproduced defect end to end. Machine a syncs
+// Readme.txt; machine b independently created README.txt. On a folding FS
+// they are one local path: b must fire the §4.2 conflict — both contents
+// survive, nothing is quarantined, and Drive never holds a fold-duplicate
+// pair (was: b blind-uploaded a case-duplicate, then quarantined the user's
+// file when the snapshot collapse made its row look remote-deleted).
+func TestR19CrossMachineFoldConflictNoQuarantine(t *testing.T) {
+	fake, rootID := newWorld(t)
+	a := newMachine(t, "a", fake, rootID)
+	if !names.CaseInsensitiveFS(a.dir) {
+		t.Skip("sync dir does not fold case; the C2 shape needs a folding FS")
+	}
+	a.write(t, "Readme.txt", "from machine a")
+	a.sync(t)
+
+	b := newMachine(t, "b", fake, rootID)
+	b.write(t, "README.txt", "from machine b")
+	b.sync(t)
+	b.sync(t) // the cycle that used to quarantine the user's file
+
+	if entries, err := os.ReadDir(b.eng.QuarantineDir); err == nil && len(entries) != 0 {
+		t.Errorf("machine b quarantined during a fold conflict: %v", entries)
+	}
+	children, err := fake.List(context.Background(), rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foldSeen := map[string]int{}
+	contents := map[string]bool{}
+	for _, c := range children {
+		foldSeen[strings.ToLower(c.Name)]++
+		body, err := fake.Download(context.Background(), c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(body)
+		body.Close()
+		contents[string(raw)] = true
+	}
+	for k, n := range foldSeen {
+		if n > 1 {
+			t.Errorf("Drive holds %d fold-equal siblings for %q", n, k)
+		}
+	}
+	if !contents["from machine a"] || !contents["from machine b"] {
+		t.Errorf("a version was lost; Drive contents = %v", contents)
 	}
 }

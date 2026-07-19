@@ -525,3 +525,97 @@ func TestR16LocallyDeletedDirStillTrashes(t *testing.T) {
 		Remote: map[string]RemoteItem{"d": remDir("F", 1)},
 	}, []step{{t: TrashRemote, rel: "d", fileID: "F"}})
 }
+
+// --- R19 (C2): cross-tree fold collisions -----------------------------
+
+// R19a: on a folding FS, a new local file and a new remote file whose names
+// differ only by case are ONE path locally — the §4.2 both-new conflict must
+// fire (was: blind Upload + Download, a case-duplicate minted on Drive and
+// the user's file later quarantined). Remote wins the canonical byte-form.
+func TestR19FoldCollisionBothNewConflict(t *testing.T) {
+	cp := "Readme" + conflictSuffix + ".txt"
+	runPlan(t, Input{
+		Base:     map[string]BaseItem{},
+		Local:    map[string]LocalItem{"Readme.txt": locFile("mLocal", 5)},
+		Remote:   map[string]RemoteItem{"README.txt": remFile("f1", "mRemote", 7, 1)},
+		CaseFold: true,
+	}, []step{
+		{t: ConflictBackup, rel: "Readme.txt", newRel: cp},
+		{t: Download, rel: "README.txt", fileID: "f1"},
+		{t: Upload, rel: cp},
+	})
+}
+
+// R19b: same shape, identical content — the ordinary adopt, at the remote
+// byte-form: a case-only local rename plus the Record.
+func TestR19FoldCollisionBothNewAdopt(t *testing.T) {
+	runPlan(t, Input{
+		Base:     map[string]BaseItem{},
+		Local:    map[string]LocalItem{"Readme.txt": locFile("m1", 5)},
+		Remote:   map[string]RemoteItem{"README.txt": remFile("f1", "m1", 5, 1)},
+		CaseFold: true,
+	}, []step{
+		{t: MoveLocal, rel: "Readme.txt", newRel: "README.txt"},
+		{t: Record, rel: "README.txt", fileID: "f1"},
+	})
+}
+
+// R19c: with no folding (case-sensitive FS) the two names are genuinely two
+// files and today's behavior stands: upload one, download the other.
+func TestR19NoFoldTwoDistinctFiles(t *testing.T) {
+	runPlan(t, Input{
+		Base:   map[string]BaseItem{},
+		Local:  map[string]LocalItem{"Readme.txt": locFile("mLocal", 5)},
+		Remote: map[string]RemoteItem{"README.txt": remFile("f1", "mRemote", 7, 1)},
+	}, []step{
+		{t: Download, rel: "README.txt", fileID: "f1"},
+		{t: Upload, rel: "Readme.txt"},
+	})
+}
+
+// R19d: a baseline row whose remote id was collapsed out of the snapshot
+// (fold or duplicate shadowing) is held harmless — a skip, never a
+// quarantine (was: "remote absent" read as remote-deleted).
+func TestR19ShadowedBaselineFileHeldHarmless(t *testing.T) {
+	plan, skips := Plan(Input{
+		Base:           map[string]BaseItem{"a.txt": baseFile("F", "m1", 3)},
+		Local:          map[string]LocalItem{"a.txt": locFile("m1", 3)},
+		Remote:         map[string]RemoteItem{},
+		ShadowedRemote: map[string]bool{"F": true},
+		Machine:        "test_box",
+		Now:            testNow,
+	})
+	if err := ValidateTransferStage(plan); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Fatalf("shadowed row must plan nothing, got %+v", plan)
+	}
+	found := false
+	for _, s := range skips {
+		if s.RelPath == "a.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a skip surfacing a.txt, got %v", skips)
+	}
+}
+
+// R19d, dir flavor: a shadowed baseline directory is not quarantined.
+func TestR19ShadowedBaselineDirHeldHarmless(t *testing.T) {
+	plan, _ := Plan(Input{
+		Base:           map[string]BaseItem{"d": baseDir("F")},
+		Local:          map[string]LocalItem{"d": locDir()},
+		Remote:         map[string]RemoteItem{},
+		ShadowedRemote: map[string]bool{"F": true},
+		Machine:        "test_box",
+		Now:            testNow,
+	})
+	if err := ValidateTransferStage(plan); err != nil {
+		t.Fatalf("plan violates the transfer-stage invariant: %v", err)
+	}
+	if len(plan) != 0 {
+		t.Fatalf("shadowed dir row must plan nothing, got %+v", plan)
+	}
+}

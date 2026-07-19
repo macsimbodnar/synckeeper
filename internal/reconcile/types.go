@@ -41,6 +41,19 @@ type Input struct {
 	Remote  map[string]RemoteItem // key: rel_path
 	Machine string
 	Now     time.Time
+
+	// CaseFold/NormFold mirror the sync dir's probed name folding (spec §5).
+	// When set, new-local vs new-remote matching also compares names under
+	// the fold, so fold-equal siblings fire the ordinary §4.2 adopt/conflict
+	// instead of blind-uploading a duplicate (C2, R19).
+	CaseFold bool
+	NormFold bool
+
+	// ShadowedRemote holds file ids that exist on Drive but were collapsed
+	// out of the remote snapshot (a duplicate or fold-colliding sibling
+	// lost "first by id"). A baseline row whose id is shadowed is held
+	// harmless — surfaced as a skip, never read as remote-deleted (C2b).
+	ShadowedRemote map[string]bool
 }
 
 // Type enumerates plan actions.
@@ -91,7 +104,11 @@ type Action struct {
 }
 
 // Skip is a reported, non-fatal exclusion (invalid name, type clash, ...).
+// FileID is set when the skipped name shadows a live remote id (a duplicate
+// or fold-colliding sibling): reconcile holds baseline rows for those ids
+// harmless instead of reading them as remote-deleted (C2b, R19).
 type Skip struct {
 	RelPath string
 	Reason  string
+	FileID  string
 }
