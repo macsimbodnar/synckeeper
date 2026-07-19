@@ -40,7 +40,7 @@ Reopened W1 after an adversarial re-analysis found a confirmed critical data-los
 2. **[R8] `ConflictBackup` overwrites an existing destination.** — **done 2026-07-17.** Same unguarded-rename class; the executor now refuses a rename onto an existing conflict-copy path (crash leftover), replanning with a fresh timestamp. Tests: testing.md R8.
 3. **[G3] Mass-delete guard aborted the whole cycle (spec §6/§8.1 deviation).** — **done 2026-07-17, C1.** The daemon now defers only the delete-class actions and keeps syncing everything else, surfacing the block in `status`; the interactive one-shot still aborts with the `--confirm-deletes` hint. New `engine.Options.DeferMassDelete` + `Result.GuardBlocked/GuardReason`. Tests: testing.md G3.
 
-### W1.8 — Adversarial-analysis correctness fixes, round 2 — `not started`
+### W1.8 — Adversarial-analysis correctness fixes, round 2 — `done (2026-07-19)`
 
 Reopens W1 again after a second adversarial analysis (2026-07-18, run against the goal/plan/spec once W2 closed) found nine defects, each reproduced with a throwaway test before being reported. Same discipline as W1.7: **red-first regression test, then the fix, then the testing.md row, suite + `-race` green at every commit.** Blocks everything else. See decisions.md 2026-07-18 "W1.8".
 
