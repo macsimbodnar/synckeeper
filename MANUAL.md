@@ -4,7 +4,7 @@ Everything you need to *use* Synckeeper. (For building, developing, or the desig
 
 Synckeeper keeps **one local folder** and **one Google Drive folder** identical, in both directions. Several machines can each sync against the same Drive folder, which acts as the hub and the durable copy. It is built to run as a background daemon and to **never silently lose or corrupt a file**: deletes go to Drive trash and a local quarantine (never permanent), conflicting edits produce a conflict copy (never last-writer-wins), and an edit always beats a delete.
 
-**This file is maintained under a repo rule: it is updated in the same commit as any change to commands, configuration, user-visible behavior, or the known-bug list.** Last updated: 2026-07-21.
+**This file is maintained under a repo rule: it is updated in the same commit as any change to commands, configuration, user-visible behavior, or the known-bug list.** Last updated: 2026-07-22.
 
 ---
 
@@ -116,9 +116,10 @@ Lookup order is `credentials.json` in the config dir → the embedded default. A
 
 ## 8. Known bugs
 
-Confirmed and reproduced. The three adversarial correctness rounds (W1.7–W1.9, all complete) retired every other entry; what remains is tracked as a recorded follow-up in [docs/decisions.md](docs/decisions.md).
+Confirmed and reproduced. The adversarial correctness rounds (W1.7–W1.9, all complete) retired every other entry; what remains is the deferred "directory arm" of the local-write gate — case-only names and renames for *directories and existing files*, tracked as a recorded follow-up in [docs/decisions.md](docs/decisions.md). Two facets:
 
-- **A folder created with the same name in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *Files* with such names now resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine — the folder case is the remaining gap. *Workaround: avoid folder names differing only in case/accents.*
+- **A folder created with the same name in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *New* files with such names resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine. *Workaround: avoid folder names differing only in case/accents.*
+- **Renaming an existing file to differ only in case/accents (e.g. `a.txt` → `A.txt`) makes your *other* machines retry that one rename every cycle** — `status` shows a repeated failure; the file stays safe on both sides, its name just doesn't update on the other machines. Same deferred root cause (the case-only-rename arm of the local-write gate). *Workaround: also edit the file's contents when you change its case — it then converges after a transient retry instead of looping.*
 
 ## 9. Known limitations (by design)
 
