@@ -139,6 +139,12 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | R22 | Type clash at one rel_path (remote dir vs local file, and the mirror): reported skip, no transfer, no delete, no standing failure loop, no same-name pair minted on Drive (was: `mkdir_local` error loop + a file uploaded beside the folder) | passing (2026-07-19) — `TestR22NewLocalFileVsRemoteFolderSkips` + `...NewLocalDirVsRemoteFileSkips` (reconcile: empty plan, skip reported), `TestR22RemoteFolderVsLocalFileNoMintNoLoop` (engine: Drive holds only the folder, local file untouched, second cycle steady) |
 | R23 | The OAuth auth URL carries an S256 PKCE challenge and the token exchange carries its verifier | passing (2026-07-19) — `TestR23LoginUsesPKCE` (`internal/auth`: full loopback flow against a fake token endpoint — the test plays the browser; asserts `code_challenge`/`S256` in the URL, `code_verifier` in the exchange, S256(verifier) == challenge, token persisted) |
 
+### W1.9.6 — adversarial review round 4 (2026-07-21); landed red-first, passing
+
+| ID | Case | Status |
+|---|---|---|
+| R24 | A tracked file **under** a shadowed folder (a duplicate or fold-colliding sibling won "first by id") is held harmless, never quarantined — the "a name collision never sends content to quarantine" guarantee extends to the whole shadowed subtree, not just the directly-colliding row (was: Snapshot skips the folder without walking it, so its descendants read as remote-deleted and were quarantined off disk) | passing (2026-07-21) — `TestR24DescendantOfShadowedFolderNotQuarantined` (engine, probe-gated/APFS: fold-equal sibling wins first-by-id, the child stays put, quarantine empty, both rows surfaced as skips), `TestExpandShadowedCoversSubtree` (engine unit: a shadowed folder id drags its tracked subtree into the harmless set) |
+
 ### Deferred acceptance
 
 | ID | Case | Status |

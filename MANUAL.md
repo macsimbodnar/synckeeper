@@ -4,7 +4,7 @@ Everything you need to *use* Synckeeper. (For building, developing, or the desig
 
 Synckeeper keeps **one local folder** and **one Google Drive folder** identical, in both directions. Several machines can each sync against the same Drive folder, which acts as the hub and the durable copy. It is built to run as a background daemon and to **never silently lose or corrupt a file**: deletes go to Drive trash and a local quarantine (never permanent), conflicting edits produce a conflict copy (never last-writer-wins), and an edit always beats a delete.
 
-**This file is maintained under a repo rule: it is updated in the same commit as any change to commands, configuration, user-visible behavior, or the known-bug list.** Last updated: 2026-07-18.
+**This file is maintained under a repo rule: it is updated in the same commit as any change to commands, configuration, user-visible behavior, or the known-bug list.** Last updated: 2026-07-21.
 
 ---
 

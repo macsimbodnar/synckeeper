@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-21 — W1.9.6: a shadowed folder's tracked subtree is held harmless, not quarantined
+
+**Context:** an adversarial review of the docs/code/tests (round 4) found that W1.9.1's stated guarantee — "with C2b in place the dir gap is a capped nuisance — a duplicate folder, **never a quarantine**" (decisions.md 2026-07-19 W1.9.1; echoed in MANUAL §8 and spec §5) — was **false for the descendants of a shadowed folder.** `remotedelta.Snapshot` skips a folder that lost "first by id" (duplicate or fold collision) and **never walks its subtree**, so the folder's tracked descendants are absent from both the remote snapshot and the shadowed set the engine built (`engine.go` collected only the directly-colliding skip's `FileID`). Reconcile pass 1 then read those descendants as remote-deleted and planned `QuarantineLocal` for each. Reproduced end to end (`TestR24…`): machine A holds `Docs/note.txt`; a fold-equal `DOCS/` sibling with a winning id appears on Drive; A's next cycle quarantines `note.txt` and removes it from disk. Content survives (local quarantine + the Drive copy under the winning folder), so no permanent loss — but the promised "never a quarantine" bound was wrong, and the case was **untested** (R19's shadowed cases only cover a directly-shadowed single row). Not fold-specific: the exact-duplicate-name folder case (N3) shadows the same way and reaches the quarantine on any filesystem.
+
+**Decision (agent, adversarial review; red-first, suite + `-race` green):** the fix is engine-side and small — `expandShadowed(baseItems, remoteSkips)` marks the directly-shadowed ids **plus every baseline row under a shadowed skip's rel_path.** Holding the whole invisible subtree harmless is what makes the existing "never a quarantine" promise true; reconcile already does the right thing once an id is in `ShadowedRemote` (verified: with the descendant id shadowed, the plan is empty). The full directory arm (case-only dir renames, dir fold-adopts, R7-for-dirs) stays deferred — this only closes the descendant-quarantine hole in the deferral's stated safety envelope, it does not adopt or de-duplicate the folders.
+
+**Consequences:** spec §5 dated note (the fold/duplicate-shadow guarantee now explicitly covers a shadowed folder's subtree); testing.md gains R24; MANUAL §8's "a name collision can no longer send anything to quarantine" is now actually backed by code (and its stale "Last updated" stamp is corrected to 2026-07-21); plan.md gains W1.9.6. The recorded dir-arm follow-up (the duplicate-folder nuisance) is unchanged and still owns the rest.
+
 ## 2026-07-19 — W1.9.5 implemented: PKCE, proven end to end — and W1.9 closes
 
 **Context:** implementing the decided C6 fix. The mechanism is three lines of the oauth2 library; the recordable part is how it is tested, since `Login` is interactive by nature.

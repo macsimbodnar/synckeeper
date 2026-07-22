@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/macsimbodnar/synckeeper/internal/config"
@@ -119,12 +120,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 
 	// Ids collapsed out of the snapshot by a duplicate or fold collision are
 	// alive on Drive; reconcile holds their baseline rows harmless (R19).
-	shadowed := map[string]bool{}
-	for _, s := range remoteSkips {
-		if s.FileID != "" {
-			shadowed[s.FileID] = true
-		}
-	}
+	shadowed := expandShadowed(baseItems, remoteSkips)
 	plan, planSkips := reconcile.Plan(reconcile.Input{
 		Base:           base,
 		Local:          local,
@@ -182,6 +178,34 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		purgeQuarantine(e.QuarantineDir, e.Cfg.Engine.QuarantineRetentionDays)
 	}
 	return res, nil
+}
+
+// expandShadowed returns the baseline file ids to hold harmless this cycle:
+// the ids Snapshot skipped as shadowed (a duplicate or fold-colliding sibling
+// that lost "first by id"), PLUS every tracked descendant of a shadowed
+// FOLDER. Snapshot never walks a shadowed folder's subtree, so those rows are
+// absent from the remote snapshot; without this they read as remote-deleted
+// and get quarantined — breaking the guarantee that a name collision never
+// sends content to quarantine (spec §5).
+func expandShadowed(baseItems []statedb.Item, skips []reconcile.Skip) map[string]bool {
+	shadowed := map[string]bool{}
+	var prefixes []string
+	for _, s := range skips {
+		if s.FileID == "" {
+			continue
+		}
+		shadowed[s.FileID] = true
+		prefixes = append(prefixes, s.RelPath+"/")
+	}
+	for _, it := range baseItems {
+		for _, pre := range prefixes {
+			if strings.HasPrefix(it.RelPath, pre) {
+				shadowed[it.DriveFileID] = true
+				break
+			}
+		}
+	}
+	return shadowed
 }
 
 // withoutDeletes returns the plan minus the delete-class actions (the daemon's
