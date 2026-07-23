@@ -86,6 +86,13 @@ func TestSoak(t *testing.T) {
 	}
 	duration := time.Duration(secs) * time.Second
 
+	// Validate the production watcher backend (FSEvents on darwin+cgo, fsnotify
+	// elsewhere): TestMain otherwise pins the whole suite to fsnotify for the
+	// R14/R15 seams (W3.5). Restore that pin afterward.
+	newBackend = productionBackend
+	t.Cleanup(func() { newBackend = newFSNotifyBackend })
+	t.Log("soak running against the production watcher backend (FSEvents on darwin+cgo)")
+
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 	b := newMachine(t, "b", fake, root)

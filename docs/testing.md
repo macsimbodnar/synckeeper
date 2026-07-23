@@ -71,8 +71,9 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 
 | Case | Status |
 |---|---|
-| 2-hour random-edit soak, both sides, no divergence | passing (2026-07-09, macOS) — converged on 10,858 files; late-stage fd exhaustion degraded to polling as designed and still converged (see decisions.md 2026-07-12) |
+| 2-hour random-edit soak, both sides, no divergence | passing (2026-07-09, macOS, fsnotify) — converged on 10,858 files; late-stage fd exhaustion degraded to polling as designed and still converged (see decisions.md 2026-07-12) |
 | Cache-prune + polling-latch regression tests (`internal/remotedelta`, `internal/watch`) + 90 s soak re-run | passing (2026-07-12) |
+| Soak re-run on the FSEvents backend (W3.5) | **wired + smoked (2026-07-23, macOS)** — `TestSoak` now runs against the production backend (FSEvents on darwin+cgo); 30 s and 90 s smokes converged (89 / more files) with clean `doctor` on both machines. The full 2-hour gate (`SYNCKEEPER_SOAK_SECONDS=7200`) is the release ritual, run by Max |
 
 ## Monitoring (phase 6, stage 1)
 

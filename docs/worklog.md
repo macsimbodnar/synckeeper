@@ -92,3 +92,11 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Wrote `internal/watch/rebuild_test.go` (`TestRebuildIsPerBackend`): a fake `countingBackend` injected via the `newBackend` seam proves a `needsRebuild=false` backend is created exactly once (never recreated at cadence) and a `true` one is recreated. Added a real-backend assertion in the FSEvents wake test (`needsRebuild=false`). R15 (real fsnotify rebuild→degrade→recover) still green.
 - Verified: build+vet both cgo modes; full watch suite green under `-race` (cgo on) and green (cgo off); gofmt clean.
 - Docs: spec §10 build policy (rebuild now per-backend), plan.md (W3.4 done), decisions.md ("W3.4"), testing.md (W3.4 row), status.md (next = W3.5, only item left in W3). MANUAL unchanged.
+
+### 2026-07-23 18:40 — W3.5: run the soak against the FSEvents backend
+> "yes, let's proceed" (do the W3.5 code now + smoke; hand over the 2 h gate)
+- Problem: `TestMain` pins the watch suite to fsnotify (R14/R15 seams), so `TestSoak` was exercising fsnotify; and the cross-platform `soak_test.go` can't name `newFSEventsBackend` (darwin+cgo-only symbol).
+- Fix: `main_test.go` captures `productionBackend = newBackend` (the platform default — FSEvents on darwin+cgo, set by the darwin `init`) *before* pinning fsnotify; `TestSoak` sets `newBackend = productionBackend` for its run and restores the pin. No build-constraint symbol leaks into the cross-platform soak; the soak validates what production runs.
+- Smoked: 30 s soak → converged on 89 files, clean `doctor`; 90 s soak → converged on 220 files, clean `doctor` (both against FSEvents; the transient lstat ERRORs are chaos racing the scanner — retried, converged, as designed).
+- Docs: plan.md (W3.5 wired+smoked, 2 h gate = Max's), decisions.md ("W3.5"), spec §16.9, testing.md (soak row), status.md (W3 engineering done; next = W5). MANUAL unchanged.
+- **Handoff: the full 2 h acceptance gate is Max's release-ritual run:** `SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h` (runs against FSEvents on macOS). This closes the W3 engineering.

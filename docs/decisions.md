@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-23 — W3.5: the soak runs against the production (FSEvents) backend
+
+**Context:** the last W3 item is to re-run the 2 h soak on the new backend. But `TestMain` pins the whole watch suite to `newFSNotifyBackend` (the R14/R15 seams target fsnotify), so `TestSoak` was exercising fsnotify, not FSEvents. The soak's cross-platform file (`soak_test.go`) also can't name `newFSEventsBackend` directly — that symbol only exists under `//go:build darwin && cgo`.
+
+**Decision (agent; smoke-verified):** capture the platform default before pinning. `TestMain` records `productionBackend = newBackend` (which the darwin+cgo `init` has already set to FSEvents; fsnotify elsewhere) *before* pinning the suite to fsnotify. `TestSoak` sets `newBackend = productionBackend` for its run and restores the pin afterward. No build-constraint reference to the FSEvents symbol leaks into the cross-platform soak, and the soak now validates exactly what the production build runs — FSEvents on macOS, fsnotify on Linux/Windows.
+
+**Consequences:** smoke runs at 30 s and 90 s converge with clean `doctor` on both machines against FSEvents (two live FSEvents streams + dispatch queues in one process, routed by the handle registry — no issues under create/edit/rename/delete chaos; convergence never depends on the watcher, spec §8.1, so the poll fallback + final settle syncs guarantee it regardless). testing.md soak row + spec §16.9 + plan.md W3.5 dated. **The full 2-hour acceptance gate (`SYNCKEEPER_SOAK_SECONDS=7200`) is a long-running release ritual and is left for Max to run** — the engineering is complete, the gate is a wall-clock validation. No MANUAL change. **This closes the W3 engineering; W3 is done pending Max's 2 h soak.** Next workstream: **W5** (daemon-first polish); the deferred directory-arm family remains unscheduled.
+
 ## 2026-07-23 — W3.4: the periodic watcher rebuild is now per-backend
 
 **Context:** the sync loop tears down and recreates the watcher every `rebuildEvery = 500` cycles (~6 h at the default poll). That exists solely to bound a kqueue descriptor leak — fsnotify can leak an fd when a watched file is deleted faster than its event is processed, and closing the watcher releases every fd it holds. FSEvents holds **no per-file descriptors**, so rebuilding it is pure waste: it tears down and recreates a whole-tree stream for nothing.
