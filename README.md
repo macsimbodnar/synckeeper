@@ -23,8 +23,8 @@ Start with [CLAUDE.md](CLAUDE.md) (the guide for agents and humans alike: read o
 Requires Go 1.26+ (see the `go` directive in `go.mod`). Binaries are built **natively on each target platform** (no cross-compile requirement; cgo permitted for OS-native integrations — see spec §10).
 
 ```sh
-make build        # supported: native binary for the host platform → dist/
-make build-all    # legacy cross-compile matrix; works only while the tree is pure Go (until cgo/FSEvents lands, W3)
+make build        # supported: native binary for the host platform → dist/ (cgo on → FSEvents on macOS, W3.2)
+make build-all    # legacy pure-Go (CGO_ENABLED=0) cross-compile matrix; excludes the FSEvents backend (fsnotify fallback)
 ```
 
 ## Use

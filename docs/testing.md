@@ -152,11 +152,17 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | FZ1 | Seeded random-ops fuzzer, N machines + interleaved syncs + one-shot crashes at executor checkpoints. Oracle (all exact/non-flaky): **§4.5 structural invariant** on every plan; **eventual convergence + idempotence** (all machines reach a zero-action, zero-failure fixed point within a bound); **no silent divergence** (at the fixed point every machine's file/dir tree is byte-identical to every other's and to the reconstructed Drive tree); **identity stability, scoped** (a clean single-writer rename of an unmodified file is a MoveRemote preserving the Drive id with zero delete-class actions — the quiet-rename probe). Deterministic replay from seed (pinned clock + monotonic mtimes). Op menu covers the shipped-bug classes whose correct outcome is convergence (S4/C4/S7/A1/R7/R6/A4/C2-files); by-design non-convergent classes are covered by their own rows, not the oracle (decisions.md "W4") | passing (2026-07-23) — `TestFuzzConvergence` (`internal/engine/fuzz_test.go`); default bounded (8 seeds × 70 steps), `SYNCKEEPER_FUZZ_*` env widens it, `-short` shrinks it. Green + `-race` |
 | R25 | A baseline file whose remote moved to a new path, with the local file already at that new path (the same rename made locally, or a crashed MoveLocal left disk+Drive ahead of the baseline): recorded in place, no upload/download collision (was: pass 1 planned a Download to "restore" the remote file while pass 2 uploaded the "new" local file at the same path → §4.5 refused the whole plan every cycle → permanent wedge) | passing (2026-07-23) — reconcile: `TestR25CoincidentMoveRecordsInPlace` (single Record, id preserved), `TestR25CoincidentMoveDivergentContentConflicts` (diverged content → conflict copy + remote wins); found by FZ1, minimized red-first |
 
+### W3 — watcher modularization + FSEvents (2026-07-23)
+
+| ID | Case | Status |
+|---|---|---|
+| W3.2-fsevents | The macOS FSEvents backend (`//go:build darwin && cgo`) wakes the sync loop on a real local change and filters ignored paths (`.DS_Store` etc.) before waking | passing (2026-07-23, macOS) — `TestFSEventsBackendWakesOnChange` (integration: a real write wakes within the latency window; `refresh` returns 0 failed), `TestFSEventsShouldWakeFiltersIgnored` (deterministic filter unit test). Existing watch suite (R14 reload race, R15 rebuild/creation failure) pinned to the fsnotify backend via `TestMain` and green under `-race`; pure-Go (`CGO_ENABLED=0`) build + watch tests green (fsnotify fallback) |
+
 ### Deferred acceptance
 
 | ID | Case | Status |
 |---|---|---|
-| W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo — W3 |
+| W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo — W3.3 |
 
 ## Live smoke (any phase, manual)
 
