@@ -50,7 +50,7 @@ func TestFSEventsBackendWakesOnChange(t *testing.T) {
 // shouldWake is pure logic (no OS timing), so its ignore filtering is asserted
 // deterministically here rather than through flaky FSEvents absence-testing.
 func TestFSEventsShouldWakeFiltersIgnored(t *testing.T) {
-	globs := []string{".DS_Store", "*.tmp"}
+	globs := []string{".DS_Store", "*.tmp", "node_modules"}
 	cases := []struct {
 		name    string
 		changed []string
@@ -60,11 +60,23 @@ func TestFSEventsShouldWakeFiltersIgnored(t *testing.T) {
 		{"only ignored", []string{"/sync/.DS_Store", "/sync/sub/x.tmp"}, false},
 		{"mixed", []string{"/sync/.DS_Store", "/sync/real.md"}, true},
 		{"empty batch", nil, false},
+		// Churn under an ignored directory must not wake: the scanner skips
+		// the whole subtree (SkipDir), so the cycle would find nothing — and
+		// the fsnotify backend never even watches inside ignored dirs. The
+		// basename alone is not enough; every path component counts.
+		{"file under ignored dir", []string{"/sync/node_modules/pkg/index.js"}, false},
+		{"ignored dir itself", []string{"/sync/node_modules"}, false},
+		{"clean file beside ignored-dir churn", []string{"/sync/node_modules/a.js", "/sync/notes.txt"}, true},
+		// The root itself (MustScanSubDirs can hand it back) always wakes.
+		{"the root itself", []string{"/sync"}, true},
+		// Paths that don't resolve under root keep the basename-only filter.
+		{"outside root, ignored basename", []string{"/elsewhere/.DS_Store"}, false},
+		{"outside root, real file", []string{"/elsewhere/f.txt"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := shouldWake(c.changed, globs); got != c.want {
-				t.Errorf("shouldWake(%v) = %v, want %v", c.changed, got, c.want)
+			if got := shouldWake("/sync", c.changed, globs); got != c.want {
+				t.Errorf("shouldWake(/sync, %v) = %v, want %v", c.changed, got, c.want)
 			}
 		})
 	}

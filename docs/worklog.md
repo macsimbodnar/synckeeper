@@ -116,3 +116,11 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Finding 3 (low, recorded-not-fixed candidate): a mid-life dead FSEvents stream (external-volume remount) is never detected or rebuilt (`needsRebuild=false` forever); poll covers correctness, `status` overstates "watching". Max's call: accept via decisions.md or add belt-and-braces.
 - Finding 4 (test hygiene): `rebuild_test.go` failure path leaks the `Run` goroutine (cancel/wait not in `t.Cleanup`). Finding 5 (nits): CLAUDE.md soak command lacks `-v` (pass criteria read a log line); `status.go` ModeWatching comment still says "fsnotify active".
 - Report + sequenced fix plan (fixes red-first before the 2 h gate, per the standing discipline) delivered in-chat; awaiting Max's go-ahead on the fixes.
+
+### 2026-07-23 19:24 — adversarial-check fixes 1+2, red-first, before the 2 h gate
+> "next"
+- **Fix 1 (F1+F4, harness serialization):** red test `TestStopWaitsForDaemonExit` written first and confirmed red (`stop() returned while the daemon reports running=true mode="watching"`). Fix: `startWatcher`'s stop is now `cancel(); <-done` (waits for `Run` to exit — `rec.stop()` runs before Run returns, so "stopped recorded when stop returns" is the observable proof); `rebuild_test.go` gains the same `t.Cleanup` against the failure-path daemon leak. The soak's settle phase can no longer race an in-flight daemon cycle on the same engine.
+- **Fix 2 (F2, FSEvents ignored-dir filter):** red case `file under ignored dir` (`/sync/node_modules/pkg/index.js`, glob `node_modules`) confirmed red against the basename-only `shouldWake`. Fix: component-wise `ignoredPath` relative to the stream root (root always wakes; out-of-root falls back to basename); root `EvalSymlinks`-resolved once and the stream registered on it. Test extended with root/out-of-root/sibling cases.
+- Nits folded in: CLAUDE.md soak command gains `-v`; `status.go` ModeWatching comment de-fsnotified.
+- Verified: gofmt clean, `go vet` clean, `go test -race -count=1 ./internal/watch/` green, `CGO_ENABLED=0` watch tests green, full `go build && go vet && go test ./...` green.
+- Docs: decisions.md two entries ("W3 adversarial check, fix 1/fix 2"), testing.md rows W3-adv-1 + W3-adv-2, spec §10 fswatch cell dated. F3 (dead-stream-never-rebuilt) left as Max's open call, noted in the fix-1 entry.

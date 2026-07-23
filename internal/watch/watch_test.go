@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -76,6 +77,12 @@ func (m *machine) write(t *testing.T, rel, content string) {
 	}
 }
 
+// startWatcher runs a daemon loop for m and returns a stop func that cancels
+// it AND waits for Run to fully exit. The wait is load-bearing: callers (the
+// soak's settle phase) drive engine.Sync directly right after stopping, and
+// the engine requires cycles to be serialized — an in-flight daemon cycle
+// racing a direct Sync can double-plan an upload and mint a duplicate-name
+// pair on Drive (W3 adversarial check, 2026-07-23).
 func startWatcher(t *testing.T, m *machine, poll time.Duration) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -87,8 +94,9 @@ func startWatcher(t *testing.T, m *machine, poll time.Duration) context.CancelFu
 			t.Errorf("[%s] watcher: %v", m.name, err)
 		}
 	}()
-	t.Cleanup(func() { cancel(); <-done })
-	return cancel
+	stop := func() { cancel(); <-done }
+	t.Cleanup(stop) // idempotent: cancel is, and done stays closed
+	return stop
 }
 
 func waitFor(t *testing.T, what string, deadline time.Duration, cond func() bool) {
@@ -101,6 +109,35 @@ func waitFor(t *testing.T, what string, deadline time.Duration, cond func() bool
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// The stop func startWatcher returns must not return until Run has fully
+// exited: the soak's settle phase calls engine.Sync directly the moment the
+// watchers are stopped, and a still-in-flight daemon cycle would run
+// concurrently with those syncs on the same engine — which the engine forbids
+// (cycles are serialized; two concurrent cycles can double-plan an upload and
+// mint a duplicate-name pair on Drive). rec.stop() runs before Run returns, so
+// "stopped is already recorded when stop() returns" is the observable proof.
+func TestStopWaitsForDaemonExit(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+	stop := startWatcher(t, a, 25*time.Millisecond)
+
+	// Put a cycle in flight: a burst of files, then a beat for the debounce
+	// to fire and the sync to start.
+	for i := 0; i < 50; i++ {
+		a.write(t, fmt.Sprintf("burst/f%02d.txt", i), "payload")
+	}
+	time.Sleep(60 * time.Millisecond)
+	stop()
+
+	ds, err := a.db.GetDaemonStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds.Running || ds.Mode != ModeStopped {
+		t.Fatalf("stop() returned while the daemon reports running=%v mode=%q — settle-phase syncs would race the in-flight cycle", ds.Running, ds.Mode)
+	}
 }
 
 // A local write is picked up by fsnotify well before the poll tick.

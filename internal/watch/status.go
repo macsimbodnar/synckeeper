@@ -20,7 +20,7 @@ const HeartbeatInterval = 10 * time.Second
 
 // Daemon modes reported in status.
 const (
-	ModeWatching    = "watching"     // fsnotify active
+	ModeWatching    = "watching"     // file watching active (whichever backend)
 	ModePollingOnly = "polling-only" // watch failed; polling covers the tree
 	ModeBackoff     = "backoff"      // last cycle errored; retrying with backoff
 	ModePaused      = "paused"       // auto-sync suspended via `pause`

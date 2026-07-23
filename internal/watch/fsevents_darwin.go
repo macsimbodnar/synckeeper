@@ -62,6 +62,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -79,6 +80,7 @@ func init() {
 type fseventsBackend struct {
 	stream C.FSEventStreamRef
 	handle uintptr
+	root   string // symlink-resolved; event paths are filtered relative to it
 	ignore func() []string
 	wake   func()
 }
@@ -96,7 +98,13 @@ var (
 // unused: FSEvents delivers on its own dispatch queue, and the sync loop always
 // calls close() (deferred at shutdown, and on each rebuild), which stops it.
 func newFSEventsBackend(_ context.Context, root string, ignore func() []string, wake func()) (fsWatcher, int, error) {
-	b := &fseventsBackend{ignore: ignore, wake: wake}
+	// Resolve symlinks once (macOS /tmp and /var live under /private) and
+	// register the stream on the resolved path, so the callback's paths and
+	// b.root agree and the per-component ignore filter can relate them.
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+	}
+	b := &fseventsBackend{root: root, ignore: ignore, wake: wake}
 
 	fseventsMu.Lock()
 	fseventsNextID++
@@ -151,18 +159,42 @@ func goFSEventsCallback(info C.uintptr_t, n C.size_t, paths **C.char) {
 	for i, cp := range cpaths {
 		changed[i] = C.GoString(cp)
 	}
-	if shouldWake(changed, b.ignore()) {
+	if shouldWake(b.root, changed, b.ignore()) {
 		b.wake()
 	}
 }
 
 // shouldWake reports whether any changed path is worth a sync cycle. Finder
 // rewrites .DS_Store constantly and every wake is a full scan, so ignored
-// paths are filtered out here — the same basename-glob ignore the fsnotify
-// backend applies per event (spec §5/§8.3). An empty batch never wakes.
-func shouldWake(changed, ignore []string) bool {
+// paths are filtered out — and a path under an ignored *directory* counts as
+// ignored too (every component under root is matched, not just the basename):
+// the scanner skips those subtrees entirely, and the fsnotify backend never
+// even watches inside them, so waking on their churn would buy a full rescan
+// for nothing (W3 adversarial check, 2026-07-23). An empty batch never wakes.
+func shouldWake(root string, changed, ignore []string) bool {
 	for _, p := range changed {
-		if !names.Ignored(filepath.Base(p), ignore) {
+		if !ignoredPath(root, p, ignore) {
+			return true
+		}
+	}
+	return false
+}
+
+// ignoredPath reports whether p is ignored relative to root: any path
+// component of p under root matching the ignore globs ignores the whole path.
+// The root itself is never ignored (a MustScanSubDirs batch can hand it
+// back), and a path that doesn't resolve under root keeps the old
+// basename-only filter as the safe fallback.
+func ignoredPath(root, p string, ignore []string) bool {
+	rel, err := filepath.Rel(root, p)
+	switch {
+	case err == nil && rel == ".":
+		return false // the root itself: always worth a wake
+	case err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)):
+		return names.Ignored(filepath.Base(p), ignore)
+	}
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		if names.Ignored(seg, ignore) {
 			return true
 		}
 	}

@@ -54,6 +54,9 @@ func TestRebuildIsPerBackend(t *testing.T) {
 					t.Errorf("Run: %v", err)
 				}
 			}()
+			// A waitFor Fatal below must not leak the daemon into later
+			// tests (it would keep syncing against a closed DB).
+			t.Cleanup(func() { cancel(); <-done })
 
 			// Let the poll ticker drive several cadence-2 boundaries. For the
 			// rebuild backend that means several recreations; for the other it
