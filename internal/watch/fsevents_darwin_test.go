@@ -32,6 +32,9 @@ func TestFSEventsBackendWakesOnChange(t *testing.T) {
 	if failed != 0 {
 		t.Errorf("failed = %d, want 0 (a whole-tree stream never fails to watch a dir)", failed)
 	}
+	if b.needsRebuild() {
+		t.Error("FSEvents reports needsRebuild=true, want false (no per-file descriptors, nothing to leak; W3.4)")
+	}
 	t.Cleanup(func() { b.close() })
 
 	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hi"), 0o644); err != nil {

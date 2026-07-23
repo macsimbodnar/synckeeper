@@ -57,11 +57,13 @@ func (w *Watcher) ignoreGlobs() []string {
 	return w.Eng.Cfg.Engine.Ignore
 }
 
-// rebuildEvery: sync cycles between fsnotify watcher rebuilds. On kqueue a
-// descriptor can leak when a watched file is deleted faster than its event
-// is processed; closing the watcher releases every fd it holds, and the
-// full-scan poll covers the swap window. ~500 cycles ≈ 6 h at the default
-// 45 s poll, minutes under event storms — either way the leak stays bounded.
+// rebuildEvery: sync cycles between watcher rebuilds, for backends that report
+// needsRebuild (fsnotify). On kqueue a descriptor can leak when a watched file
+// is deleted faster than its event is processed; closing the watcher releases
+// every fd it holds, and the full-scan poll covers the swap window. ~500 cycles
+// ≈ 6 h at the default 45 s poll, minutes under event storms — either way the
+// leak stays bounded. A backend that holds no per-file descriptors (FSEvents)
+// reports needsRebuild=false and is left running instead (W3.4).
 const rebuildEvery = 500
 
 // Run blocks until ctx is cancelled. Sync failures are logged and retried
@@ -202,7 +204,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 				fw, pollingOnly, latch = nfw, false, failureLatch{}
 				slog.Info("file watching restored; back to event-driven sync")
-			case cycle%cadence == 0:
+			case cycle%cadence == 0 && fw.needsRebuild():
 				fw.close() // pump goroutine exits with the channel
 				if fw, failed, err = w.startNotifier(ctx, debounce); err != nil {
 					// Same degradation as the pollingOnly branch above on

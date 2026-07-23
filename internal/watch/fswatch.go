@@ -29,6 +29,12 @@ type fsWatcher interface {
 	// close releases every descriptor/stream the backend holds; its event
 	// pump stops.
 	close() error
+	// needsRebuild reports whether the sync loop should periodically tear the
+	// backend down and recreate it to bound a descriptor leak (W3.4). fsnotify's
+	// kqueue leaks an fd when a watched file is deleted faster than its event is
+	// processed, so it does; FSEvents holds no per-file descriptors and is left
+	// running.
+	needsRebuild() bool
 }
 
 // newNotifyWatcher creates the raw fsnotify watcher — a test seam so R15 can
@@ -65,6 +71,10 @@ func newFSNotifyBackend(ctx context.Context, root string, ignore func() []string
 }
 
 func (b *fsnotifyBackend) close() error { return b.fw.Close() }
+
+// needsRebuild is true: kqueue can leak a descriptor per watched file, so the
+// loop periodically closes and recreates the watcher to release them.
+func (b *fsnotifyBackend) needsRebuild() bool { return true }
 
 // refresh makes the fsnotify watch set match the current directory tree and
 // returns how many directories could not be watched. fsnotify drops watches

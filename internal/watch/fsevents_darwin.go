@@ -122,6 +122,11 @@ func newFSEventsBackend(_ context.Context, root string, ignore func() []string, 
 // directory created under it, so nothing can fail to be watched.
 func (b *fseventsBackend) refresh(string) int { return 0 }
 
+// needsRebuild is false: a directory-tree stream holds no per-file descriptors,
+// so there is nothing to leak and no reason to tear it down and recreate it
+// (W3.4).
+func (b *fseventsBackend) needsRebuild() bool { return false }
+
 func (b *fseventsBackend) close() error {
 	// Stop first (Invalidate blocks until in-flight callbacks finish and
 	// guarantees no further ones), then drop the handle — so a callback can

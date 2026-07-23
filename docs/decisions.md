@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-23 — W3.4: the periodic watcher rebuild is now per-backend
+
+**Context:** the sync loop tears down and recreates the watcher every `rebuildEvery = 500` cycles (~6 h at the default poll). That exists solely to bound a kqueue descriptor leak — fsnotify can leak an fd when a watched file is deleted faster than its event is processed, and closing the watcher releases every fd it holds. FSEvents holds **no per-file descriptors**, so rebuilding it is pure waste: it tears down and recreates a whole-tree stream for nothing.
+
+**Decision (agent; suite + `-race` green):** add `needsRebuild() bool` to the `fsWatcher` interface — fsnotify returns true, FSEvents returns false. The loop's rebuild branch is gated `case cycle%cadence == 0 && fw.needsRebuild():`; when a backend reports false, the cadence cycle falls through to the normal `default` branch (`fw.refresh`, a no-op for FSEvents), so the stream keeps running untouched. The `rlimit` raise and the polling latch stay for every backend (belt-and-braces, spec §10) — only the rebuild became conditional. The recovery path (retry creation while polling-only) is unchanged and already backend-agnostic.
+
+**Consequences:** FSEvents no longer churns its stream on a timer; fsnotify is unaffected (R15 still drives the real rebuild → creation-failure → degrade → recover path). New `TestRebuildIsPerBackend` isolates the loop decision with a fake backend injected through the `newBackend` seam: a `needsRebuild=false` backend is created exactly once (never recreated at cadence), a `true` one is recreated. The FSEvents wake test now asserts the real backend reports `needsRebuild=false`. spec §10 build policy dated; plan.md W3.4 done; testing.md W3.4 row; no MANUAL change (invisible to the user). **Next: W3.5** — the 2 h soak on FSEvents. Caveat carried from W3.3: `TestMain` pins the watch suite to fsnotify, so `TestSoak` currently exercises fsnotify; W3.5 must explicitly select FSEvents for the soak.
+
 ## 2026-07-23 — W3.3: the W1-scale acceptance, and the self-inflicted-events sizing
 
 **Context:** spec §16.8 requires a ≥50k-file tree to sync under the daemon without descriptor exhaustion, with the watcher degrading to polling when it can't cover the tree. This also fixes the moment to size the carried-over "self-inflicted events" question (2026-07-18): every write-cycle fires its own watch events that re-trigger the loop.
