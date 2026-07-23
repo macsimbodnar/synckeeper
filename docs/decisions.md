@@ -13,6 +13,19 @@ Format:
 
 ---
 
+## 2026-07-23 — W3.3: the W1-scale acceptance, and the self-inflicted-events sizing
+
+**Context:** spec §16.8 requires a ≥50k-file tree to sync under the daemon without descriptor exhaustion, with the watcher degrading to polling when it can't cover the tree. This also fixes the moment to size the carried-over "self-inflicted events" question (2026-07-18): every write-cycle fires its own watch events that re-trigger the loop.
+
+**Decision (agent; acceptance measured on macOS):**
+- **A gated test, not a default one.** `internal/watch/scale_test.go` (`TestScale`) + `TestFSEventsScaleNoFDExhaustion` skip unless `SYNCKEEPER_SCALE_FILES` is set (acceptance = 50000), mirroring the soak gate — creating and syncing 50k files is far too slow for `go test ./...`. A shared `buildScaleTree` writes tiny files 100-per-directory.
+- **What each assertion proves.** (a) The engine handles the scale: a full sync converges (**50 500 actions** at 50k) and the next cycle is idle — the scan (a stat + md5-open per file) and reconcile cover 50k. (b) **FSEvents: 0/500 directories unwatchable** — a directory-tree stream holds no per-file descriptors, so scale never exhausts fds; this is the crisp "no fd exhaustion" result and the reason the backend exists. (c) **fsnotify: 403/500 unwatchable** at the 10240 fd soft limit — kqueue's per-file descriptors run out, so the failure latch trips and the daemon polls. That degradation is *graceful, not fatal*; the full watcher-kill → polling → recovery **loop** is R15's and is scale-independent, so the scale test asserts the *trigger* (real fd pressure + the latch tripping on that count) rather than re-driving the daemon at 50k, which would be slow and timing-flaky.
+- **Test-suite hygiene:** `raiseFDLimit` is invoked (as the daemon does) before the fsnotify measurement; the fsnotify backend is created and immediately closed so its ~10 000 held descriptors never starve anything else in the test binary.
+
+**Self-inflicted events — sized, not a defect (decision: defer suppression).** After a cycle writes or downloads files, those writes fire watch events that reset the debounce and trigger one more cycle. That next cycle re-scans, finds every file already matches the baseline it just recorded, plans nothing, and settles — a **bounded, self-terminating one-extra-cycle** amplification, never a loop (correctness never depends on the watcher, spec §8.1). Cost = one full scan: **~19 s at 50k** (measured), sub-second at personal scale. A backend *could* suppress events for paths it just wrote, but that is an optimization, not a correctness need. Decision: accept as-is; revisit only if a real workload shows the rescan cost matters — the FSEvents-under-daemon-load measurement can be added then. This closes the 2026-07-18 parked item.
+
+**Consequences:** testing.md W1-scale row passing; spec §16.8 verified-dated; the `SYNCKEEPER_SCALE_FILES` command added to CLAUDE.md. No MANUAL change (scale/resilience is invisible to the user; "watches, falls back to polling if unavailable" already holds). **Next: W3.4** — retire what the fd era no longer needs per backend (FSEvents holds no per-file fds, so its per-cycle rebuild is pointless), then W3.5 (soak on FSEvents).
+
 ## 2026-07-23 — W3.2: the FSEvents backend, the repo's first cgo
 
 **Context:** with the `fsWatcher` interface in place (W3.1), the macOS-native backend could land. FSEvents is a directory-tree stream with zero per-file descriptors — the fd-exhaustion class that shaped the fsnotify era simply doesn't exist for it (spec §10). This is the first cgo in the repo; the build policy already permits it (spec §10, decided 2026-07-17).

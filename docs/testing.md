@@ -158,11 +158,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 |---|---|---|
 | W3.2-fsevents | The macOS FSEvents backend (`//go:build darwin && cgo`) wakes the sync loop on a real local change and filters ignored paths (`.DS_Store` etc.) before waking | passing (2026-07-23, macOS) — `TestFSEventsBackendWakesOnChange` (integration: a real write wakes within the latency window; `refresh` returns 0 failed), `TestFSEventsShouldWakeFiltersIgnored` (deterministic filter unit test). Existing watch suite (R14 reload race, R15 rebuild/creation failure) pinned to the fsnotify backend via `TestMain` and green under `-race`; pure-Go (`CGO_ENABLED=0`) build + watch tests green (fsnotify fallback) |
 
-### Deferred acceptance
-
-| ID | Case | Status |
-|---|---|---|
-| W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo — W3.3 |
+| W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | passing (2026-07-23, macOS) — `TestScale` + `TestFSEventsScaleNoFDExhaustion` (gated by `SYNCKEEPER_SCALE_FILES`, acceptance = 50000). At 50k: FSEvents 0/500 dirs unwatchable (no per-file fds); fsnotify 403/500 unwatchable at the 10240 fd limit → failure latch trips → polling (graceful; the kill→poll→recover loop is R15); a full sync of 50 500 actions converges, second cycle idle |
 
 ## Live smoke (any phase, manual)
 

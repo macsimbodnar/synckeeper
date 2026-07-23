@@ -4,6 +4,7 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,5 +64,43 @@ func TestFSEventsShouldWakeFiltersIgnored(t *testing.T) {
 				t.Errorf("shouldWake(%v) = %v, want %v", c.changed, got, c.want)
 			}
 		})
+	}
+}
+
+// W1-scale (W3.3): FSEvents watches a >=50k-file tree with zero failed
+// directories — a directory-tree stream holds no per-file descriptors, so scale
+// never exhausts fds (unlike the fsnotify kqueue backend). Gated by
+// SYNCKEEPER_SCALE_FILES; the acceptance gate is 50000.
+func TestFSEventsScaleNoFDExhaustion(t *testing.T) {
+	n := scaleFiles(t)
+	root := t.TempDir()
+	dirs := buildScaleTree(t, root, n)
+	t.Logf("built %d files across %d dirs", n, dirs)
+
+	woke := make(chan struct{}, 16)
+	b, failed, err := newFSEventsBackend(context.Background(), root,
+		func() []string { return nil },
+		func() {
+			select {
+			case woke <- struct{}{}:
+			default:
+			}
+		})
+	if err != nil {
+		t.Fatalf("newFSEventsBackend over %d files: %v", n, err)
+	}
+	t.Cleanup(func() { b.close() })
+	if failed != 0 {
+		t.Errorf("FSEvents reported %d unwatchable dirs at %d files, want 0 (no per-file fds)", failed, n)
+	}
+
+	// A change still wakes at scale.
+	if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("d%06d", 0), "trigger.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-woke:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no wake-up after a change in a 50k-file tree")
 	}
 }
