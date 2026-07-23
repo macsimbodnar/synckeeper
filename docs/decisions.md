@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-23 — W3.1: the fswatch backend interface, extracted
+
+**Context:** W3 needs an FSEvents backend (cgo, macOS) alongside the current fsnotify one. Before adding it, the file-watching mechanism had to be pulled out from behind the sync loop, which held a concrete `*fsnotify.Watcher` and did fsnotify-specific work (per-directory `Add`, new-dir registration, event-op filtering, the pump) inline. Spec §10 already specifies the module contract; this realizes it.
+
+**Decision (agent, behavior-preserving refactor; suite + `-race` green):** an unexported `fsWatcher` interface (`internal/watch/fswatch.go`) with just `refresh(root string) int` (register/re-walk; the count is directories that could not be watched → the existing failure latch) and `close() error`. Wake-ups and ignore globs are **injected**, not pulled: the backend calls a `wake func()` (the loop's `debounce.Reset`) and reads globs through an `ignore func() []string` (the loop's atomic snapshot, R14). This keeps the loop the sole owner of the debounce timer and config while the backend owns its pump goroutine. `newBackend` is the single place a backend is chosen (a test seam); `newNotifyWatcher` stays the low-level fsnotify creation seam R15 injects. The `failureLatch`, the 500-cycle rebuild cadence, and the polling fallback are untouched — they wrap "whatever backend runs" (spec §10). The interface is shaped for a whole-tree backend too: FSEvents will `refresh` once and return 0 failed, ignoring the per-directory semantics fsnotify needs.
+
+**Consequences:** no behavior change — the existing watch tests are the safety net (R14 reload race + event storm, R15 rebuild/creation failure, the fsnotify wake-up and rebuild-cadence tests) and pass under `-race`. `watch.go` drops its fsnotify/`io/fs`/`filepath`/`names` imports; the loop's `fw` is now the interface. Spec §10 dated; plan.md W3.1 done, W3 in progress. No testing.md row (pure refactor, no new criterion) and no MANUAL change (nothing user-visible). Next: W3.2, the FSEvents backend (the repo's first cgo).
+
 ## 2026-07-23 — W4 implemented: the randomized convergence fuzzer, its oracle scope, and R25
 
 **Context:** implementing W4/FZ1 — a seeded multi-machine fuzzer against the in-memory fake, per plan.md W4 and the decided oracle additions (identity stability + §4.5 structural invariant, decisions.md 2026-07-18 "Roadmap"/plan review). Two questions had to be settled where the plan met the code: what the "no content loss" oracle can soundly assert, and which op classes belong in the convergence oracle.

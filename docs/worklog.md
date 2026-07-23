@@ -59,3 +59,11 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Made the fuzzer deterministic: pinned `nowFunc` (frozen during quiesce) removed wall-clock conflict-name churn that caused nondeterministic non-convergence; made the one-shot crash latch `atomic.Bool` after `-race` caught the closure race.
 - Verified: full `go build/vet/test` green; `-race` on reconcile/executor/engine green; 60-seed crash sweep + 30-seed no-crash sweep green.
 - Docs: testing.md (FZ1 + R25 rows), decisions.md (W4 + R25), spec.md §4.6 + §16.7 notes, plan.md (W4 done, risks), status.md (next = W3). MANUAL unchanged (R25 never a listed bug; W4 is internal).
+
+### 2026-07-23 15:00 — W3.1: extract the fswatch backend interface (next step in the plan)
+> "proceed with the next step in the plan. Let's stick to the plan"
+- Read `internal/watch/{watch,fswatch?,control,status}.go` + tests; found the loop held a concrete `*fsnotify.Watcher` and did fsnotify-specific work (per-dir `Add`, new-dir registration, event filtering, the pump) inline. Test constraints: keep `newNotifyWatcher` (R15 seam) and `failureLatch` (latch_test).
+- Created `internal/watch/fswatch.go`: unexported `fsWatcher` interface (`refresh(root) int` + `close`), `fsnotifyBackend` implementing it (owns its pump goroutine), `newBackend` factory seam, `newNotifyWatcher` moved here. Wake-ups + ignore globs injected (`wake func()`, `ignore func() []string`) so the loop keeps sole ownership of the debounce timer and config (R14).
+- Rewired `watch.go`: `startNotifier` is now a thin `newBackend(...)` call; loop `fw` is the interface (`.close()`, `fw.refresh(...)`); `latchIfNeeded` takes `*fsWatcher`; removed `syncWatches`/`watchSubtree` and the fsnotify/`io/fs`/`filepath`/`names` imports; generalized two comments.
+- Pure refactor, no behavior change: full `go build/vet/test` green; `internal/watch` tests (incl. R14 reload race + event storm, R15 rebuild/creation failure) green under `-race`; gofmt clean.
+- Docs: spec.md §10 (interface-extracted note), decisions.md ("W3.1"), plan.md (W3.1 done, W3 in progress), status.md (next = W3.2 FSEvents). No testing.md row (refactor, no new criterion); MANUAL unchanged (nothing user-visible).

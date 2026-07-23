@@ -1,26 +1,22 @@
-// Package watch runs the sync engine continuously: fsnotify events on the
-// local tree and a remote polling timer both feed the same serialized sync
-// loop — there is deliberately no second sync code path. Every cycle is a
-// full engine.Sync (full local scan + changes.list poll), which at personal
-// scale is cheap and makes dropped fsnotify events harmless: the next poll
-// tick catches whatever was missed.
+// Package watch runs the sync engine continuously: local file-watch events
+// (from a pluggable fsWatcher backend — fsnotify today, FSEvents later) and a
+// remote polling timer both feed the same serialized sync loop — there is
+// deliberately no second sync code path. Every cycle is a full engine.Sync
+// (full local scan + changes.list poll), which at personal scale is cheap and
+// makes dropped events harmless: the next poll tick catches whatever was
+// missed.
 package watch
 
 import (
 	"context"
-	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
-
 	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
-	"github.com/macsimbodnar/synckeeper/internal/names"
 )
 
 // Watcher drives continuous sync for one engine.
@@ -40,8 +36,8 @@ type Watcher struct {
 	rebuildCadence int
 
 	// ignore is the published ignore-glob snapshot (spec §8.3, R14). The
-	// sync loop owns the config, but the fsnotify event pump reads the
-	// globs on every event from its own goroutine — so a `reload` must
+	// sync loop owns the config, but the watcher backend's event pump reads
+	// the globs on every event from its own goroutine — so a `reload` must
 	// publish a new snapshot here, never write the slice in place.
 	ignore atomic.Pointer[[]string]
 }
@@ -67,11 +63,6 @@ func (w *Watcher) ignoreGlobs() []string {
 // full-scan poll covers the swap window. ~500 cycles ≈ 6 h at the default
 // 45 s poll, minutes under event storms — either way the leak stays bounded.
 const rebuildEvery = 500
-
-// newNotifyWatcher creates the fsnotify watcher — a test seam so R15 can
-// inject the fd-pressure creation failure without exhausting real
-// descriptors. Tests swap it only while no watcher goroutine is running.
-var newNotifyWatcher = fsnotify.NewWatcher
 
 // Run blocks until ctx is cancelled. Sync failures are logged and retried
 // with backoff; the loop only exits on cancellation.
@@ -125,7 +116,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 	defer func() {
 		if fw != nil {
-			fw.Close()
+			fw.close()
 		}
 	}()
 	if !pollingOnly {
@@ -205,14 +196,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 				nfw, failed, err := w.startNotifier(ctx, debounce)
 				if err != nil || failed > 0 {
 					if nfw != nil {
-						nfw.Close()
+						nfw.close()
 					}
 					break
 				}
 				fw, pollingOnly, latch = nfw, false, failureLatch{}
 				slog.Info("file watching restored; back to event-driven sync")
 			case cycle%cadence == 0:
-				fw.Close() // pump goroutine exits with the channel
+				fw.close() // pump goroutine exits with the channel
 				if fw, failed, err = w.startNotifier(ctx, debounce); err != nil {
 					// Same degradation as the pollingOnly branch above on
 					// the identical error (spec §8.1 "without exiting",
@@ -227,7 +218,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				slog.Debug("rebuilt fsnotify watcher", "cycle", cycle)
 				pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
 			default:
-				pollingOnly = w.latchIfNeeded(&latch, w.syncWatches(fw), &fw)
+				pollingOnly = w.latchIfNeeded(&latch, fw.refresh(w.Eng.SyncDir), &fw)
 			}
 			mode := ModeWatching
 			if pollingOnly {
@@ -249,7 +240,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 // latchIfNeeded records a watch-refresh outcome; on repeated failures it
 // shuts the watcher down (releasing every descriptor it holds) and switches
 // to pure polling. The rebuild cadence periodically retries file watching.
-func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw **fsnotify.Watcher) bool {
+func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw *fsWatcher) bool {
 	if failed > 0 && latch.consecutive == 0 {
 		slog.Warn("some directories could not be watched; polling covers them",
 			"failed", failed, "poll_interval", w.Poll)
@@ -257,86 +248,25 @@ func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw **fsnotify.W
 	if !latch.note(failed) {
 		return false
 	}
-	(*fw).Close()
+	(*fw).close()
 	*fw = nil
 	slog.Warn("file watching disabled after repeated failures (out of file descriptors?); "+
 		"relying on polling and retrying periodically", "poll_interval", w.Poll)
 	return true
 }
 
-// startNotifier creates an fsnotify watcher over the whole tree and starts
-// its event pump, which feeds the debounce timer until the watcher closes.
-// It also returns how many directories could not be watched.
-func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (*fsnotify.Watcher, int, error) {
-	fw, err := newNotifyWatcher()
-	if err != nil {
-		return nil, 0, err
-	}
-	failed := w.syncWatches(fw)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev, ok := <-fw.Events:
-				if !ok {
-					return
-				}
-				if names.Ignored(filepath.Base(ev.Name), w.ignoreGlobs()) {
-					continue
-				}
-				if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
-					continue
-				}
-				// New directories must be watched immediately: files may land
-				// in them before the post-sync watch refresh.
-				if ev.Op&fsnotify.Create != 0 {
-					if info, err := os.Stat(ev.Name); err == nil && info.IsDir() {
-						w.watchSubtree(fw, ev.Name)
-					}
-				}
-				debounce.Reset(w.Debounce)
-			case err, ok := <-fw.Errors:
-				if !ok {
-					return
-				}
-				slog.Warn("fsnotify error", "err", err)
-			}
-		}
-	}()
-	return fw, failed, nil
+// startNotifier creates the file-watching backend over the whole tree and
+// starts its event pump, which kicks the debounce timer until the backend
+// closes. It also returns how many directories could not be watched. The
+// backend is chosen behind the fsWatcher interface (W3), so the loop below is
+// unchanged when an FSEvents backend replaces fsnotify.
+func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (fsWatcher, int, error) {
+	wake := func() { debounce.Reset(w.Debounce) }
+	return newBackend(ctx, w.Eng.SyncDir, w.ignoreGlobs, wake)
 }
 
 // fdLimitOnce: the rlimit is process-wide; one raise is enough.
 var fdLimitOnce sync.Once
-
-// syncWatches makes the fsnotify watch set match the current directory
-// tree and returns how many directories could not be watched. fsnotify
-// drops watches for deleted dirs on its own; stale Adds are harmless, so a
-// simple re-walk suffices.
-func (w *Watcher) syncWatches(fw *fsnotify.Watcher) int {
-	return w.watchSubtree(fw, w.Eng.SyncDir)
-}
-
-func (w *Watcher) watchSubtree(fw *fsnotify.Watcher, root string) int {
-	failed := 0
-	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		if names.Ignored(d.Name(), w.ignoreGlobs()) && p != root {
-			return filepath.SkipDir
-		}
-		if err := fw.Add(p); err != nil {
-			failed++
-		}
-		return nil
-	})
-	return failed
-}
 
 // watchFailureLatch: consecutive cycles with watch-registration failures
 // after which fsnotify is shut down in favor of pure polling. Failures here
