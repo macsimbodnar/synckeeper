@@ -14,6 +14,7 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 | File | Role | Update when |
 |---|---|---|
 | `docs/status.md` | last/current/next pointer | end of every work session (rewrite sections, don't append) |
+| `docs/worklog.md` | append-only action log, keyed by the prompt | every prompt — append the prompt + timestamp + short action/decision bullets (never rewrite past entries) |
 | `docs/spec.md` | design doc & contract, acceptance criteria (§16) | behavior changes — same commit, dated inline note |
 | `docs/plan.md` | workstreams W1–W9 + retired phase history | item done / reprioritized (date it) |
 | `docs/decisions.md` | append-only log: context, decision, who, consequences | every scope change / deviation / non-obvious choice, before or alongside the code |
@@ -36,6 +37,7 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 - Builds are **native per platform** (no cross-compile requirement); cgo is permitted where the OS's best API needs it (spec §10). Pure Go preferred where equal.
 - Tests land with the feature, as `docs/testing.md` rows.
 - **`MANUAL.md` stays true at every commit.** Any change to commands, flags, configuration, defaults, or user-visible behavior — and any change to known-bug status, a bug *found or fixed* — updates the manual in the same commit. A fixed bug leaves the Known-bugs list in that fix's commit.
+- **Append to `docs/worklog.md` as you work.** Every user prompt gets an entry — the prompt quoted verbatim, a `YYYY-MM-DD HH:MM` timestamp, and one short sub-bullet per action or decision, precise enough to reconstruct what happened. Append at the bottom, never rewrite or reorder past entries, and commit it (its own `docs: worklog …` commit or folded into the work's commit). It supplements — never replaces — `status.md`, `decisions.md`, and `testing.md`.
 - Durability invariants (spec §3) are non-negotiable; invariant 7 (dependency-aware plan ordering) exists because ordering bugs shipped once — see decisions.md 2026-07-17.
 - The credential model (spec §9): Max's OAuth client credentials stay embedded as the default; never "fix" that by removing them.
 

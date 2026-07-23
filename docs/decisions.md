@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-23 — New permanent doc + agent rule: `docs/worklog.md`, an append-only action log
+
+**Context:** Max wanted a running history of the prompts given to agents and, under each, what the agent actually did — the console-transcript equivalent, captured in-repo so development can be reconstructed prompt by prompt. The existing docs cover state (`status.md`), the *why* (`decisions.md`), and acceptance (`testing.md`), but nothing records the granular per-prompt action trail.
+
+**Decision (Max):** add `docs/worklog.md` — append-only, chronological, keyed by the triggering prompt (verbatim quote + `YYYY-MM-DD HH:MM` timestamp), with one short precise sub-bullet per action/decision. A `## Baseline` recap of all work from project start through 2026-07-22 is pinned at the top as the starting point; every new prompt appends one entry at the bottom, and past entries are never rewritten or reordered. The rule is enforced via a new `CLAUDE.md` doc-map row and a hard rule. Agent-proposed file name/format; Max's call to adopt it.
+
+**Consequences:** new file `docs/worklog.md`; `CLAUDE.md` gains the doc-map row and the hard rule. It supplements, not replaces, the other docs — no behavior/spec/plan/testing change. First real entries log this session (the docs scan and this rule's creation).
+
 ## 2026-07-22 — MANUAL accuracy: the tracked case-only file-rename loop is surfaced to users
 
 **Context:** the round-4 adversarial review (see W1.9.6) also checked doc accuracy against code. MANUAL §8 claimed "*Files* with such names now resolve as ordinary conflicts or adopts" — true for *new* files (C2/R19), but a *tracked* file renamed case-only on Drive (`a.txt` → `A.txt`, same id) error-loops: reconcile emits an unpinned `MoveLocal a.txt → A.txt`, and the §7 fold-gate refuses it because the destination fold-resolves to the source ("a file appeared after the scan"), every cycle. This was already recorded here under W1.9.1 ("a *tracked* file case-only renamed on Drive … the gate fold-stats the source and refuses, an error loop … folded into the recorded follow-up") but never surfaced in MANUAL, and the MANUAL wording actively implied files were fully handled. Reproduced (engine, APFS): `failed=2` every cycle; pairing the rename with a content edit converges after one transient retry.
