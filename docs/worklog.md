@@ -48,3 +48,14 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Wired the rule into `CLAUDE.md` — added a doc-map row and a hard rule requiring per-prompt worklog entries.
 - Recorded the new doc + agent rule in `docs/decisions.md`.
 - Verified `go build ./... && go vet ./... && go test ./...` green, then committed (docs-only).
+
+### 2026-07-23 12:45 — W4: build the randomized convergence fuzzer (next step in the plan)
+> "let's move with the next step in the plan"
+- Explored the harness: reused the S-series multi-machine `machine`/`newWorld`/`newMachine` helpers, `executor.FaultHook` checkpoints, the in-memory `driveclient.Fake`, `reconcile.ValidateTransferStage`.
+- Wrote `internal/engine/fuzz_test.go` (`TestFuzzConvergence`): N machines, random op streams over a small shared namespace, interleaved syncs, one-shot crash injection at executor checkpoints, driven to a quiescent fixed point; oracle = §4.5 on every plan + convergence/idempotence + byte-identical machine/Drive trees + a scoped identity-stability "quiet-rename probe". Bounded default (8 seeds × 70 steps), `SYNCKEEPER_FUZZ_*` env to widen, `-short` to shrink.
+- **First run found R25** (seed 3, then seed 39 no-crash): a baseline file whose remote moved to `Q` with the local file already at `Q` (same rename made locally, or a crashed MoveLocal) → reconcile planned `download Q` + `upload Q` → §4.5 refused the whole plan every cycle → permanent wedge. Diagnosed at the reconcile level (pass 1's `!locOK` "move beats delete" vs pass 2's blind upload; `newRemoteAt` returns false because the id is a baseline id).
+- Minimized red-first: `internal/reconcile/coincident_move_test.go` (R25, clean + divergent-content cases); confirmed red without the fix (both trip the §4.5 property net), green with it.
+- Fixed `internal/reconcile/plan.go` pass 1: when the baseline file is absent at its old path, the remote moved it to a **non-baseline** `Q`, and the local file already sits at `Q`, record it there (same content) or conflict (diverged) — the "non-baseline path" guard prevents mis-firing mid-swap (R6, which regressed on the first attempt and drove the guard).
+- Made the fuzzer deterministic: pinned `nowFunc` (frozen during quiesce) removed wall-clock conflict-name churn that caused nondeterministic non-convergence; made the one-shot crash latch `atomic.Bool` after `-race` caught the closure race.
+- Verified: full `go build/vet/test` green; `-race` on reconcile/executor/engine green; 60-seed crash sweep + 30-seed no-crash sweep green.
+- Docs: testing.md (FZ1 + R25 rows), decisions.md (W4 + R25), spec.md §4.6 + §16.7 notes, plan.md (W4 done, risks), status.md (next = W3). MANUAL unchanged (R25 never a listed bug; W4 is internal).

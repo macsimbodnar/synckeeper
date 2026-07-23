@@ -84,6 +84,10 @@ func Plan(in Input) ([]Action, []Skip) {
 	// it has been routed to a conflict copy, so pass 2 must not also upload it
 	// as a plain new file.
 	backedUp := map[string]bool{}
+	// resolvedLocal marks a new local path pass 1 has already resolved as a
+	// baseline file that sits at the remote's post-move location — pass 2 must
+	// not upload it as a plain new file (R25).
+	resolvedLocal := map[string]bool{}
 
 	// Directory moves: two detectors, one representation (spec §4.3).
 	// Remote-driven: the remote reports the same folder id at a new path —
@@ -194,6 +198,39 @@ func Plan(in Input) ([]Action, []Skip) {
 			// judge and emit at its post-reparent path.
 			pathNow = rewriteLD(ra.path)
 			remoteMoved = pathNow != expected
+		}
+		// The local file may already sit at the remote's new path: the user
+		// made the same rename the remote reports, or a crashed MoveLocal left
+		// the disk and Drive ahead of this baseline row. The file is alive on
+		// both sides at pathNow, not locally deleted — resolve it there.
+		// Without this, pass 1 plans a Download to "restore" the remote file at
+		// pathNow while pass 2 uploads the "new" local file at the same path,
+		// and §4.5 refuses the whole plan every cycle: a permanent wedge (found
+		// by the W4 fuzzer, R25).
+		_, pathNowIsBase := in.Base[pathNow]
+		if !locOK && remoteMoved && !pathNowIsBase {
+			if ln, ok := in.Local[pathNow]; ok && !ln.IsDir {
+				resolvedLocal[pathNow] = true
+				if ln.MD5 == ra.item.MD5 {
+					// Same content on both sides: the move is done end to end,
+					// only the baseline path is stale. Record re-homes the row
+					// (UpsertItem is keyed on the file id, dropping the old path).
+					transfers = append(transfers, Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
+						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
+						LocalExists: true, LocalSize: ln.Size, LocalMtimeNS: ln.MtimeNS})
+				} else {
+					// Contents diverged at the shared destination: keep the
+					// local bytes as a conflict copy, let the remote win the
+					// canonical path.
+					cp := conflicts.Path(pathNow, in.Machine, in.Now)
+					moves = append(moves, Action{Type: ConflictBackup, RelPath: pathNow, NewRelPath: cp})
+					transfers = append(transfers,
+						Action{Type: Upload, RelPath: cp, ProtectedBy: pathNow},
+						Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
+							MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version, ProtectedBy: pathNow})
+				}
+				continue
+			}
 		}
 		localChanged := locOK && loc.MD5 != b.MD5
 		remoteContentChanged := remOK && ra.item.MD5 != b.DriveMD5
@@ -343,6 +380,9 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		if backedUp[p] {
 			continue // reclaimed by a move; already preserved as a conflict copy
+		}
+		if resolvedLocal[p] {
+			continue // pass 1 recorded it at the remote's post-move path (R25)
 		}
 		loc := in.Local[p]
 		target := rewrite(p)

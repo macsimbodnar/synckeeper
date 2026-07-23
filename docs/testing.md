@@ -145,11 +145,17 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 |---|---|---|
 | R24 | A tracked file **under** a shadowed folder (a duplicate or fold-colliding sibling won "first by id") is held harmless, never quarantined — the "a name collision never sends content to quarantine" guarantee extends to the whole shadowed subtree, not just the directly-colliding row (was: Snapshot skips the folder without walking it, so its descendants read as remote-deleted and were quarantined off disk) | passing (2026-07-21) — `TestR24DescendantOfShadowedFolderNotQuarantined` (engine, probe-gated/APFS: fold-equal sibling wins first-by-id, the child stays put, quarantine empty, both rows surfaced as skips), `TestExpandShadowedCoversSubtree` (engine unit: a shadowed folder id drags its tracked subtree into the harmless set) |
 
+### W4 — randomized convergence fuzzer (2026-07-23); found R25, landed red-first
+
+| ID | Case | Status |
+|---|---|---|
+| FZ1 | Seeded random-ops fuzzer, N machines + interleaved syncs + one-shot crashes at executor checkpoints. Oracle (all exact/non-flaky): **§4.5 structural invariant** on every plan; **eventual convergence + idempotence** (all machines reach a zero-action, zero-failure fixed point within a bound); **no silent divergence** (at the fixed point every machine's file/dir tree is byte-identical to every other's and to the reconstructed Drive tree); **identity stability, scoped** (a clean single-writer rename of an unmodified file is a MoveRemote preserving the Drive id with zero delete-class actions — the quiet-rename probe). Deterministic replay from seed (pinned clock + monotonic mtimes). Op menu covers the shipped-bug classes whose correct outcome is convergence (S4/C4/S7/A1/R7/R6/A4/C2-files); by-design non-convergent classes are covered by their own rows, not the oracle (decisions.md "W4") | passing (2026-07-23) — `TestFuzzConvergence` (`internal/engine/fuzz_test.go`); default bounded (8 seeds × 70 steps), `SYNCKEEPER_FUZZ_*` env widens it, `-short` shrinks it. Green + `-race` |
+| R25 | A baseline file whose remote moved to a new path, with the local file already at that new path (the same rename made locally, or a crashed MoveLocal left disk+Drive ahead of the baseline): recorded in place, no upload/download collision (was: pass 1 planned a Download to "restore" the remote file while pass 2 uploaded the "new" local file at the same path → §4.5 refused the whole plan every cycle → permanent wedge) | passing (2026-07-23) — reconcile: `TestR25CoincidentMoveRecordsInPlace` (single Record, id preserved), `TestR25CoincidentMoveDivergentContentConflicts` (diverged content → conflict copy + remote wins); found by FZ1, minimized red-first |
+
 ### Deferred acceptance
 
 | ID | Case | Status |
 |---|---|---|
-| FZ1 | Seeded random-ops fuzzer, N machines + crash points: convergence, no content loss, deterministic replay, **identity stability**, **§4.5 structural invariant** (oracle strengthened 2026-07-18) | todo — W4, now ahead of W3 |
 | W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | todo — W3 |
 
 ## Live smoke (any phase, manual)
