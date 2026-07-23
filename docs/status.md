@@ -2,7 +2,7 @@
 
 The single answer to "where are we?". Read this first; **rewrite it before ending any work session** (sections replaced in place — history lives in `git log` and [decisions.md](decisions.md), not here).
 
-**Updated:** 2026-07-23 — **W4 complete (fuzzer + R25); W3 engineering complete (W3.1–W3.5), pending only Max's 2 h soak.** fswatch interface extracted, FSEvents backend landed (first cgo), W1-scale acceptance passes at 50k, the periodic rebuild is now per-backend (FSEvents skips it), and the soak now runs against the production FSEvents backend (30 s/90 s smokes converge with clean `doctor`). **The one open item is the wall-clock 2 h soak gate — Max's release-ritual run** (`SYNCKEEPER_SOAK_SECONDS=7200 …`). **Next workstream: W5** (daemon-first polish). MANUAL's Known-bugs list is unchanged (one narrowed entry, fold-equal *folders*).
+**Updated:** 2026-07-23 — **W4 complete (fuzzer + R25); W3 engineering complete (W3.1–W3.5 code landed), open on its final gate.** fswatch interface extracted, FSEvents backend landed (first cgo), W1-scale acceptance passes at 50k, the periodic rebuild is now per-backend (FSEvents skips it), and the soak runs against the production FSEvents backend (30 s/90 s smokes converge with clean `doctor`). **Sequencing (Max, 2026-07-23): an adversarial check runs first; then the 2 h FSEvents soak as the LAST W3 step** — full run instructions are annotated at plan.md W3 item 5. W3 closes only when that soak passes. MANUAL's Known-bugs list is unchanged (one narrowed entry, fold-equal *folders*).
 
 ## Last completed
 
@@ -28,11 +28,15 @@ The 2026-07-18 session (gate + A1 collapse + guard fix + rounds 2–3 analysis +
 
 ## In progress
 
-**W3 — Watcher modularization + FSEvents: engineering complete (W3.1–W3.5), committed.** The only open item is Max's wall-clock **2 h soak gate** on FSEvents (`SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h`) — the code runs the soak against FSEvents and 30 s/90 s smokes converge; the 2 h run is the release ritual. Docs committed on master (**not pushed** — Max pushes).
+**W3 — Watcher modularization + FSEvents: engineering complete (W3.1–W3.5), committed; open on its final soak gate.** Docs committed on master (**not pushed** — Max pushes). No code pending.
 
 ## Next
 
-**W5 — Daemon-first polish** ([plan.md](plan.md) W5): (1) `init` offers `service install` at the end (daemon-first onboarding); (2) `account` gains the Google email via one `about.get` call (graceful offline); (3) persist-pause-across-restart — decide (currently in-memory by design; the spec documents it — revisit only if it annoys). Correctness is done (four adversarial rounds + the fuzzer) and the watcher is modular with FSEvents; W5 is user-facing convenience, lower-risk. Follow the same discipline: tests land with each change (testing.md rows), suite + `-race` green at every commit, MANUAL updated in the same commit for any user-visible change (W5.1/W5.2 both change `init`/`account` behavior — MANUAL §-commands must move with them).
+1. **Adversarial check (Max, first).** Max runs an adversarial pass — presumably over the recent W3/W4 work — before the long soak. Any defect it finds follows the standing discipline: **minimized red regression test → fix → testing.md row**, suite + `-race` green at every commit, MANUAL Known-bug entry if it ships unfixed. Fix red-first *before* the soak, not during it.
+
+2. **The 2 h FSEvents soak — the LAST W3 step.** Full run block (what to run, how, expected pass criteria, goal) is at **[plan.md](plan.md) W3 item 5**. In short: `SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h -v` on the macOS daily driver (exercises FSEvents); pass = `PASS` + "converged on N files" + clean `doctor`, no divergence. **W3 closes only when this passes.**
+
+**Then W5 — Daemon-first polish** ([plan.md](plan.md) W5): (1) `init` offers `service install` at the end; (2) `account` gains the Google email via one `about.get` call (graceful offline); (3) decide persist-pause-across-restart. Lower-risk, user-facing; same discipline (tests land with each change; MANUAL updated in the same commit for any user-visible change).
 
 Unscheduled, on the table from the W1.8/W1.9 close-outs: the gate's **directory arm** (case-only dir renames + dir fold-adopts + R7-for-dirs + tracked case-only renames — one family, decisions.md "W1.9.1"/"W1.8.8"); W4's convergence oracle deliberately excludes it, so it won't surface there until built. And **W6** (real multi-machine rollout) stays blocked on a second physical machine.
 

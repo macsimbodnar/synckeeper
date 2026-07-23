@@ -100,4 +100,9 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Smoked: 30 s soak → converged on 89 files, clean `doctor`; 90 s soak → converged on 220 files, clean `doctor` (both against FSEvents; the transient lstat ERRORs are chaos racing the scanner — retried, converged, as designed).
 - Docs: plan.md (W3.5 wired+smoked, 2 h gate = Max's), decisions.md ("W3.5"), spec §16.9, testing.md (soak row), status.md (W3 engineering done; next = W5). MANUAL unchanged.
 - **Handoff: the full 2 h acceptance gate is Max's release-ritual run:** `SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h` (runs against FSEvents on macOS). This closes the W3 engineering.
-- **Time annotation (requested):** started at **18:47 CEST**, a 2 h soak (7200 s chaos + ~2 s pause + up to 60 settle syncs + `doctor` on both machines) completes around **20:52 CEST** — check for the result in the **20:52–21:00 CEST** window. Pass = `--- PASS: TestSoak` with a "converged on N files" line and no `doctor` errors.
+
+### 2026-07-23 18:55 — defer the 2 h soak to be the last W3 step (after an adversarial check)
+> "I changed my mind. I don't want to run this test now. Remove it and stop it. … I will run first an adversarial check and I want to run this long test after that. Annotate as next and last step in W3 the long test — what to run, how to run, what we expect, the goal."
+- Confirmed nothing was running (the 2 h soak was never started; earlier background smokes all completed) — nothing to stop. Removed the "run now / check at 20:52" time annotation above.
+- plan.md W3.5: re-annotated the 2 h soak as the **explicit final W3 step**, to run **after Max's adversarial check**, with a full run block — command, how-to, expected pass criteria, and the goal.
+- status.md: Next is now the **adversarial check first, then the final 2 h soak** (W3 is not closed until it passes); W5 follows W3's close. No code change.
