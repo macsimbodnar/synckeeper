@@ -119,3 +119,48 @@ func TestFSEventsScaleNoFDExhaustion(t *testing.T) {
 		t.Fatal("no wake-up after a change in a 50k-file tree")
 	}
 }
+
+// A per-volume FSEvents stream does not survive its volume being unmounted and
+// remounted (e.g. a sync dir on an external drive), so refresh must detect it —
+// otherwise the daemon reports "watching" forever while only polling actually
+// covers the tree. refresh re-stats the root and reports it unwatchable when the
+// device id changed (remount) or the root vanished (unmount race); the loop's
+// failure latch then degrades to polling and the recovery path recreates the
+// stream on the current volume — parity with fsnotify's per-cycle re-walk, which
+// re-establishes watches after a remount. Detection is simulated through the
+// fseventsRootDev seam so the test needs no real mount/unmount.
+func TestFSEventsRefreshDetectsRemount(t *testing.T) {
+	root := t.TempDir()
+	b, _, err := newFSEventsBackend(context.Background(), root, func() []string { return nil }, func() {})
+	if err != nil {
+		t.Fatalf("newFSEventsBackend: %v", err)
+	}
+	t.Cleanup(func() { b.close() })
+	fb := b.(*fseventsBackend)
+
+	// A live stream on an unchanged volume: refresh reports nothing unwatchable.
+	if got := b.refresh(root); got != 0 {
+		t.Fatalf("refresh on a live stream = %d, want 0", got)
+	}
+
+	orig := fseventsRootDev
+	t.Cleanup(func() { fseventsRootDev = orig })
+
+	// The volume remounted under the stream: the device id changed.
+	fseventsRootDev = func(string) (uint64, bool) { return fb.rootDev + 1, true }
+	if got := b.refresh(root); got != 1 {
+		t.Fatalf("refresh after a device change = %d, want 1 (stale stream → latch → recreate)", got)
+	}
+
+	// Mid-unmount race: the root is not stattable at all.
+	fseventsRootDev = func(string) (uint64, bool) { return 0, false }
+	if got := b.refresh(root); got != 1 {
+		t.Fatalf("refresh with an unstattable root = %d, want 1", got)
+	}
+
+	// Back on the original volume (baseline restored): healthy again.
+	fseventsRootDev = orig
+	if got := b.refresh(root); got != 0 {
+		t.Fatalf("refresh once the volume is stable again = %d, want 0", got)
+	}
+}

@@ -61,9 +61,11 @@ import "C"
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"github.com/macsimbodnar/synckeeper/internal/names"
@@ -78,11 +80,30 @@ func init() {
 
 // fseventsBackend implements fsWatcher over the macOS FSEvents API.
 type fseventsBackend struct {
-	stream C.FSEventStreamRef
-	handle uintptr
-	root   string // symlink-resolved; event paths are filtered relative to it
-	ignore func() []string
-	wake   func()
+	stream    C.FSEventStreamRef
+	handle    uintptr
+	root      string // symlink-resolved; event paths are filtered relative to it
+	rootDev   uint64 // device id of root's volume at stream creation
+	rootDevOK bool   // whether rootDev was successfully captured
+	ignore    func() []string
+	wake      func()
+}
+
+// fseventsRootDev returns the device id of path's filesystem. A per-volume
+// FSEvents stream does not survive its volume being unmounted and remounted, and
+// a remount changes the device id — so refresh compares this each cycle to
+// detect a stale stream. A seam so tests can simulate a remount without a real
+// mount/unmount.
+var fseventsRootDev = func(path string) (uint64, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return uint64(st.Dev), true
 }
 
 // The FSEvents callback fires on a dispatch-queue thread and reaches Go by an
@@ -105,6 +126,7 @@ func newFSEventsBackend(_ context.Context, root string, ignore func() []string, 
 		root = r
 	}
 	b := &fseventsBackend{root: root, ignore: ignore, wake: wake}
+	b.rootDev, b.rootDevOK = fseventsRootDev(root)
 
 	fseventsMu.Lock()
 	fseventsNextID++
@@ -126,9 +148,33 @@ func newFSEventsBackend(_ context.Context, root string, ignore func() []string, 
 	return b, 0, nil
 }
 
-// refresh is a no-op: the recursive stream already covers root and every
-// directory created under it, so nothing can fail to be watched.
-func (b *fseventsBackend) refresh(string) int { return 0 }
+// refresh normally does nothing: the recursive stream already covers root and
+// every directory created under it, with zero per-file descriptors. Its one job
+// is liveness — a per-volume FSEvents stream dies when its volume is unmounted
+// and remounted (a sync dir on an external drive), and unlike fsnotify (which
+// re-walks and re-adds every cycle) this stream would otherwise sit dead while
+// the daemon still reports "watching". So refresh re-stats root and returns 1
+// (unwatchable) when the device id changed (remount) or root vanished (unmount
+// race); the loop's failure latch then degrades to polling and the recovery
+// path recreates the stream on the current volume. On an unchanged volume — the
+// normal case, and every internal-drive sync dir — it returns 0.
+func (b *fseventsBackend) refresh(root string) int {
+	dev, ok := fseventsRootDev(root)
+	if !ok {
+		// Root not stattable — e.g. its volume just unmounted. The engine's
+		// sync-dir guard usually catches this first (hard error → backoff); this
+		// covers the race and reports the stream unwatchable so the latch trips.
+		return 1
+	}
+	if !b.rootDevOK {
+		b.rootDev, b.rootDevOK = dev, true // establish a baseline missed at creation
+		return 0
+	}
+	if dev != b.rootDev {
+		return 1 // volume remounted under the stream: it is stale, force a recreate
+	}
+	return 0
+}
 
 // needsRebuild is false: a directory-tree stream holds no per-file descriptors,
 // so there is nothing to leak and no reason to tear it down and recreate it
