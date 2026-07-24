@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-24 — W5.5-S2 decided: keep full `drive` scope, logged as a known limitation to maybe revisit
+
+**Context:** the S2 investigation (below) showed no folder-scoped Drive scope exists and that the only narrowing (`drive.file`) would silently stop syncing files added to the Drive folder outside Synckeeper, breaking §4 and `--adopt`.
+
+**Decision (Max, 2026-07-24):** **keep the full `drive` scope for now.** `internal/auth/auth.go` `driveScope` stays `https://www.googleapis.com/auth/drive` — no code change. The broad-scope trade-off (a leaked token could reach the whole Drive, not just the sync folder) is **recorded as a user-facing known limitation** in MANUAL §9, framed as "may be revisited in a future version" rather than closed off. `drive.file` remains the documented future option (S2 investigation entry) if the product is ever narrowed to Synckeeper-managed content or publication forces escaping restricted-scope verification.
+
+**Consequences:** MANUAL §9 gains the "full-Drive access scope" limitation bullet (same-commit MANUAL rule); plan.md W5.5-S2 marked decided (keep full `drive`); status.md S2 line updated. S2 is now closed as a decision (the future `drive.file` path stays on record). No code/spec/behavior change.
+
 ## 2026-07-24 — W5.5-S2 investigation: no folder-scoped Drive token exists; `drive.file` is the only narrowing, at a real cost
 
 **Context:** S2 asked whether the OAuth access token can be granted to only the Synckeeper folder instead of full `drive`. Investigated against Google's current Drive API docs (developers.google.com scopes page + Cloud "minimum scopes" guidance).
