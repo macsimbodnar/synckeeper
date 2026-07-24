@@ -13,6 +13,23 @@ Format:
 
 ---
 
+## 2026-07-24 — W5.5-S2 investigation: no folder-scoped Drive token exists; `drive.file` is the only narrowing, at a real cost
+
+**Context:** S2 asked whether the OAuth access token can be granted to only the Synckeeper folder instead of full `drive`. Investigated against Google's current Drive API docs (developers.google.com scopes page + Cloud "minimum scopes" guidance).
+
+**Findings:**
+
+1. **No folder/path-scoped scope exists.** Every Drive OAuth scope is account-wide or per-file; none limits access to a folder or path. So the literal S2 goal ("only the specific folder") is **not achievable** with Google Drive OAuth.
+2. **The only narrowing option is `drive.file`** — a **non-sensitive**, per-file scope granting access to files the app *creates* or that the user opens with the app via the Google Picker. Everything else in the account stays invisible to the app.
+3. **Blast-radius win:** under `drive.file` a leaked/compromised token reaches only Synckeeper-created files, not all of Drive — a large reduction and a direct answer to the S2 concern.
+4. **Verification/distribution win:** full `drive` is a **Restricted** scope → restricted-scope OAuth verification **plus a third-party security assessment (CASA)** for any app that stores/transmits the data (Synckeeper downloads to disk → qualifies). `drive.file` is non-sensitive → **basic verification only, no assessment**, and it relaxes the unverified-app consent warning / ~100-user cap spec §9 flags. (Moot while private+unverified; matters on any publication path.)
+5. **Functional cost — why full `drive` was chosen, and a spec conflict:** under `drive.file`, **any file added to the Drive folder outside Synckeeper** (Drive web UI, mobile, another app, a share dropped in) is **invisible** — it won't download and `changes.list` won't report it. That **silently breaks §4's "base absent / remote new → download" row for externally-created remote files** — a real hole in bidirectional sync. Also: `init --adopt` of pre-existing/externally-created content breaks, and plain `init` can't find/reuse a UI-created "Synckeeper" folder (it would create its own app-owned one). Multi-machine sync of *app-created* content still works (same `client_id` + account keeps per-file access across machines).
+6. **Migration risk (needs an empirical test before any switch):** for an existing install (Max's folder was app-created by `synckeeper init`), downgrading the token to `drive.file` on re-auth *should* retain access to already-created files (per-file grants set at create time), but Google does not document retroactive behavior on a scope change — must be verified live (re-auth with `drive.file`; confirm the daemon still lists/reads the existing tracked files) before relying on it.
+
+**Recommendation (agent; decision is Max's):** **keep full `drive` for now.** Narrowing to `drive.file` is the only technical option and its blast-radius + verification wins are real, but it would silently stop syncing files added via the Drive web UI — contradicting the §4 bidirectional-sync contract — and would break `--adopt`, on which the W6 rollout is built. Record `drive.file` as a **future option**, to be taken up only if the product is deliberately narrowed to "Synckeeper-managed content only" or if restricted-scope verification becomes a real blocker for publication; gate any such switch on the finding-6 retroactivity test and a spec §4/§9 amendment. If Max prefers the tighter posture now, that is a legitimate scope decision — it just changes the product's promise and needs the spec updated to say external Drive-side additions don't sync.
+
+**Consequences:** S2 investigation complete; the keep-vs-narrow *decision* stays open for Max (no scope change made — `driveScope` in `internal/auth/auth.go` is unchanged at full `drive`). plan.md W5.5-S2 updated with the finding + recommendation; status.md S2 line updated. No code/spec/behavior change in this step. If Max later chooses `drive.file`, that lands under W5.5 with the retroactivity test, the `driveScope` change, and spec §4/§9 amendments, in its own entry.
+
 ## 2026-07-24 — W5.5 item calls: S1 accepted (debug creds publishable), S2 → investigate folder-scoped token, S3 deferred, S4 kept
 
 **Context:** with the W5.5 security gate defined, Max ruled on each of its four items (S1–S4).
