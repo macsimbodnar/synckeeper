@@ -13,6 +13,19 @@ Format:
 
 ---
 
+## 2026-07-24 — W5.5 item calls: S1 accepted (debug creds publishable), S2 → investigate folder-scoped token, S3 deferred, S4 kept
+
+**Context:** with the W5.5 security gate defined, Max ruled on each of its four items (S1–S4).
+
+**Decisions (Max, 2026-07-24):**
+
+- **S1 — embedded OAuth client secret: not an issue; accepted as publishable. `done`.** Max runs on **debug credentials** and considers them safe to publish, so the earlier "rotate + revoke in the console before publication" concern is **dropped** (and the parked rotate item with it). What he asked for instead — a review of *how the secret is distributed and where/how it is loaded* — was done (agent): **distribution** is the embedded `var ClientID`/`ClientSecret` in `internal/auth/credentials.go` (compiled into every binary, extractable, and overridable via `-ldflags -X`), plus an optional BYO `credentials.json` in the config dir that takes precedence, plus the ldflags build path. **Loading** funnels through one resolver, `resolveClient(configDir)` (BYO file → embedded), whose secret is consumed by exactly one caller, `oauthConfig`, to build the `oauth2.Config`; the secret then travels only to Google's token endpoint over HTTPS during code exchange / refresh. It is **never logged, never printed** (`account` uses `CredentialInfo`, which discards the secret and shows the client id only), and **never persisted** (only the resulting Google token is saved, to `token.json` `0600` — a different secret). No leak path beyond the intended binary/source embedding. S1 needs no code change.
+- **S2 — investigate a folder-scoped token instead of full `drive`.** Max kept the item but **redirected it from "record the blast radius" to "investigate whether access can be granted only to the specific folder"** (e.g. `drive.file`) rather than all of Drive. Preliminary finding (agent, to be confirmed under the item): Drive OAuth scopes are app-wide capabilities, not path-scoped, and `drive.file` only reaches app-created or Picker-opened files — so it cannot see/adopt a folder the user made in the Drive UI, which breaks plain `init`'s find-existing-folder and `init --adopt`. The item will confirm this and record the keep-full-`drive`-vs-narrow decision. Not decided yet.
+- **S3 — log hygiene: decision deferred to Max**, to be made when S3 is actually processed. No change now; the accept-vs-tighten (log `0600` / paths→Debug) call stays open and explicitly his.
+- **S4 — pre-publication secret-scan gate: kept as specified.** Max confirmed it makes sense; unchanged.
+
+**Consequences:** plan.md W5.5 items 1–4 rewritten to reflect the above (S1 marked reviewed/`done`, S2 reframed as a scope investigation, S3 marked deferred-to-Max, S4 unchanged); status.md W5.5 summary updated; the parked "rotate the OAuth client" line is now moot (S1 accepted) and folded away. No code/spec/behavior change — decisions + the S1 review only. S2's investigation and any code from S3/S4 land under W5.5 with their own entries.
+
 ## 2026-07-24 — Security review before rollout; add W5.5 (security & privacy hardening) as a gate before W6
 
 **Context:** Max asked, before the real multi-machine rollout (W6) puts personal files on real Drive across machines, for a security pass over the implementation targeting two threats: (1) leaking any key/secret, (2) exposing personal files to the internet. He asked for a new plan step before W6.
