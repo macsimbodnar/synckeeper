@@ -50,6 +50,13 @@ type ChangePage struct {
 	NewStartToken string // set on the last page; persist after processing
 }
 
+// About is the subset of Drive's "about" resource synckeeper surfaces: the
+// identity of the signed-in Google account.
+type About struct {
+	Email       string
+	DisplayName string
+}
+
 // Client is the engine's view of Drive. Implementations: the real API
 // wrapper (New) and the in-memory fake (NewFake).
 type Client interface {
@@ -73,6 +80,8 @@ type Client interface {
 	Mkdir(ctx context.Context, parentID, name string) (File, error)
 	// Move renames and/or reparents a file.
 	Move(ctx context.Context, fileID, newParentID, newName string) (File, error)
+	// About returns the identity of the signed-in Google account.
+	About(ctx context.Context) (About, error)
 }
 
 // FindOrCreateFolder returns the id of the first non-trashed folder with the

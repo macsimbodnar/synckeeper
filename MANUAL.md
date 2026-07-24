@@ -4,7 +4,7 @@ Everything you need to *use* Synckeeper. (For building, developing, or the desig
 
 Synckeeper keeps **one local folder** and **one Google Drive folder** identical, in both directions. Several machines can each sync against the same Drive folder, which acts as the hub and the durable copy. It is built to run as a background daemon and to **never silently lose or corrupt a file**: deletes go to Drive trash and a local quarantine (never permanent), conflicting edits produce a conflict copy (never last-writer-wins), and an edit always beats a delete.
 
-**This file is maintained under a repo rule: it is updated in the same commit as any change to commands, configuration, user-visible behavior, or the known-bug list.** Last updated: 2026-07-22.
+**This file is maintained under a repo rule: it is updated in the same commit as any change to commands, configuration, user-visible behavior, or the known-bug list.** Last updated: 2026-07-24.
 
 ---
 
@@ -14,13 +14,15 @@ Requires a binary built for your machine (see README — `make build`, Go 1.26+;
 
 ```sh
 synckeeper init          # opens your browser for Google sign-in, creates the
-                         # Drive folder ("Synckeeper") and the local one (~/Synckeeper)
-synckeeper service install   # run at login, keep syncing in the background
+                         # Drive folder ("Synckeeper") and the local one (~/Synckeeper),
+                         # then offers to keep syncing at login
 ```
+
+At the end, `init` asks **`Start Synckeeper automatically at login? [Y/n]`** — answer yes to install the login service so syncing runs in the background from now on. Pass `--service` or `--no-service` to skip the prompt (in a script or piped run there is no prompt; it just prints how to install later).
 
 That's it. Files you put in `~/Synckeeper` appear in Drive and on your other machines; changes made anywhere converge everywhere.
 
-If you'd rather not install the login service, run `synckeeper watch` in a terminal (same behavior, foreground), or call `synckeeper sync` manually whenever you want a one-shot sync.
+If you decline the offer, you can install the login service any time with `synckeeper service install`, run `synckeeper watch` in a terminal (same behavior, foreground), or call `synckeeper sync` manually whenever you want a one-shot sync.
 
 On first sign-in Google shows an **"unverified app" warning** — expected: the app ships with the author's unverified OAuth client. Continue past it, or use your own client (§5).
 
@@ -29,11 +31,11 @@ On first sign-in Google shows an **"unverified app" warning** — expected: the 
 On the second machine, after installing the binary:
 
 ```sh
-synckeeper init --adopt      # join the existing non-empty Drive folder
-synckeeper service install
+synckeeper init --adopt      # join the existing non-empty Drive folder,
+                             # then offers to keep syncing at login
 ```
 
-`--adopt` merges both sides as a union: local-only files upload, remote-only files download, identical files pair up, and files that differ on both sides become a conflict copy. **Adoption can never delete anything.** Plain `init` refuses a non-empty Drive folder and points you at `--adopt`.
+`init --adopt` makes the same login-service offer as a first-machine `init`. `--adopt` merges both sides as a union: local-only files upload, remote-only files download, identical files pair up, and files that differ on both sides become a conflict copy. **Adoption can never delete anything.** Plain `init` refuses a non-empty Drive folder and points you at `--adopt`.
 
 ## 3. Command reference
 
@@ -41,7 +43,7 @@ Global flag: `-v` / `--verbose` — debug logging.
 
 | Command | What it does |
 |---|---|
-| `init [--force] [--adopt]` | Authenticate, find or create the Drive folder, create local state. `--force` re-initializes over an existing state DB. `--adopt`: §2. |
+| `init [--force] [--adopt] [--service\|--no-service]` | Authenticate, find or create the Drive folder, create local state, then offer to install the login service (§1). `--force` re-initializes over an existing state DB. `--adopt`: §2. `--service`/`--no-service` install (or skip) the login service without prompting. |
 | `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Stop the daemon first — `login` takes the instance lock on purpose, because a running daemon holds the old token in memory. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon is running, the sync is delegated to it and awaited. `--dry-run` prints the plan without changing anything (needs the daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously in the foreground: local changes are picked up in under a second, remote changes within the poll interval. |
@@ -50,7 +52,7 @@ Global flag: `-v` / `--verbose` — debug logging.
 | `pause` / `resume` | Suspend / resume automatic syncing in the running daemon. An explicit `sync` still works while paused. Pause does not survive a daemon restart. |
 | `reload` | Re-read `config.toml` in the running daemon. Hot fields apply live; identity fields are reported as needing a restart (§4). |
 | `config` | Print the effective configuration and where it came from. |
-| `account` | Token status and which OAuth client is in use (embedded default or your own). |
+| `account` | Token status, which OAuth client is in use (embedded default or your own), and the signed-in Google account (email, from one `about.get`; shown when online, skipped gracefully when offline). |
 | `doctor [--repair]` | Cross-check state DB vs disk vs Drive. `--repair` rebuilds lost metadata and re-adopts matching files — it only ever *adds*; it never deletes, quarantines, or overwrites. |
 | `service install\|uninstall\|status` | Manage the login service that runs `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`). |
 

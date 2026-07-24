@@ -200,6 +200,26 @@ func (r *real) Mkdir(ctx context.Context, parentID, name string) (File, error) {
 	return fromAPI(f), nil
 }
 
+func (r *real) About(ctx context.Context) (About, error) {
+	var a *drive.About
+	err := withRetry(ctx, func() error {
+		var err error
+		// about.get requires an explicit fields mask or the API rejects it;
+		// we only ever want the signed-in user's identity.
+		a, err = r.svc.About.Get().Fields("user(emailAddress,displayName)").Context(ctx).Do()
+		return err
+	})
+	if err != nil {
+		return About{}, fmt.Errorf("get about: %w", err)
+	}
+	out := About{}
+	if a.User != nil {
+		out.Email = a.User.EmailAddress
+		out.DisplayName = a.User.DisplayName
+	}
+	return out, nil
+}
+
 func (r *real) Move(ctx context.Context, fileID, newParentID, newName string) (File, error) {
 	current, err := r.Get(ctx, fileID)
 	if err != nil {

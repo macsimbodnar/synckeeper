@@ -165,6 +165,13 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 
 | W1-scale | ≥50k files under the daemon: no fd exhaustion; watcher kill → polling → recovery | passing (2026-07-23, macOS) — `TestScale` + `TestFSEventsScaleNoFDExhaustion` (gated by `SYNCKEEPER_SCALE_FILES`, acceptance = 50000). At 50k: FSEvents 0/500 dirs unwatchable (no per-file fds); fsnotify 403/500 unwatchable at the 10240 fd limit → failure latch trips → polling (graceful; the kill→poll→recover loop is R15); a full sync of 50 500 actions converges, second cycle idle |
 
+### W5 — daemon-first polish (2026-07-24)
+
+| ID | Case | Status |
+|---|---|---|
+| W5.1 | `init` offers the login service at the end (daemon-first onboarding): precedence skip (`--no-service`) > force (`--service`) > interactive Y/n prompt > printed hint; the offer never fails init (a decline, a non-interactive run, or an install error only prints the manual hint) | passing (2026-07-24) — `TestOfferServiceInstall` (all seven precedence/answer paths: skip-beats-force, force installs, interactive y/Y/empty-default install, interactive n and non-interactive print the hint), `TestOfferServiceInstallFailureIsSoft` (install error surfaced + fallback hint, init unaffected), `TestPromptYesNo` (y/yes/n/no, empty→default both ways, garbage→default, EOF→default, whitespace-trimmed) |
+| W5.2 | `account` names the signed-in Google account from one `about.get`, and stays useful offline (a failed call prints an "unavailable" note, never fails the command); email-only and email+display-name both render, an email-less identity never prints a `<>` address | passing (2026-07-24) — `TestPrintAccountIdentity` (email+name, email-only, offline-graceful, no-email note), `TestPrintAccountIdentityNameWithoutEmail`; `driveclient.About(ctx)` added to the interface (real: `about.get` with the required `user(...)` fields mask; fake: settable `AboutInfo`), full suite + `-race` green |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

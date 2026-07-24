@@ -18,10 +18,11 @@ const FakeRootID = "root"
 // Fake is an in-memory Client used by tests: ids, versions, md5, trash,
 // and a changes feed. Page tokens are integer offsets into the change log.
 type Fake struct {
-	mu     sync.Mutex
-	nextID int
-	files  map[string]*fakeFile
-	log    []Change
+	mu        sync.Mutex
+	nextID    int
+	files     map[string]*fakeFile
+	log       []Change
+	AboutInfo About // returned by About; tests set it to simulate an account
 }
 
 type fakeFile struct {
@@ -218,4 +219,12 @@ func (f *Fake) Move(_ context.Context, fileID, newParentID, newName string) (Fil
 	file.Version++
 	f.logChange(file)
 	return file.File, nil
+}
+
+// AboutInfo is what About returns; tests set it to simulate a signed-in
+// account. The zero value (empty email) models Drive returning no identity.
+func (f *Fake) About(_ context.Context) (About, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.AboutInfo, nil
 }

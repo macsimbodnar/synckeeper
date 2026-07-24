@@ -19,11 +19,12 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/guards"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
+	"github.com/macsimbodnar/synckeeper/internal/service"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
 func newInitCmd() *cobra.Command {
-	var force, adopt bool
+	var force, adopt, installService, noService bool
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Authenticate, find or create the Drive folder, and create the state DB",
@@ -106,11 +107,29 @@ func newInitCmd() *cobra.Command {
 					return fmt.Errorf("%d of %d merge actions failed; re-run `synckeeper sync`", res.Failed, len(res.Plan))
 				}
 			}
+
+			// Daemon-first onboarding (spec §1): offer to install the login
+			// service so syncing continues in the background. The lock is still
+			// held here; the just-started daemon acquires it once init exits
+			// (launchd/systemd restart it), so no init flow is needed.
+			interactive := isTerminal(os.Stdin) && isTerminal(os.Stdout)
+			offerServiceInstall(os.Stdin, os.Stdout, installService, noService, interactive, func() (string, error) {
+				bin, err := os.Executable()
+				if err != nil {
+					return "", err
+				}
+				if bin, err = filepath.EvalSymlinks(bin); err != nil {
+					return "", err
+				}
+				return service.Install(bin)
+			})
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-initialize even if a state DB already exists")
 	cmd.Flags().BoolVar(&adopt, "adopt", false, "join an existing non-empty Drive folder by merging both sides (union; nothing deleted)")
+	cmd.Flags().BoolVar(&installService, "service", false, "install the login service after init without prompting")
+	cmd.Flags().BoolVar(&noService, "no-service", false, "skip the login-service offer (wins over --service)")
 	return cmd
 }
 
