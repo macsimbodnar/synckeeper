@@ -51,7 +51,7 @@ Global flag: `-v` / `--verbose` — debug logging.
 | `activity [-n N]` | The last N (default 20) synced items with direction (local→drive / drive→local / conflict). |
 | `pause` / `resume` | Suspend / resume automatic syncing in the running daemon. An explicit `sync` still works while paused. Pause does not survive a daemon restart. |
 | `reload` | Re-read `config.toml` in the running daemon. Hot fields apply live; identity fields are reported as needing a restart (§4). |
-| `config` | Print the effective configuration and where it came from. |
+| `config` | Print the effective configuration and the file it's read from. |
 | `account` | Token status, which OAuth client is in use (embedded default or your own), and the signed-in Google account (email, from one `about.get`; shown when online, skipped gracefully when offline). |
 | `doctor [--repair]` | Cross-check state DB vs disk vs Drive. `--repair` rebuilds lost metadata and re-adopts matching files — it only ever *adds*; it never deletes, quarantines, or overwrites. |
 | `service install\|uninstall\|status` | Manage the login service that runs `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`). |
@@ -104,7 +104,7 @@ Lookup order is `credentials.json` in the config dir → the embedded default. A
 - **Moves and renames are synced as moves**, for files and folders alike: the Drive file or folder keeps its identity and history, and a folder rename travels as one operation. (Renaming an *empty* folder is the one exception — with no contents as evidence it syncs as delete + recreate, which costs nothing but the folder's Drive-side id.)
 - **The mass-delete guard.** A plan that would delete more than 25% of your files (and more than 10) is held back: a one-shot `sync` stops and asks for `--confirm-deletes`; the daemon keeps syncing everything else and shows the block in `status` until you confirm with `synckeeper sync --confirm-deletes`. The daemon never confirms deletions by itself.
 - **Sanity guard.** If the sync folder is missing, unreadable, or suddenly empty while files are tracked (an unmounted disk looks exactly like "everything was deleted"), syncing stops with an error instead of propagating deletions.
-- **Not synced (skipped, shown in `status`):** Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, names invalid on your filesystem, and Drive same-name duplicates in one folder (first one wins, rest are skipped). Ignored patterns are skipped silently.
+- **Not synced (skipped — reported in `sync` output, not `status`):** Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, names invalid on your filesystem, and Drive same-name duplicates in one folder (first one wins, rest are skipped). Skips are listed by a one-shot `synckeeper sync` (and by `init --adopt`); the daemon does not surface them in `status`. Ignored patterns are skipped silently.
 - **Crash safe.** Interrupting the process at any point (crash, kill, power loss) is recovered on the next run; partial transfers are discarded and replanned.
 
 ## 7. Recovery

@@ -2,7 +2,7 @@
 
 Personal bidirectional sync between one local folder (`~/Synckeeper`) and one Google Drive folder. Written in Go, daemon-first. Multiple machines sync independently against Drive as the hub. Built for one user — but with strict durability guarantees: three-way reconcile against a local SQLite baseline, atomic writes, trash/quarantine instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable operations.
 
-**Status:** the build-out phases (0–7) are complete and retired; the tool is daily-usable on the primary platform. Current work is organized in workstreams (correctness fixes first) — see [docs/status.md](docs/status.md) for the live last/current/next pointer and [docs/plan.md](docs/plan.md) for the backlog.
+**Status:** the build-out phases (0–7) are complete and retired; the primary-platform workstreams (correctness, fuzzer, FSEvents watcher, daemon-first polish) are done and the tool is daily-usable there. Current work is the real multi-machine rollout and the Linux/Windows ports — see [docs/status.md](docs/status.md) for the live last/current/next pointer and [docs/plan.md](docs/plan.md) for the backlog.
 
 ## Documentation
 
@@ -30,8 +30,8 @@ make build-all    # legacy pure-Go (CGO_ENABLED=0) cross-compile matrix; exclude
 ## Use
 
 ```sh
-synckeeper init             # sign in with Google, create the Drive + local folders
-synckeeper service install  # keep syncing in the background from login
+synckeeper init   # sign in with Google, create the Drive + local folders,
+                  # and offer to keep syncing in the background at login
 ```
 
 Everything else a user needs — the **full command reference, configuration (including bring-your-own OAuth client), sync behavior, recovery, and known bugs** — lives in **[MANUAL.md](MANUAL.md)**, kept true at every commit under its own rule (CLAUDE.md doc map). This README deliberately carries no usage sections beyond the quick start above; don't re-grow them here.

@@ -14,7 +14,9 @@ var version = "dev"
 
 var verbose bool
 
-func main() {
+// newRootCmd builds the full command tree. main() and the surface-guard test
+// (surface_test.go) share it so the test walks the real CLI, not a copy.
+func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "synckeeper",
 		Short:         "Personal bidirectional sync between a local folder and Google Drive",
@@ -46,8 +48,11 @@ func main() {
 		newWatchCmd(),
 		newServiceCmd(),
 	)
+	return root
+}
 
-	if err := root.Execute(); err != nil {
+func main() {
+	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

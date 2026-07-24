@@ -136,6 +136,15 @@ Names hardening (reserved names, illegal chars, trailing dots/spaces, long paths
 
 Tray/menu-bar app as a separate binary on the control socket (mode icon, sync now, pause/resume, open folder/logs); then file-manager badges where the OS has an API. Strictly a client; no sync logic.
 
+### W10 — Daemon surfaces skips in `activity` (from the 2026-07-24 doc audit) — `not started`
+
+Skipped files (Google-native docs, symlinks, non-regular files, invalid names, Drive same-name duplicates) are reported **only** by a one-shot `synckeeper sync` / `init --adopt`; under the daemon they're invisible. This is the **D1** finding of the 2026-07-24 doc audit (decisions.md), which MANUAL §6 was corrected to state honestly in the meantime. **Decision (Max, 2026-07-24, interactive): schedule it, surfaced as per-skip `activity`-ring entries** — a new direction-neutral `skip` activity kind shown in both `status` recent-activity and `synckeeper activity` — chosen over a `status`-only count.
+
+- **Scope:** the engine already returns `Result.Skips`; the daemon's `cycleDone` (`internal/watch/status.go`) records action counts, guard block, and per-*executed-action* activity but **drops skips**. Thread skips into the activity recorder, add a `skip` kind + its `directionLabel`/render, and the testing row. No sync-behavior change — only a new observability surface (dated note spec §5 / §8.2).
+- **Open design detail to settle at build time (flagged, not pre-decided):** the `activity` ring is **capped**, and a permanent skip (e.g. a Google-native file that lives in the folder forever) recurs identically every cycle — re-logging it each cycle would evict real sync history from the ring, the same per-cycle noise spec §5 deliberately made ignore-matches silent to avoid. Likely resolution: emit a skip entry only when a rel_path's skip **first appears or its reason changes** (dedupe unchanged repeats) so the display stays per-skip without flooding the ring. Confirm the dedupe rule with Max when built.
+- **Priority:** self-contained, needs no hardware — doable on the primary platform anytime; below the platform ports (W7/W8) in importance.
+- **Acceptance:** a daemon cycle with a skipped Google-native file (or symlink) records a `skip` entry visible in `status` and `activity`; recurring identical skips don't flood the capped ring (per the settled dedupe rule). testing.md row lands with the code.
+
 ## Working process
 
 1. A workstream item is done when its code, tests, and doc updates land together; check items off here with a date **and rewrite [status.md](status.md)** (last/current/next) before ending the session.
