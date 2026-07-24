@@ -53,6 +53,11 @@ func newWatchCmd() *cobra.Command {
 				ControlSocket: filepath.Join(env.configDir, "control.sock"),
 				ConfigDir:     env.configDir,
 			}
+			// Tighten the launchd log (0644 by default) to owner-only: it
+			// records synced file names, and nobody else should read them.
+			if err := service.RestrictLogToOwner(); err != nil {
+				slog.Debug("could not restrict log file permissions", "err", err)
+			}
 			slog.Info("watching", "sync_dir", env.syncDir, "poll_interval", w.Poll)
 			return w.Run(ctx)
 		},

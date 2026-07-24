@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-24 — W5.5-S3 decided & done: daemon tightens its log file to `0600` (owner-only)
+
+**Context:** S3, the log-hygiene item Max deferred to himself. Live-checked: the launchd log `~/Library/Logs/synckeeper.log` is really `0644` (world-readable), and at the default level it records synced file **names** (`rel_path` on failures, orphan-temp/quarantine paths, sync-dir) — never contents. On a shared Mac another local user could read the file names.
+
+**Decision (Max, 2026-07-24):** the log should be **readable only by the owner**. Implemented (agent): the daemon calls `service.RestrictLogToOwner()` at `watch` startup, which `chmod`s `LogPath()` to `0600`. Chosen over the two alternatives discussed — demoting file paths to Debug (rejected: it also strips paths from the owner's own default logs, and the file would stay `0644`) and doing nothing (rejected: the exposure is real, just low-severity). Kept **targeted** (chmod only the log file) rather than a launchd `Umask`, which would also restrict every file the daemon creates, including synced downloads — an unwanted side effect. Best-effort and idempotent: an empty/missing path (foreground `watch`, or Linux journald / Windows with no file redirect) is a no-op; `LogPath()` returns "" off darwin.
+
+**Consequences:** `internal/service/service.go` gains `LogPath()` + `RestrictLogToOwner()` (+ testable `restrictToOwner`); `cmd/synckeeper/watch.go` calls it best-effort at startup (a failure logs at Debug, never blocks the daemon). Log *content* unchanged (paths still recorded). **Existing installs tighten on the next daemon restart** — the already-running daemon keeps its `0644` file until restarted (Max can `chmod 600` it now for immediate effect). MANUAL §3 service row notes the owner-only log; testing.md row W5.5-S3 (`TestRestrictToOwner`, `TestLogPathDarwin`); plan.md S3 closed. Suite + build/vet green. **S3 closed; W5.5 now has only S4 (secret-scan gate) open.**
+
 ## 2026-07-24 — W5.5-S2 decided: keep full `drive` scope, logged as a known limitation to maybe revisit
 
 **Context:** the S2 investigation (below) showed no folder-scoped Drive scope exists and that the only narrowing (`drive.file`) would silently stop syncing files added to the Drive folder outside Synckeeper, breaking §4 and `--adopt`.

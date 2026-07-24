@@ -218,3 +218,12 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Decision (Max):** keep the full `drive` scope for now — no code change (`driveScope` unchanged).
 - **MANUAL §9:** added a "Full-Drive access scope" known-limitation bullet — the app authorizes full `drive` (no folder-scoped scope exists; the narrower `drive.file` would silently stop syncing files added to Drive outside Synckeeper), the token can reach the whole Drive but lives at `token.json` `0600` and only goes to Google; "may be revisited in a future version".
 - **Docs:** decisions.md "W5.5-S2 decided"; plan.md W5.5-S2 marked **decided / S2 closed**; status.md S2 line → `done`; this worklog entry. No code/spec/behavior change. `drive.file` stays on record as the future option (retroactivity test + spec §4/§9 amendment if ever taken).
+
+### 2026-07-24 18:22 — S3 done: daemon tightens its log to 0600 (owner-only)
+> "let's take care of the s3 now" … (clarified) … "i think the solution should be that it should be readable only by the owner user. Is this possible?"
+- **Live-checked the exposure:** `~/Library/Logs/synckeeper.log` is really `-rw-r--r--` (0644, world-readable); at default level it logs synced file *names* (`rel_path` on failures, orphan-temp/quarantine paths, sync-dir), never contents. Config dir is `0700` but the log lives outside it.
+- **Decision (Max):** the log should be readable only by the owner → chmod to `0600`.
+- **Implemented:** `internal/service/service.go` gains `LogPath()` (darwin log path, "" elsewhere) + `RestrictLogToOwner()` + testable `restrictToOwner(path)` (chmod 0600; empty/missing = no-op). `cmd/synckeeper/watch.go` calls `service.RestrictLogToOwner()` best-effort at daemon startup (failure → Debug log, never blocks). Chose a targeted per-file chmod over a launchd `Umask` (which would also restrict synced downloads) and over demoting paths to Debug (which would strip the owner's own logs and leave the file 0644).
+- **Tests:** `internal/service/logperms_test.go` — `TestRestrictToOwner` (0644→0600, empty + missing no-op), `TestLogPathDarwin` (path ends in Library/Logs/synckeeper.log). `go build && go vet && go test ./...` all green.
+- **Note:** existing running daemon keeps its 0644 file until restarted; the chmod runs on next `watch` start (Max can `chmod 600` now for immediate effect).
+- **Docs:** MANUAL §3 service row (owner-only log); decisions.md "W5.5-S3 decided & done"; plan.md S3 closed; status.md (Updated + Next S3 → done); testing.md W5.5-S3; this entry. **S3 closed; W5.5 has only S4 left.**

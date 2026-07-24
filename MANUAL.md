@@ -54,7 +54,7 @@ Global flag: `-v` / `--verbose` — debug logging.
 | `config` | Print the effective configuration and the file it's read from. |
 | `account` | Token status, which OAuth client is in use (embedded default or your own), and the signed-in Google account (email, from one `about.get`; shown when online, skipped gracefully when offline). |
 | `doctor [--repair]` | Cross-check state DB vs disk vs Drive. `--repair` rebuilds lost metadata and re-adopts matching files — it only ever *adds*; it never deletes, quarantines, or overwrites. |
-| `service install\|uninstall\|status` | Manage the login service that runs `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`). |
+| `service install\|uninstall\|status` | Manage the login service that runs `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, which the daemon keeps owner-only at `0600` since it records synced file names). |
 
 ## 4. Configuration
 

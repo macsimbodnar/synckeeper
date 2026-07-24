@@ -81,6 +81,36 @@ func Status() (State, error) {
 	}
 }
 
+// LogPath returns the daemon's log file for the current platform, or "" when
+// logs don't go to a file we own (Linux → journald, Windows → no redirect).
+func LogPath() string {
+	if runtime.GOOS == "darwin" {
+		if _, log, err := launchdPaths(); err == nil {
+			return log
+		}
+	}
+	return ""
+}
+
+// RestrictLogToOwner tightens the daemon log file to 0600. launchd creates it
+// 0644 (world-readable), and the log records synced file *names* (never
+// contents) — so on a shared machine another local user could read them.
+// Best-effort and idempotent: a missing file (a foreground `watch`, or a
+// platform whose logs aren't file-based) is not an error.
+func RestrictLogToOwner() error {
+	return restrictToOwner(LogPath())
+}
+
+func restrictToOwner(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // --- macOS: launchd ------------------------------------------------------
 
 func launchdPlist(binPath, logPath string) string {
