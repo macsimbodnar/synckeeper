@@ -73,7 +73,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 |---|---|
 | 2-hour random-edit soak, both sides, no divergence | passing (2026-07-09, macOS, fsnotify) — converged on 10,858 files; late-stage fd exhaustion degraded to polling as designed and still converged (see decisions.md 2026-07-12) |
 | Cache-prune + polling-latch regression tests (`internal/remotedelta`, `internal/watch`) + 90 s soak re-run | passing (2026-07-12) |
-| Soak re-run on the FSEvents backend (W3.5) | **wired + smoked (2026-07-23, macOS)** — `TestSoak` now runs against the production backend (FSEvents on darwin+cgo); 30 s and 90 s smokes converged (89 / more files) with clean `doctor` on both machines. The full 2-hour gate (`SYNCKEEPER_SOAK_SECONDS=7200`) is the release ritual, run by Max |
+| Soak re-run on the FSEvents backend (W3.5) — the full 2 h gate | **passing (2026-07-24, macOS, FSEvents)** — `SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 10h -v`, code `aefe4fe`, two live FSEvents streams under 2 h of create/edit/rename/delete chaos on both sides: `--- PASS: TestSoak (7216.68s)`, **converged on 16,344 files** (both machines byte-identical), clean `doctor` on both, no divergence, no panic. The 3,488 transient `lstat … no such file` retries (chaos racing the scanner) are expected and converged as designed. Ran continuously for the full 2 h; earlier attempts under the harness task manager were killed mid-run by the machine's 1-min idle-sleep (not test failures) — the passing run was launched detached (reparented to launchd) so machine sleep suspends-and-resumes it instead of tearing it down. See decisions.md 2026-07-24. Closes W3 |
 
 ## Monitoring (phase 6, stage 1)
 
