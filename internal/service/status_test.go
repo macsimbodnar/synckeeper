@@ -5,13 +5,13 @@ import "testing"
 func TestLaunchdRunning(t *testing.T) {
 	loaded := `{
 	"StandardErrorPath" = "/Users/max/Library/Logs/synckeeper.log";
-	"Label" = "com.macsimbodnar.synckeeper";
+	"Label" = "com.mazerfaker.synckeeper";
 	"OnDemand" = false;
 	"PID" = 4821;
 	"Program" = "/usr/local/bin/synckeeper";
 }`
 	notRunning := `{
-	"Label" = "com.macsimbodnar.synckeeper";
+	"Label" = "com.mazerfaker.synckeeper";
 	"OnDemand" = false;
 	"LastExitStatus" = 0;
 }`

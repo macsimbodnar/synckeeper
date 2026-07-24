@@ -162,3 +162,9 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Item 3 (pause):** decision only, no code — kept in-memory (safe default; a pause surviving reboot is the worse surprise). spec §8.3 dated note.
 - Verified: `go build ./... && go vet ./...` clean; `go test -race ./...` all green (cmd, driveclient, and the full suite incl. engine/watch).
 - Docs: spec §8.3/§8.4/§15 dated; MANUAL §1/§2/§3 + date stamp; plan.md W5 items 1–3 done + header `done (2026-07-24)` + execution-order line; testing.md W5.1/W5.2 rows; decisions.md 2026-07-24 "W5"; status.md rewritten. **W5 closed — primary-platform planned work done; next W6 (needs a 2nd machine) / ports W7–W8.**
+
+### 2026-07-24 13:34 — rename the login-service label macsimbodnar → mazerfaker
+> "This needs to change "com.macsimbodnar.synckeeper" macsimbodnar should be replaced with mazerfaker"
+- `internal/service/service.go`: `const label` → `com.mazerfaker.synckeeper` (the launchd Label + plist filename derive from it). The Go **module** path `github.com/macsimbodnar/synckeeper` is unrelated (repo path) and left unchanged.
+- `internal/service/status_test.go`: both sample-`launchctl`-output fixtures updated to the new label (cosmetic — `launchdRunning` keys off the `PID` line, not the label). Build/vet/`go test ./internal/service/` green.
+- **Migration flagged to Max (not auto-run):** an OLD-label agent is installed *and running* (`~/Library/LaunchAgents/com.macsimbodnar.synckeeper.plist`, PID 15862). The renamed binary won't manage it (`service status` will read "not installed"); installing the new-label service alongside it would have two daemons contend the instance lock. Migration = `launchctl unload` + remove the old plist, then `service install` the new one — left for Max to authorize (stops his live daemon).

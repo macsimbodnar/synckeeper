@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const label = "com.macsimbodnar.synckeeper"
+const label = "com.mazerfaker.synckeeper"
 
 // Install writes the platform wrapper for `binPath watch` and activates it.
 // Returns a human-readable summary of what happened.
