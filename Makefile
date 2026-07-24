@@ -9,7 +9,7 @@ GOFLAGS = -trimpath -ldflags "$(LDFLAGS)"
 # pure-Go fsnotify backend stays the universal fallback: it is what compiles
 # whenever cgo is off, so cross-compilation (build-all) still works everywhere.
 
-.PHONY: build build-all test vet clean
+.PHONY: build build-all test vet clean audit
 
 # build is the supported target: native binary for the host platform (cgo on →
 # FSEvents on macOS).
@@ -34,3 +34,12 @@ vet:
 
 clean:
 	rm -rf dist
+
+# audit is the pre-publication secret-scan gate (spec §9 hygiene, plan W5.5-S4):
+# asserts no secret or sensitive runtime file (token.json, credentials.json,
+# client_secret_*.json, *.db) leaked into the git-tracked tree, and that
+# .gitignore still covers them. Self-contained (no external tool); the one
+# intentional embedded client secret is allowlisted. Also runs inside `make
+# test`, so this target is just the focused, explicit invocation.
+audit:
+	go test ./internal/audit/ -count=1 -v

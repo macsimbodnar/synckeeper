@@ -45,7 +45,8 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 ## Commands
 
 ```sh
-make test                              # full offline suite (in-memory Drive fake)
+make test                              # full offline suite (in-memory Drive fake; includes the secret-scan gate)
+make audit                             # pre-publication secret-scan gate on its own (internal/audit)
 SYNCKEEPER_LIVE_TEST=1 go test ./...   # live smoke vs a throwaway Drive folder
 SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h -v  # -v: pass criteria read the "converged on N files" line
 SYNCKEEPER_SCALE_FILES=50000 go test ./internal/watch/ -run 'TestScale|TestFSEventsScale' -timeout 20m  # W1-scale acceptance

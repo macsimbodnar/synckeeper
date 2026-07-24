@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-24 — W5.5-S4 done, W5.5 closed: self-contained pre-publication secret-scan gate
+
+**Context:** S4 — a repeatable check, runnable before the repo is ever made public, that no secret or sensitive runtime file has leaked into the tracked tree.
+
+**Decision (agent-built, Max approved the item):** implemented as a **self-contained Go gate** (`internal/audit`, exposed as `make audit`) rather than shelling out to gitleaks/trufflehog. Rationale: no external-tool dependency (matches the pure-Go preference), it runs inside `go test ./...` so drift is caught **continuously** rather than only at release, and it is **allowlist-aware** — gitleaks would false-fail on the intentional embedded client secret in `internal/auth/credentials.go` (accepted publishable, S1), whereas this gate allowlists exactly that file (plus the audit package's own source, which holds the patterns/fixtures). Checks: (A) no `token.json`/`credentials.json`/`client_secret_*.json`/`*.db` is git-tracked; (B) `.gitignore` still lists those patterns; (C) tracked text files contain no secret signature (Google OAuth `GOCSPX-`, Google API key `AIza…`, AWS `AKIA…`, Slack `xox[baprs]-…`, PEM `BEGIN … PRIVATE KEY`). The detector is proven live by `TestScanBytesDetects` (a concatenation-assembled fake secret is caught) so the gate is not vacuously green. gitleaks/trufflehog remain available to run manually as a heavier belt-and-braces pass, but are not wired in (they'd need a config allowlisting credentials.go).
+
+**Consequences:** new `internal/audit` package + `make audit` target + README/CLAUDE.md command note; testing.md row W5.5-S4; plan.md S4 `done` and **W5.5 header `done (2026-07-24)`**. `go build && go vet && go test ./...` green (the gate runs as part of the suite). **W5.5 is closed** — all four items done: S1 (secret reviewed, accepted), S2 (keep full `drive`, MANUAL §9 limitation), S3 (log `0600`), S4 (secret-scan gate). The security gate before W6 is satisfied; **next actionable non-hardware item is W10** (daemon surfaces skips), with W6/W7/W8 still hardware-blocked.
+
 ## 2026-07-24 — W5.5-S3 decided & done: daemon tightens its log file to `0600` (owner-only)
 
 **Context:** S3, the log-hygiene item Max deferred to himself. Live-checked: the launchd log `~/Library/Logs/synckeeper.log` is really `0644` (world-readable), and at the default level it records synced file **names** (`rel_path` on failures, orphan-temp/quarantine paths, sync-dir) — never contents. On a shared Mac another local user could read the file names.

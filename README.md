@@ -42,6 +42,7 @@ Everything else a user needs — the **full command reference, configuration (in
 make test                             # go test ./... — all offline, uses in-memory Drive fake
 SYNCKEEPER_LIVE_TEST=1 go test ./...  # additionally runs live smoke tests against a throwaway Drive folder
 SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h   # 2-hour chaos soak
+make audit                            # pre-publication secret-scan gate (also runs inside `make test`)
 ```
 
 ---
