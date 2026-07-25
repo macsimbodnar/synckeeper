@@ -50,7 +50,9 @@ The 2026-07-18 session (gate + A1 collapse + guard fix + rounds 2–3 analysis +
 
 ## Next
 
-**W7 (Linux) is the active workstream**, on real hardware for the first time. Order inside it: **L6 → L1 → L2 → L5 → L3 → L4 → L8 (gates) → L7 (docs)** — L1/L2/L5/L6 change what `init` asks and what `service install` writes, so they land before the service is (re)installed; docs come last because doc claims are claims about *validated* code.
+**Order (Max, 2026-07-25): W13 → W12 → W7.** **W13 is next** — remote deletions move to the OS trash instead of the private quarantine, on **both macOS and Linux**, trashing the highest fully-deleted directory so one folder makes one bin entry (plan.md W13, items T1–T6; decisions.md "Remote deletions go to the OS trash"). The agent recommended W12 first and Max chose W13; **W12 stays open** right behind it with MANUAL §8 carrying its user-facing entry. Then the remaining W7 Linux items.
+
+**W7 (Linux) was the active workstream**, on real hardware for the first time. Order inside it: **L6 → L1 → L2 → L5 → L3 → L4 → L8 (gates) → L7 (docs)** — L1/L2/L5/L6 change what `init` asks and what `service install` writes, so they land before the service is (re)installed; docs come last because doc claims are claims about *validated* code.
 
 1. **W7 — Linux port** ([plan.md](plan.md) W7): items L1–L8, all specified with their decisions baked in. Nothing in L1–L6 blocks Max's rollout; L8's soak wants the box unattended (run **detached** + `systemd-inhibit --what=sleep`, the Linux analogue of the macOS idle-sleep lesson, decisions.md 2026-07-24).
 2. **W6 — Real multi-machine rollout** ([plan.md](plan.md) W6): **unblocked — Max performs it himself** on this Linux box (binary → creds → machine name → `login` → `init --adopt` → **`service install` last**; then a day under `watch`, clean `doctor` on both, reboot check). No agent task under W6.
