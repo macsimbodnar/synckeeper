@@ -13,6 +13,22 @@ Format:
 
 ---
 
+## 2026-07-25 — W7 opened on real Linux hardware; four platform calls; W6 is Max's to run
+
+**Context:** Max moved to his Linux machine (`pop-os`, Pop!_OS 24.04 LTS, systemd 255, COSMIC/Wayland, ext4, go 1.26.5) while the Mac keeps syncing. That box is simultaneously **W6's second machine** and **W7's port target**, so the two converge. An agent scanned the docs and surveyed the machine: the offline suite is already green on linux/amd64, so the port is hardware validation plus a short list of platform items found by reading the port-relevant code there (plan.md W7 L1–L8).
+
+**Decisions (Max, 2026-07-25; agent-proposed options/analysis):**
+
+1. **Binary path `~/.local/bin/synckeeper`** — not `dist/`, because `ExecStart` is baked into the systemd unit at install time and a rebuilt/moved binary would silently break the unit.
+2. **Machine name: always prompt during `init`**, pre-filled with the sanitized OS hostname, rather than the silent hostname → `unknown_machine` fallback in `config.Default()`. Non-interactive runs take the default; `--machine-name` skips the prompt (a new flag → the DOC1 guard forces manifest + MANUAL §3 + spec §15 in the same commit). Rationale: the field names conflict copies on every other machine, so it deserves to be seen once, and a machine with no usable hostname must never sync as `unknown_machine` without the user knowing. (W7-L1.)
+3. **systemd lingering: no.** Synckeeper on Linux syncs **while the user is logged in**; `service install` neither enables linger nor offers it. `loginctl enable-linger` is named in MANUAL for anyone who wants otherwise. Accepted asymmetry with macOS launchd, which runs whenever the machine is on. (W7-L5.)
+4. **Linux daemon logs go to an owner-only file, not journald.** `LogPath()` → `$XDG_STATE_HOME/synckeeper/synckeeper.log`; the unit appends stdout/stderr there; `RestrictLogToOwner` (already wired into `watch` startup) chmods it `0600`. Rationale: parity with W5.5-S3 — the log records synced file *names*, and the user journal is readable by root and `adm`/`systemd-journal` members; as a bonus `info`/`status` show a real log path on every platform. **Consequence accepted:** journald's rotation no longer applies, so log growth becomes ours on both platforms (the launchd log is already unbounded) — a size cap is flagged as L2b, to settle when L2 is built. (W7-L2.)
+5. **W6's rollout and validation are Max's** — adopt on the Linux box, a day under `watch`, clean `doctor` on both machines, reboot check. No agent task sits under W6; agents own W7's code items and gates.
+
+**Also found while preparing the rollout (now W7-L6):** `config.Dir()` applies `0700` only when it creates the directory, while MANUAL §5 instructs users to place `credentials.json` there *before* first run — so a hand-created config dir keeps the user's umask (observed on this box: `0775` dir, `0664` credentials = a world-readable OAuth client secret), and `credentials.json` is never permission-checked, unlike `token.json`. Fix planned as a **warn**, not a refusal: it is the user's own file, and refusing would block onboarding at the worst moment. Not Linux-specific.
+
+**Consequences:** plan.md W6 (unblocked, Max-performed) + W7 (`in progress`, items L1–L8 with the order); status.md Next. No code, spec, or product-behavior change in this entry — MANUAL/README platform claims stay untouched until the L8 gates validate them (the "doc claims are claims about code" rule).
+
 ## 2026-07-25 — REVERSED W5.5-S1: remove the embedded OAuth credentials, require `credentials.json`, scrub git history
 
 **Context:** the S1 decision (2026-07-24) accepted the embedded client id/secret as publishable (debug credentials). On the first `git push`, **GitHub push protection blocked it** — the client id + secret were flagged in `internal/auth/credentials.go` (HEAD) and in two history commits (`d7b485f`, `49c5f7f`), including a committed `client_secret_*.json`. Max reconsidered and reversed the decision.
