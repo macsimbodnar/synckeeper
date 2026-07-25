@@ -43,7 +43,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 
 | Command | What it does |
 |---|---|
-| `init [--force] [--adopt] [--service\|--no-service]` | Authenticate, find/create the Drive folder, create local state, then offer the login service (§1). `--force`: re-init over an existing state DB. `--adopt`: §2. `--service`/`--no-service`: install/skip the login service without prompting. |
+| `init [--force] [--adopt] [--service\|--no-service]` | Authenticate, find/create the Drive folder, create local state, then offer the login service (§1). Takes the instance lock — stop the login service first if it's running (§7). `--force`: re-init over an existing state DB. `--adopt`: §2. `--service`/`--no-service`: install/skip the login service without prompting. |
 | `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Stop the daemon first — `login` takes the instance lock, because a running daemon holds the old token in memory. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon runs, delegated to it and awaited. `--dry-run`: print the plan, change nothing (needs daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously, foreground: local changes picked up under a second, remote within the poll interval. |
@@ -93,7 +93,7 @@ Synckeeper ships with **no credentials** — you supply your own Google Cloud "D
 cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeeper/credentials.json"
 ```
 
-Then run `synckeeper init` (first time) or `synckeeper login` (re-point an existing install). Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
+Then run `synckeeper init` (first time — it signs in and offers the login service) or `synckeeper login` (re-point an existing install). **Don't `service install` before signing in** — the service runs `watch`, which can't sign in by itself, so it will just crash-loop until you've authenticated. To (re-)authenticate later, the daemon must be stopped first: `synckeeper service uninstall`, sign in, then reinstall (§7). Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
 
 ## 6. How syncing behaves
 
@@ -111,6 +111,8 @@ Then run `synckeeper init` (first time) or `synckeeper login` (re-point an exist
 | Problem | Fix |
 |---|---|
 | Daemon logs auth failures / token expired or revoked | Stop the daemon → `synckeeper login` → restart it. |
+| `login`/`init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run the `login`/`init`, then reinstall the service. |
+| Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). The service runs `watch`, which can't sign in by itself: if you've never signed in, `synckeeper service uninstall` → `synckeeper init` → reinstall. |
 | State DB lost or corrupted | `synckeeper doctor --repair` — rebuilds metadata and re-adopts matching files; next `sync` re-uploads/downloads the rest. Never deletes. |
 | Need a deleted file back | Check the quarantine folder (`<config dir>/quarantine/<date>/…`) and Drive's trash. |
 | Something looks off | `synckeeper status -v`, then `synckeeper doctor` for a full cross-check. |

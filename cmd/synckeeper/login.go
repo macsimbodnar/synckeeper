@@ -31,10 +31,12 @@ func newLoginCmd() *cobra.Command {
 			// Holding the lock forces the daemon to be stopped first, which is
 			// required anyway: a running daemon keeps the old token in memory
 			// and won't use the new one until it restarts.
+			// The lock forces the daemon stopped, which login needs anyway: a
+			// running daemon holds the old token in memory. The lock error is
+			// already actionable (guards).
 			lock, err := guards.AcquireInstanceLock(configDir)
 			if err != nil {
-				return fmt.Errorf("another instance holds the lock — stop the watch daemon first "+
-					"(Ctrl-C its terminal, or `synckeeper service uninstall`), then re-run `synckeeper login`: %w", err)
+				return err
 			}
 			defer lock.Unlock()
 

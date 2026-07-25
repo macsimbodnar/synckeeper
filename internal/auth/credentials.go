@@ -72,11 +72,11 @@ func credentialsHelp(configDir string) string {
 		"How to get them (one time):\n" +
 		"  1. Open the Google Cloud console:  https://console.cloud.google.com/\n" +
 		"  2. Create a project and enable the Google Drive API.\n" +
-		"  3. Create an OAuth client of type \"Desktop app\" and download its JSON.\n" +
+		"  3. Create an OAuth client of type \"Desktop app\" and download its JSON\n" +
+		"     (the OAuth client JSON — not an API key or a service-account key).\n" +
 		"     Guide: https://developers.google.com/workspace/guides/create-credentials#oauth-client-id\n" +
 		"  4. Save that downloaded file as:\n" +
-		"       " + path + "\n\n" +
-		"Then run `synckeeper login` (or `synckeeper init`)."
+		"       " + path
 }
 
 // CredentialInfo reports which OAuth client `account` would use and its (non-

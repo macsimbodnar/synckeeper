@@ -131,6 +131,9 @@ func reportServiceStartup(w io.Writer, status func() (service.State, error), cre
 	fmt.Fprintln(w, "\nInstalled, but the service is not running.")
 	if cerr := credOK(); cerr != nil {
 		fmt.Fprintf(w, "\nLikely cause — %v\n", cerr)
+		fmt.Fprintln(w, "\nThe service runs `synckeeper watch`, which can't sign in by itself. "+
+			"Stop it (`synckeeper service uninstall`), then run `synckeeper init` (first-time setup) "+
+			"or `synckeeper login` (already set up), and reinstall.")
 		return
 	}
 	if lp := service.LogPath(); lp != "" {

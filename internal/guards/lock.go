@@ -23,7 +23,9 @@ func AcquireInstanceLock(configDir string) (*InstanceLock, error) {
 		return nil, fmt.Errorf("acquire instance lock: %w", err)
 	}
 	if !ok {
-		return nil, fmt.Errorf("another synckeeper instance is running (lock at %s)", fl.Path())
+		return nil, fmt.Errorf("another synckeeper instance is running (lock at %s) — "+
+			"if the login service is running, stop it first with `synckeeper service uninstall` "+
+			"(or Ctrl-C a `synckeeper watch` terminal), then retry", fl.Path())
 	}
 	return &InstanceLock{fl: fl}, nil
 }
