@@ -13,6 +13,26 @@ Format:
 
 ---
 
+## 2026-07-25 — Linux file watching stays conventional (per-directory inotify); the bounded-watcher proposal is rejected
+
+**Context:** Max asked how file watching works on Linux, whether it was implemented, and — given a goal of "lightweight, no risk of growing infinitely with open files, stable and lean, even if it needs more development" — for a researched proposal measured against Dropbox.
+
+**Findings (agent, researched + verified in code):**
+- **Linux watching is already implemented and is the most-tested path in the repo.** fsnotify v1.10.1 on Linux **is** inotify (`unix.InotifyInit1` + `unix.InotifyAddWatch`, pure Go over `x/sys/unix`) — the same syscalls a hand-written backend would issue, so there is nothing for cgo or a second backend to gain. macOS needed FSEvents only because fsnotify's darwin backend is **kqueue**, which holds one descriptor per *file* (403/500 dirs unwatchable at 50k, W3.3).
+- **The feared failure mode cannot occur on inotify:** watches are on **directories**, not files — one instance fd total, plus 1080 bytes of kernel memory per watched directory. Growth is bounded by directory count, never by file count or open files.
+- **Industry practice:** Dropbox uses one inotify watch per folder (subfolders counted separately); over the per-user limit it posts "Unable to monitor entire Dropbox folder hierarchy" and support's remedy is `fs.inotify.max_user_watches=100000`. Syncthing behaves the same. Neither bounds its own consumption. Limits are per *user*, shared across all apps; exceeding them gives `ENOSPC`. Measured on `pop-os`: 127469 watches available (kernel default), 1640 already held by other apps, 83/1024 instances used.
+- **fanotify is not an option:** unprivileged since Linux 5.13, but without `CAP_SYS_ADMIN` it cannot use `FAN_MARK_MOUNT`/`FAN_MARK_FILESYSTEM` and gets no `FAN_UNLIMITED_MARKS` — per-inode marks with their own budget, i.e. no advantage over inotify at more cost.
+
+**Proposal made and rejected:** a "bounded watcher" — a declared `watch_max_dirs` budget with breadth-first coverage and an honest partial-watching mode in `status` (P1), plus an incremental watch registry diffed from the directory set `scanner.Scan` already returns, replacing the per-cycle second walk and blind re-`Add` (P2).
+
+**Decision (Max, 2026-07-25):** **stay with what Dropbox and the others do** — one inotify watch per directory for the whole tree, no budget, no partial-watch mode, no config knob, and no registry refactor. Familiar, predictable behavior beats a bespoke mechanism.
+
+**Consequences:**
+- W7 keeps only the non-deviating items: **L3** (no periodic rebuild on inotify — nothing leaks, so the teardown is waste), **L4a** (name `fs.inotify.max_user_watches` + its value + the `sysctl` remedy when the latch trips; MANUAL §7 row), **L4b** (`ErrEventOverflow` wakes the loop instead of only logging — an overflow means dropped events).
+- **Accepted trade:** on a very large tree our watch count scales with directory count and competes with other apps for the shared per-user budget; the documented remedy is the sysctl line, exactly as Dropbox advises. Our fallback is still better than theirs — the failure latch degrades to polling, keeps syncing, and restores watching automatically (spec §10), where they lose real-time detection until the user intervenes.
+- `refresh()` keeps its per-cycle full walk + blind `Add` (idempotent; the kernel returns the existing watch descriptor). At personal scale this is negligible, and it is not on the correctness path.
+- **Do not re-derive this:** fanotify, fsnotify's recursive `Add("dir/...")` (cannot prune ignored subtrees, so `node_modules` would consume watches *and* wake the daemon), a cgo Linux backend, per-file watches, and the bounded-watcher design above are all considered and closed.
+
 ## 2026-07-25 — W7 opened on real Linux hardware; four platform calls; W6 is Max's to run
 
 **Context:** Max moved to his Linux machine (`pop-os`, Pop!_OS 24.04 LTS, systemd 255, COSMIC/Wayland, ext4, go 1.26.5) while the Mac keeps syncing. That box is simultaneously **W6's second machine** and **W7's port target**, so the two converge. An agent scanned the docs and surveyed the machine: the offline suite is already green on linux/amd64, so the port is hardware validation plus a short list of platform items found by reading the port-relevant code there (plan.md W7 L1–L8).
