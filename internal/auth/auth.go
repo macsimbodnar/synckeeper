@@ -31,7 +31,7 @@ var (
 // ErrNoCredentials is returned when neither a credentials.json nor the
 // embedded client id/secret provide OAuth client credentials.
 var ErrNoCredentials = errors.New(
-	"no OAuth client credentials: drop a credentials.json in the config dir, fill internal/auth/credentials.go, or build with -ldflags -X overrides")
+	"no OAuth client credentials: create a Google Cloud \"Desktop app\" OAuth client and place its downloaded JSON as credentials.json in the config dir (see MANUAL §5), or inject one at build with -ldflags -X")
 
 // oauthConfig builds the OAuth config from the resolved client (a BYO
 // credentials.json in configDir wins over the embedded default; spec §9).

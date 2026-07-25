@@ -54,11 +54,11 @@ var secretRules = []struct {
 }
 
 // secretScanAllowlist names tracked files permitted to contain a secret match:
-// the intentional embedded OAuth client secret, and this package's own source
-// (which holds the detection patterns and test fixtures). A match anywhere
-// else fails the gate.
+// only this package's own source (which holds the detection patterns and test
+// fixtures). No embedded credentials exist anymore — credentials.go is no
+// longer exempt, so a secret reappearing there fails the gate too (spec §9).
+// A match anywhere else fails the gate.
 var secretScanAllowlist = map[string]bool{
-	"internal/auth/credentials.go": true,
 	"internal/audit/audit.go":      true,
 	"internal/audit/audit_test.go": true,
 }

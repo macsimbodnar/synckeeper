@@ -13,6 +13,20 @@ Format:
 
 ---
 
+## 2026-07-25 — REVERSED W5.5-S1: remove the embedded OAuth credentials, require `credentials.json`, scrub git history
+
+**Context:** the S1 decision (2026-07-24) accepted the embedded client id/secret as publishable (debug credentials). On the first `git push`, **GitHub push protection blocked it** — the client id + secret were flagged in `internal/auth/credentials.go` (HEAD) and in two history commits (`d7b485f`, `49c5f7f`), including a committed `client_secret_*.json`. Max reconsidered and reversed the decision.
+
+**Decision (Max, 2026-07-25):** the tool **requires a user-supplied `credentials.json`**; **no credentials are embedded**, and the secret is removed from all git history.
+
+- **Code:** `internal/auth/credentials.go` `ClientID`/`ClientSecret` are now empty `var`s (no secret in source; still `-ldflags -X`-injectable for a private build). `resolveClient` returns `ErrNoCredentials` when there's no `credentials.json` and no injected client (lookup: `credentials.json` → `-ldflags` → error). `CredentialEmbedded` label → "build-time embedded (-ldflags)". The `internal/audit` allowlist no longer exempts `credentials.go`, so a secret reappearing there fails `make audit` too. Tests: `TestResolveClientRequiresCredentials`, `TestResolveClientEmbeddedViaLdflags` (both save/restore the vars so they're correct with or without `-ldflags`).
+- **History scrub:** the client id + secret strings and the committed `client_secret_*.json` are removed from **every** commit via `git filter-repo` (content preserved, blobs patched, file dropped) — history "patched", commit metadata kept, hashes necessarily change. **Max force-pushes** (agents never push).
+- **Consequences to the product model:** no shared per-project quota and no shared ~100-user cap — each user uses their own client with their own quota/verification. First-time setup now requires the file *before* `synckeeper init` (MANUAL §1/§5). Was zero-setup; the reversal trades that for not shipping a secret, which the publication path forced.
+
+**Rotation note:** the push was *rejected*, so the secret never reached GitHub; the repo is private. Rotation/revocation in the Google console is therefore optional hygiene, not urgent — but recommended since the secret lived in local history and the threat model changed. Max's call.
+
+**Supersedes:** the 2026-07-24 "W5.5 item calls" S1 acceptance and the 2026-07-17 embedded-default credential model (spec §9). The old CLAUDE.md rule "keep credentials embedded; never remove them" is void — replaced by "no embedded credentials; never re-add them."
+
 ## 2026-07-25 — W11 done: `info` command implemented (static paths/config/identity/version)
 
 **Context:** implement W11 (planned below).

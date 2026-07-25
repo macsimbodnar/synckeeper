@@ -10,7 +10,7 @@ Keeps **one local folder** ↔ **one Google Drive folder** identical, both direc
 
 ## 1. Install and first sync
 
-Needs a binary for your machine (README — `make build`, Go 1.26+; macOS primary today).
+Needs a binary for your machine (README — `make build`, Go 1.26+; macOS primary today) **and your own Google OAuth `credentials.json`** in the config dir — set that up **first** (§5).
 
 ```sh
 synckeeper init          # opens your browser for Google sign-in, creates the
@@ -24,7 +24,7 @@ Done. Files in `~/Synckeeper` appear in Drive and on your other machines; change
 
 Declined? Install later with `synckeeper service install`, or run `synckeeper watch` (foreground, same behavior), or `synckeeper sync` for a one-shot.
 
-First sign-in shows Google's **"unverified app" warning** — expected (author's unverified OAuth client). Continue past it, or use your own client (§5).
+First sign-in on your own unpublished client shows Google's **"unverified app" warning** — expected. Continue past it, or publish your client to Production (§5).
 
 ## 2. Adding another machine
 
@@ -80,24 +80,20 @@ ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # 
 
 **Hot** fields apply live via `synckeeper reload`; **restart** fields need a daemon restart. Ignore patterns match the file *name* only (not the path), both directions; ignored files don't sync.
 
-## 5. Using your own Google client (optional)
+## 5. Google credentials (required)
 
-Ships with the author's OAuth client embedded — nothing to set up, `synckeeper init` just works. All default-credential users share one Google Cloud project's Drive-API quota; per-user rate limits isolate them, but a heavy user may want more headroom.
+Synckeeper ships with **no credentials** — you supply your own Google Cloud "Desktop app" OAuth client. One-time setup, **before** `synckeeper init`:
 
-**Bring your own client (dedicated quota):**
-
-1. Create a personal Google Cloud project, enable the **Drive API**.
+1. Create a Google Cloud project, enable the **Drive API**.
 2. Add an OAuth client of type **Desktop app**.
 3. Publish the consent screen to **Production** — unverified is fine, but **Testing** status expires refresh tokens after 7 days (kills the daemon).
-4. Download the client JSON, drop it in the config dir (§4) as `credentials.json`, exactly as downloaded — no editing:
+4. Download the client JSON, place it in the config dir (§4) as `credentials.json`, exactly as downloaded — no editing:
 
 ```sh
 cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeeper/credentials.json"
-synckeeper login          # re-authenticate against your own client
-synckeeper account        # confirms: oauth client: credentials.json in the config dir
 ```
 
-Lookup order: `credentials.json` in the config dir → embedded default. A desktop-app client secret isn't truly confidential (ships in every binary), so this file isn't sensitive — but it's yours. `synckeeper account` shows the active client.
+Then run `synckeeper init` (first time) or `synckeeper login` (re-point an existing install). Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
 
 ## 6. How syncing behaves
 
@@ -131,7 +127,7 @@ Confirmed and reproduced. The adversarial correctness rounds (W1.7–W1.9, all d
 - One folder, one Google account, one Drive folder. No selective sync, no bandwidth limits, no shared drives.
 - Whole-file transfers (Drive has no delta API): a 1-byte change re-transfers the file.
 - Remote changes arrive within the poll interval (default 45 s); local changes sync under a second while the daemon runs. If file watching is unavailable (e.g. out of file descriptors), the daemon runs polling-only — everything still syncs, local changes just wait for the next poll — and restores watching automatically; `status` shows the mode.
-- The default OAuth client is unverified (consent warning, ~100-user cap) — §5 for your own.
+- Requires your own Google OAuth client (§5) — no credentials are bundled. Your client's consent screen: use **Production** (Testing expires refresh tokens in 7 days); an unpublished client shows a one-time "unverified app" warning.
 - **Full-Drive access scope.** Authorizes with Google's full `drive` scope, not folder-limited — Google has no folder-scoped OAuth scope, and the only narrower option (`drive.file`) would silently stop syncing files added to the Drive folder from *outside* Synckeeper (Drive web UI, other apps). So the stored token can reach your whole Drive; kept at `token.json` `0600`, only ever sent to Google over HTTPS. May be revisited.
 - All files kept on disk (no online-only placeholders).
 - macOS primary; Linux and Windows planned (code written portably, not yet validated there).

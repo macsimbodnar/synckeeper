@@ -1,22 +1,38 @@
 package auth
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestResolveClientEmbeddedByDefault(t *testing.T) {
+// setEmbedded overrides the (normally empty) build-time creds for one test and
+// returns a restore func, so these tests are correct whether or not the binary
+// was built with -ldflags-injected credentials.
+func setEmbedded(id, secret string) func() {
+	oldID, oldSecret := ClientID, ClientSecret
+	ClientID, ClientSecret = id, secret
+	return func() { ClientID, ClientSecret = oldID, oldSecret }
+}
+
+func TestResolveClientRequiresCredentials(t *testing.T) {
+	defer setEmbedded("", "")() // no embedded creds
+	dir := t.TempDir()          // no credentials.json
+	if _, _, _, err := resolveClient(dir); !errors.Is(err, ErrNoCredentials) {
+		t.Errorf("want ErrNoCredentials when no file and no embedded creds, got %v", err)
+	}
+}
+
+func TestResolveClientEmbeddedViaLdflags(t *testing.T) {
+	defer setEmbedded("inj-id", "inj-secret")()
 	dir := t.TempDir()
 	id, secret, src, err := resolveClient(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src != CredentialEmbedded {
-		t.Errorf("source = %q, want embedded", src)
-	}
-	if id != ClientID || secret != ClientSecret {
-		t.Errorf("resolved id/secret do not match the embedded default")
+	if src != CredentialEmbedded || id != "inj-id" || secret != "inj-secret" {
+		t.Errorf("got %q/%q src=%q, want inj-id/inj-secret embedded", id, secret, src)
 	}
 }
 
