@@ -58,9 +58,25 @@ func resolveClient(configDir string) (id, secret string, src CredentialSource, e
 	// No credentials.json. Use build-time-injected creds if present; otherwise
 	// there is nothing to authenticate with — the file is required (spec §9).
 	if ClientID == "" || ClientSecret == "" {
-		return "", "", "", ErrNoCredentials
+		return "", "", "", fmt.Errorf("%w\n\n%s", ErrNoCredentials, credentialsHelp(configDir))
 	}
 	return ClientID, ClientSecret, CredentialEmbedded, nil
+}
+
+// credentialsHelp is the end-user guidance shown when no OAuth client is
+// configured: how to obtain a Google "Desktop app" client, and exactly where
+// to save it. Kept generic (no personal project) and with a docs link.
+func credentialsHelp(configDir string) string {
+	path := filepath.Join(configDir, CredentialsFile)
+	return "Synckeeper needs your own Google OAuth client credentials.\n\n" +
+		"How to get them (one time):\n" +
+		"  1. Open the Google Cloud console:  https://console.cloud.google.com/\n" +
+		"  2. Create a project and enable the Google Drive API.\n" +
+		"  3. Create an OAuth client of type \"Desktop app\" and download its JSON.\n" +
+		"     Guide: https://developers.google.com/workspace/guides/create-credentials#oauth-client-id\n" +
+		"  4. Save that downloaded file as:\n" +
+		"       " + path + "\n\n" +
+		"Then run `synckeeper login` (or `synckeeper init`)."
 }
 
 // CredentialInfo reports which OAuth client `account` would use and its (non-

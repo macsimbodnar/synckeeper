@@ -85,7 +85,7 @@ ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # 
 Synckeeper ships with **no credentials** — you supply your own Google Cloud "Desktop app" OAuth client. One-time setup, **before** `synckeeper init`:
 
 1. Create a Google Cloud project, enable the **Drive API**.
-2. Add an OAuth client of type **Desktop app**.
+2. Add an OAuth client of type **Desktop app** ([Google guide](https://developers.google.com/workspace/guides/create-credentials#oauth-client-id)).
 3. Publish the consent screen to **Production** — unverified is fine, but **Testing** status expires refresh tokens after 7 days (kills the daemon).
 4. Download the client JSON, place it in the config dir (§4) as `credentials.json`, exactly as downloaded — no editing:
 

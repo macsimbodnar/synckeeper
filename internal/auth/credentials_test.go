@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,9 +20,24 @@ func setEmbedded(id, secret string) func() {
 func TestResolveClientRequiresCredentials(t *testing.T) {
 	defer setEmbedded("", "")() // no embedded creds
 	dir := t.TempDir()          // no credentials.json
-	if _, _, _, err := resolveClient(dir); !errors.Is(err, ErrNoCredentials) {
-		t.Errorf("want ErrNoCredentials when no file and no embedded creds, got %v", err)
+	_, _, _, err := resolveClient(dir)
+	if !errors.Is(err, ErrNoCredentials) {
+		t.Fatalf("want ErrNoCredentials when no file and no embedded creds, got %v", err)
 	}
+	// The error must be actionable: what to do, where to save the file, a link.
+	msg := err.Error()
+	for _, want := range []string{
+		filepath.Join(dir, CredentialsFile), // exact path to save it
+		"console.cloud.google.com",          // where to create it
+		"developers.google.com",             // link to the docs
+		"Desktop app",                       // the client type
+		"Drive API",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("credentials error not actionable — missing %q", want)
+		}
+	}
+	t.Logf("rendered error:\n%s", msg)
 }
 
 func TestResolveClientEmbeddedViaLdflags(t *testing.T) {

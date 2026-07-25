@@ -30,8 +30,7 @@ var (
 
 // ErrNoCredentials is returned when neither a credentials.json nor the
 // embedded client id/secret provide OAuth client credentials.
-var ErrNoCredentials = errors.New(
-	"no OAuth client credentials: create a Google Cloud \"Desktop app\" OAuth client and place its downloaded JSON as credentials.json in the config dir (see MANUAL §5), or inject one at build with -ldflags -X")
+var ErrNoCredentials = errors.New("no OAuth client credentials configured")
 
 // oauthConfig builds the OAuth config from the resolved client (a BYO
 // credentials.json in configDir wins over the embedded default; spec §9).
@@ -39,9 +38,6 @@ func oauthConfig(configDir string) (*oauth2.Config, error) {
 	id, secret, _, err := resolveClient(configDir)
 	if err != nil {
 		return nil, err
-	}
-	if id == "" || secret == "" {
-		return nil, ErrNoCredentials
 	}
 	return &oauth2.Config{
 		ClientID:     id,
