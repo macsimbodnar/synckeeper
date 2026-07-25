@@ -178,6 +178,12 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | svc-fb | `service install` reports whether the daemon came up: "Service is running." when up; when down, names the likely cause (missing credentials → the actionable message) or points at the log; a status-query error is surfaced, not swallowed | passing (2026-07-25) — `TestReportServiceStartup` (running / down+creds-missing / down+creds-ok / status-error, injected status+cred funcs, `cmd/synckeeper`) |
 | S1-rev | Credentials required, no embedded default (spec §9 reversal): `resolveClient` returns `ErrNoCredentials` when there's no `credentials.json` and no `-ldflags`-injected client, **with an actionable message** (exact save path, how-to steps, Google docs link); an injected client resolves as embedded | passing (2026-07-25) — `TestResolveClientRequiresCredentials` (asserts `ErrNoCredentials` + the path/how-to/link in the message), `TestResolveClientEmbeddedViaLdflags` (save/restore the vars so correct with or without `-ldflags`), plus the existing `TestResolveClientBYOFileWins`/`TestR23LoginUsesPKCE` (both write their own `credentials.json`) (`internal/auth`) |
 
+### W7 — Linux port (2026-07-25 →)
+
+| ID | Case | Status |
+|---|---|---|
+| W7-L6 | The config dir is private and a loose `credentials.json` is flagged, not refused: `Dir()` tightens a pre-existing umask-created dir (`0755` → `0700`) and creates a fresh one `0700`; a group/world-readable `credentials.json` still resolves but warns with its mode and the `chmod 600` fix, while `0600` stays silent; `info` reports the mode in human + JSON and flags a readable file | passing (2026-07-25) — `TestDirTightensExistingConfigDir`, `TestDirCreatesPrivateConfigDir` (`internal/config`), `TestLoosePerms`, `TestResolveClientWarnsButAcceptsLoosePerms`, `TestResolveClientQuietOnTightPerms` (`internal/auth`), `TestPrintInfoCredentialsPerms`, `TestPrintInfoJSONCredentialsPerms` (`cmd/synckeeper`). Red-first: with the tightening disabled the dir stayed `0755`; with the warn disabled the log was empty |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

@@ -110,3 +110,71 @@ func TestPrintInfoJSON(t *testing.T) {
 		t.Errorf("version/machine_id wrong: %v / %v", m["version"], m["machine_id"])
 	}
 }
+
+// W7-L6: `info` reports the credentials.json mode the same way it reports
+// token.json's, and flags a file other local users can read — the exact state
+// a hand-created config dir leaves behind (umask 0664).
+func TestPrintInfoCredentialsPerms(t *testing.T) {
+	cases := []struct {
+		name        string
+		mutate      func(*infoView)
+		want, avoid []string
+	}{
+		{
+			name:   "absent",
+			mutate: func(v *infoView) { v.credExists = false },
+			want:   []string{"credentials  /cfg/credentials.json (absent — required, see below)"},
+			avoid:  []string{"chmod 600"},
+		},
+		{
+			name:   "owner only",
+			mutate: func(v *infoView) { v.credExists, v.credMode, v.credLoose = true, 0o600, false },
+			want:   []string{"credentials  /cfg/credentials.json (present, 0600)"},
+			avoid:  []string{"chmod 600", "readable by others"},
+		},
+		{
+			name:   "group and world readable",
+			mutate: func(v *infoView) { v.credExists, v.credMode, v.credLoose = true, 0o664, true },
+			want:   []string{"(present, 0664 — readable by others", "chmod 600 /cfg/credentials.json"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := sampleInfoView()
+			tc.mutate(&v)
+			var b bytes.Buffer
+			printInfoHuman(&b, v)
+			out := b.String()
+			for _, w := range tc.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("missing %q in:\n%s", w, out)
+				}
+			}
+			for _, a := range tc.avoid {
+				if strings.Contains(out, a) {
+					t.Errorf("unexpected %q in:\n%s", a, out)
+				}
+			}
+		})
+	}
+}
+
+// The JSON view carries the same facts for scripts and a future UI.
+func TestPrintInfoJSONCredentialsPerms(t *testing.T) {
+	v := sampleInfoView()
+	v.credExists, v.credMode, v.credLoose = true, 0o664, true
+	var b bytes.Buffer
+	if err := printInfoJSON(&b, v); err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["credentials_mode"] != "0664" {
+		t.Errorf("credentials_mode = %v, want 0664", out["credentials_mode"])
+	}
+	if out["credentials_loose"] != true {
+		t.Errorf("credentials_loose = %v, want true", out["credentials_loose"])
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ type infoView struct {
 	tokenPath     string
 	credPath      string
 	credExists    bool
+	credMode      os.FileMode
+	credLoose     bool // readable by group/world (W7-L6)
 	socketPath    string
 	quarantineDir string
 	logPath       string // "" when logs aren't file-based (Linux/Windows)
@@ -101,8 +104,10 @@ func gatherInfo() infoView {
 	v.quarantineDir = filepath.Join(configDir, "quarantine")
 	v.logPath = service.LogPath()
 
-	if _, err := os.Stat(v.credPath); err == nil {
+	if fi, err := os.Stat(v.credPath); err == nil {
 		v.credExists = true
+		v.credMode = fi.Mode().Perm()
+		v.credLoose = runtime.GOOS != "windows" && v.credMode&0o077 != 0
 	}
 
 	// OAuth client — resolvable without init (embedded default is always there).
@@ -185,7 +190,14 @@ func printInfoHuman(w io.Writer, v infoView) {
 	} else {
 		fmt.Fprintf(w, "  token.json   %s (absent)\n", v.tokenPath)
 	}
-	fmt.Fprintf(w, "  credentials  %s%s\n", v.credPath, note(!v.credExists, "absent — required, see below"))
+	switch {
+	case !v.credExists:
+		fmt.Fprintf(w, "  credentials  %s (absent — required, see below)\n", v.credPath)
+	case v.credLoose:
+		fmt.Fprintf(w, "  credentials  %s (present, %04o — readable by others; run: chmod 600 %s)\n", v.credPath, v.credMode, v.credPath)
+	default:
+		fmt.Fprintf(w, "  credentials  %s (present, %04o)\n", v.credPath, v.credMode)
+	}
 	fmt.Fprintf(w, "  control.sock %s\n", v.socketPath)
 	fmt.Fprintf(w, "  quarantine   %s\n", v.quarantineDir)
 	if v.logPath != "" {
@@ -239,6 +251,8 @@ func printInfoJSON(w io.Writer, v infoView) error {
 			"log":              v.logPath,
 		},
 		"credentials_present": v.credExists,
+		"credentials_mode":    fmt.Sprintf("%04o", v.credMode),
+		"credentials_loose":   v.credLoose,
 		"sync_dir":            v.syncDir,
 		"drive_folder":        v.driveFolder,
 		"root_folder":         v.rootID,

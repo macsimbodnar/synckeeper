@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -129,5 +130,68 @@ func TestWriteDefaultIdempotent(t *testing.T) {
 	}
 	if cfg.Drive.FolderName != "Custom" {
 		t.Error("WriteDefault overwrote an existing config")
+	}
+}
+
+// W7-L6: the config dir holds credentials.json, the quarantine, and the state
+// DB. MkdirAll's mode applies only when it creates the directory, and MANUAL §5
+// tells users to create the dir by hand to place credentials.json before the
+// first run — so Dir must tighten a pre-existing, umask-created directory.
+func TestDirTightensExistingConfigDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not meaningful on Windows")
+	}
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)                                     // darwin: ~/Library/Application Support
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdgcfg")) // linux
+	base, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pre-create the dir the way a user would: mkdir -p, umask perms.
+	dir := filepath.Join(base, "synckeeper")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil { // defeat umask
+		t.Fatal(err)
+	}
+
+	got, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != dir {
+		t.Fatalf("Dir() = %q, want %q", got, dir)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("config dir left at %04o, want 0700 (other users could read credentials.json)", perm)
+	}
+}
+
+// A directory Dir creates itself must be 0700 too — the case that already
+// worked, pinned so the tightening never becomes the only thing enforcing it.
+func TestDirCreatesPrivateConfigDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not meaningful on Windows")
+	}
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdgcfg"))
+
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("fresh config dir is %04o, want 0700", perm)
 	}
 }

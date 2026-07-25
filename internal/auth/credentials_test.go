@@ -1,9 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -94,5 +98,101 @@ func TestParseClientJSONForms(t *testing.T) {
 	}
 	if _, _, err := parseClientJSON([]byte(`not json`)); err == nil {
 		t.Error("want an error for invalid JSON")
+	}
+}
+
+// W7-L6: a group/world-readable credentials.json is warned about, never
+// refused — it is the user's own downloaded file and refusing it would block
+// onboarding. (token.json, which we write ourselves, is still refused outright
+// by LoadToken.)
+func TestLoosePerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not meaningful on Windows")
+	}
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		mode      os.FileMode
+		wantLoose bool
+	}{
+		{0o600, false},
+		{0o400, false},
+		{0o640, true}, // group-readable
+		{0o604, true}, // world-readable
+		{0o664, true}, // the umask default that started this (W7-L6)
+	} {
+		p := filepath.Join(dir, fmt.Sprintf("c%04o.json", tc.mode))
+		if err := os.WriteFile(p, []byte("{}"), tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, tc.mode); err != nil { // defeat umask
+			t.Fatal(err)
+		}
+		perm, loose := loosePerms(p)
+		if loose != tc.wantLoose {
+			t.Errorf("loosePerms(%04o) = %v, want %v", tc.mode, loose, tc.wantLoose)
+		}
+		if perm != tc.mode {
+			t.Errorf("loosePerms(%04o) reported perm %04o", tc.mode, perm)
+		}
+	}
+	if _, loose := loosePerms(filepath.Join(dir, "absent.json")); loose {
+		t.Error("a missing file must not report loose perms")
+	}
+}
+
+func TestResolveClientWarnsButAcceptsLoosePerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not meaningful on Windows")
+	}
+	dir := t.TempDir()
+	const doc = `{"installed":{"client_id":"byo-id.apps.googleusercontent.com","client_secret":"byo-secret"}}`
+	p := filepath.Join(dir, CredentialsFile)
+	if err := os.WriteFile(p, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(old)
+
+	id, secret, src, err := resolveClient(dir)
+	if err != nil {
+		t.Fatalf("a loose credentials.json must still be usable: %v", err)
+	}
+	if src != CredentialBYOFile || id != "byo-id.apps.googleusercontent.com" || secret != "byo-secret" {
+		t.Errorf("got %q/%q src=%q, want the BYO file's client", id, secret, src)
+	}
+	out := logs.String()
+	for _, want := range []string{p, "0644", "chmod 600"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("warning missing %q; got: %s", want, out)
+		}
+	}
+}
+
+// The good case stays quiet: a 0600 credentials.json must not warn.
+func TestResolveClientQuietOnTightPerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not meaningful on Windows")
+	}
+	dir := t.TempDir()
+	const doc = `{"installed":{"client_id":"byo-id","client_secret":"byo-secret"}}`
+	if err := os.WriteFile(filepath.Join(dir, CredentialsFile), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(old)
+
+	if _, _, _, err := resolveClient(dir); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "readable by other local users") {
+		t.Errorf("0600 credentials.json must not warn; got: %s", logs.String())
 	}
 }

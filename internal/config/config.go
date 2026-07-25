@@ -4,8 +4,10 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -44,7 +46,31 @@ func Dir() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create config dir: %w", err)
 	}
+	tightenDir(dir)
 	return dir, nil
+}
+
+// tightenDir restores 0700 on a config dir that already existed. MkdirAll's
+// mode applies only when it creates the directory, and MANUAL §5 tells users
+// to place credentials.json here *before* the first run — so a hand-created
+// dir keeps the user's umask (0755/0775 observed) and exposes the OAuth
+// client secret and the quarantine to other local users. Best-effort: a chmod
+// we are not allowed to make is a warning, never a failed command. No-op on
+// Windows, where the permission bits are not meaningful. (W7-L6.)
+func tightenDir(dir string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(dir)
+	if err != nil || info.Mode().Perm()&0o077 == 0 {
+		return
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		slog.Warn("config dir is accessible to other users and could not be tightened",
+			"dir", dir, "perm", fmt.Sprintf("%04o", info.Mode().Perm()), "err", err)
+		return
+	}
+	slog.Debug("tightened config dir permissions", "dir", dir, "was", fmt.Sprintf("%04o", info.Mode().Perm()))
 }
 
 // Default returns a Config populated with the documented defaults.

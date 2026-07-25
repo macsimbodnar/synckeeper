@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // OAuth client credentials. Synckeeper ships with NO embedded credentials:
@@ -50,6 +52,11 @@ func resolveClient(configDir string) (id, secret string, src CredentialSource, e
 			if err != nil {
 				return "", "", "", fmt.Errorf("parse %s: %w", p, err)
 			}
+			if perm, loose := loosePerms(p); loose {
+				slog.Warn("credentials.json is readable by other local users",
+					"path", p, "perm", fmt.Sprintf("%04o", perm),
+					"fix", "chmod 600 "+p)
+			}
 			return id, secret, CredentialBYOFile, nil
 		case !os.IsNotExist(rerr):
 			return "", "", "", fmt.Errorf("read %s: %w", p, rerr)
@@ -61,6 +68,24 @@ func resolveClient(configDir string) (id, secret string, src CredentialSource, e
 		return "", "", "", fmt.Errorf("%w\n\n%s", ErrNoCredentials, credentialsHelp(configDir))
 	}
 	return ClientID, ClientSecret, CredentialEmbedded, nil
+}
+
+// loosePerms reports whether path is readable by group or world, and the mode
+// it carries. Unlike token.json (which LoadToken refuses outright), a loose
+// credentials.json only warns: it is the user's own downloaded file, placed
+// there by hand before the first run, and refusing it would block onboarding
+// at exactly the wrong moment. Always false on Windows, and for a file we
+// cannot stat — the caller has already read it. (W7-L6.)
+func loosePerms(path string) (perm os.FileMode, loose bool) {
+	if runtime.GOOS == "windows" {
+		return 0, false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	perm = info.Mode().Perm()
+	return perm, perm&0o077 != 0
 }
 
 // credentialsHelp is the end-user guidance shown when no OAuth client is
