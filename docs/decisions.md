@@ -13,6 +13,16 @@ Format:
 
 ---
 
+## 2026-07-25 — MANUAL missed cobra's built-in commands (`help`, `completion`, `--version`); documented + DOC1 guard blind spot closed
+
+**Context:** Max noticed `synckeeper help` works but isn't in MANUAL §3, and asked for a full capability scan vs the manual. Running the real binary (`synckeeper --help`) showed **15** invocable top-level commands; the manual documented **13**. Undocumented: the cobra built-ins **`help [command]`** and **`completion {bash|zsh|fish|powershell}`**, plus the global flags **`--version`** and **`-h/--help`**.
+
+**Root cause the DOC1 guard missed it:** `TestCLISurfaceMatchesManifest` enumerated `newRootCmd().Commands()` **before `Execute()`**, and cobra materializes the `help`/`completion` commands (and the `--version` flag) lazily *during* `Execute()`/`InitDefault*`. So the guard's manifest only ever saw the 13 hand-registered commands and was structurally blind to exactly the class of command Max found missing.
+
+**Decision (fix, 2026-07-25):** (1) MANUAL §3 documents `help` and `completion` as rows and lists `--version` / `-h`/`--help` in the global-flags line. (2) The guard now materializes the built-ins — `root.InitDefaultHelpCmd()`, `InitDefaultCompletionCmd()`, `InitDefaultVersionFlag()` — and the manifest requires `help` + `completion` and asserts the `--version` flag, so any future undocumented built-in (or a removed/renamed one) fails the build. `completion` is kept (standard cobra feature, useful); disabling it (`CompletionOptions.DisableDefaultCmd`) was considered and rejected — Max's concern was undocumented capability, not unwanted capability.
+
+**Consequences:** MANUAL §3 (2 rows + global-flags line); `cmd/synckeeper/surface_test.go` materializes built-ins + expanded manifest; testing.md DOC1 row updated; no product-behavior change (the commands already existed). This is a follow-up to the 2026-07-24 doc audit / DOC1 guard, correcting a blind spot in that guard.
+
 ## 2026-07-24 — W5.5-S4 done, W5.5 closed: self-contained pre-publication secret-scan gate
 
 **Context:** S4 — a repeatable check, runnable before the repo is ever made public, that no secret or sensitive runtime file has leaked into the tracked tree.

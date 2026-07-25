@@ -21,27 +21,41 @@ import (
 // change is not done.
 func TestCLISurfaceMatchesManifest(t *testing.T) {
 	// command name -> its non-inherited flags (long names), as documented.
+	// This MUST include cobra's auto-added built-ins (help, completion): they
+	// are invocable and belong in MANUAL §3. They were once missing from the
+	// manual precisely because an earlier version of this test enumerated the
+	// tree before Execute(), when cobra hasn't materialized them yet — so we
+	// materialize them explicitly below (decisions.md 2026-07-25).
 	want := map[string][]string{
-		"init":     {"adopt", "force", "no-service", "service"},
-		"login":    {},
-		"status":   {"json", "watch"},
-		"activity": {"number"},
-		"config":   {},
-		"account":  {},
-		"sync":     {"confirm-deletes", "dry-run"},
-		"pause":    {},
-		"resume":   {},
-		"reload":   {},
-		"doctor":   {"repair"},
-		"watch":    {},
-		"service":  {},
+		"init":       {"adopt", "force", "no-service", "service"},
+		"login":      {},
+		"status":     {"json", "watch"},
+		"activity":   {"number"},
+		"config":     {},
+		"account":    {},
+		"sync":       {"confirm-deletes", "dry-run"},
+		"pause":      {},
+		"resume":     {},
+		"reload":     {},
+		"doctor":     {"repair"},
+		"watch":      {},
+		"service":    {},
+		"help":       {},
+		"completion": {},
 	}
 
 	root := newRootCmd()
+	// Force cobra to add the built-ins it otherwise adds only during Execute().
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	root.InitDefaultVersionFlag()
 
-	// The one global (persistent) flag.
+	// Global flags documented in MANUAL §3.
 	if f := root.PersistentFlags().Lookup("verbose"); f == nil || f.Shorthand != "v" {
 		t.Errorf("root persistent flag -v/--verbose changed or missing; update MANUAL §3 (global flags) and this test")
+	}
+	if root.Flags().Lookup("version") == nil {
+		t.Errorf("root --version flag missing; update MANUAL §3 (global flags) and this test")
 	}
 
 	got := map[string][]string{}
