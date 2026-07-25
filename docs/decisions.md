@@ -13,6 +13,26 @@ Format:
 
 ---
 
+## 2026-07-25 — Field incident: a Drive-bin delete came back as a re-upload (W12 opened)
+
+**Context:** hours into Max's own W6 rollout on the Linux box, he moved a tracked folder (`kenney_ui-pack-space-expansion`, ~1145 files) to the bin in the Drive web UI, saw nothing happen on either machine, then deleted the folder from the Linux filesystem by hand and reported a wall of `error upload …: no such file or directory` in `activity`.
+
+**Evidence gathered on the machine (journal, state DB, filesystem — all read-only):**
+- Journal, one daemon (pid 91741, started 18:46:48): `18:47:05 sync cycle actions=1 executed=1 failed=0` → `18:54:32 sync cycle actions=1145 executed=890 failed=255` → `18:54:34 discarding stale pending ops from a previous run; replanning count=255` → `18:54:57 sync cycle actions=890 executed=890 failed=0`. Cycles with no actions log at Debug, so the silence between 18:47 and 18:54 means those cycles planned **nothing**.
+- All 255 failures are **uploads**, refused by the local-write gate because the files no longer existed — the gate behaving correctly. The 890 that succeeded were **files recreated in Drive**.
+- Activity ring: one `trash credentials.json` at 18:47:05, then 256 `error` rows at 18:54:32. No guard block, ever: `mass-delete guard blocked deletions` appears nowhere in the journal.
+- Final state: local tree gone, `items`=1, `remote_nodes`=1, `pending_ops`=0, quarantine empty, cycles idle — converged.
+- The macOS machine propagated the same deletion **correctly** at 19:05:13 (`drive→local quarantine kenney_…`, dirs and files).
+- **Nothing was lost:** Drive's bin holds the original, the Mac's quarantine holds a local rescue copy.
+
+**Findings:**
+1. **F1 — resurrection.** Uploads can only be planned if reconcile judged the tree untracked-new, i.e. the baseline rows for the subtree were gone with no delete-class action ever planned. Written and passing: `TestRemoteFolderTrashPropagatesLocally` (R26) pins the plain path — trash the folder in Drive (children untouched, real Drive semantics) → local files removed, no upload, second cycle idle. So the trigger is machine-state-specific. **Leading suspect:** `init --adopt` was still running when `service install` started the daemon (18:46:37 `another synckeeper instance is running (lock)`, restart 18:46:48); an adopt interrupted after downloading part of the tree but before recording it leaves exactly this shape — files on disk, no baseline rows.
+2. **F2 — the mass-delete guard never fired.** The 18:54:57 cycle executed 890 delete-class actions against 891 tracked files (99% vs the 0.25 threshold) with no block and no warning. Either the actions were not counted as delete-class or the guard is not wired into the daemon cycle as spec §6/§8.1 require. Offline-reproducible; scheduled first because it is cheap and it is the safety net that should have caught F1's blast radius.
+
+**A user report corrected:** Max's reading was that the errors came from trying to trash files already in the bin. They did not — trashing an already-trashed file is a no-op in Drive; the engine was pushing the deleted content *back*.
+
+**Decision (Max, 2026-07-25):** document it as an open bug now (MANUAL §8 entry, dated, with a workaround), open **plan.md W12** for the two defects, and investigate F2 → F1 next. The incident predates the L1–L8 Linux items and takes priority over them.
+
 ## 2026-07-25 — Linux file watching stays conventional (per-directory inotify); the bounded-watcher proposal is rejected
 
 **Context:** Max asked how file watching works on Linux, whether it was implemented, and — given a goal of "lightweight, no risk of growing infinitely with open files, stable and lean, even if it needs more development" — for a researched proposal measured against Dropbox.

@@ -184,6 +184,14 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 |---|---|---|
 | W7-L6 | The config dir is private and a loose `credentials.json` is flagged, not refused: `Dir()` tightens a pre-existing umask-created dir (`0755` → `0700`) and creates a fresh one `0700`; a group/world-readable `credentials.json` still resolves but warns with its mode and the `chmod 600` fix, while `0600` stays silent; `info` reports the mode in human + JSON and flags a readable file | passing (2026-07-25) — `TestDirTightensExistingConfigDir`, `TestDirCreatesPrivateConfigDir` (`internal/config`), `TestLoosePerms`, `TestResolveClientWarnsButAcceptsLoosePerms`, `TestResolveClientQuietOnTightPerms` (`internal/auth`), `TestPrintInfoCredentialsPerms`, `TestPrintInfoJSONCredentialsPerms` (`cmd/synckeeper`). Red-first: with the tightening disabled the dir stayed `0755`; with the warn disabled the log was empty |
 
+### W12 — field incident: Drive-bin delete came back as a re-upload (2026-07-25 →)
+
+| ID | Case | Status |
+|---|---|---|
+| R26 | A folder moved to the Drive bin (the folder trashed, its children untouched — real Drive semantics, modelled by `Fake.Trash`) propagates as a local deletion: the cycle plans no `upload`/`mkdir_remote`, the local files are removed, and the next cycle plans nothing | passing (2026-07-25) — `TestRemoteFolderTrashPropagatesLocally` (`internal/engine/remotetrash_test.go`). Pins the behaviour the macOS machine showed in the incident; the Linux machine's deviation is W12-F1, not yet reproduced |
+| W12-F1 | A Drive-bin delete is never answered with a re-upload of the deleted tree, including after an `init --adopt` that was interrupted mid-download (the incident's suspected trigger) | **open (2026-07-25)** — reproduction not yet written; MANUAL §8 carries the user-facing entry meanwhile |
+| W12-F2 | A daemon cycle whose plan deletes most of the tracked files trips the mass-delete guard: the deletes are deferred, `status` shows the block, and the journal warns — never silently executed | **open (2026-07-25)** — field evidence: 890 delete-class actions against 891 tracked files executed with no guard block and no warning |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

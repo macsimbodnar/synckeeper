@@ -172,6 +172,19 @@ Skipped files (Google-native docs, symlinks, non-regular files, invalid names, D
 - **Priority:** self-contained, needs no hardware — doable on the primary platform anytime; below the platform ports (W7/W8) in importance.
 - **Acceptance:** a daemon cycle with a skipped Google-native file (or symlink) records a `skip` entry visible in `status` and `activity`; recurring identical skips don't flood the capped ring (per the settled dedupe rule). testing.md row lands with the code.
 
+### W12 — Field incident: a Drive-bin delete came back as a re-upload (Linux, 2026-07-25) — `in progress`
+
+Found during Max's own W6 rollout on `pop-os`, hours after adoption. **Highest priority open item — it is a durability-adjacent bug** (nothing was lost, but the engine pushed deleted content back to Drive). Full evidence and reconstruction in decisions.md 2026-07-25 "Field incident".
+
+**What happened.** A tracked folder (`kenney_ui-pack-space-expansion`, ~1145 files) was moved to the bin in the Drive web UI. The Linux daemon removed nothing locally; ~4 minutes later, after the user deleted the folder from the Linux filesystem by hand, one cycle planned **1145 actions including uploads** — 890 files were **recreated in Drive**, 255 failed with `stat …: no such file or directory` (the write gate correctly refusing files that had vanished), and the next cycle trashed the 890 again. The macOS machine propagated the same deletion correctly (`drive→local quarantine …` at 19:05:13). End state converged; copies survived in Drive's bin and the Mac's quarantine.
+
+**Two distinct defects:**
+
+1. **[F1] Resurrection.** For uploads to be planned, reconcile must have judged the tree *untracked-new* — the baseline rows for the subtree were gone with no delete-class action ever planned. The plain path is correct and now pinned by a passing regression test (`TestRemoteFolderTrashPropagatesLocally`), so the trigger is state-specific. **Leading suspect:** the `init --adopt` was still running when `service install` first started the daemon (journal 18:46:37 `another synckeeper instance is running (lock)`, service restart at 18:46:48) — an adopt interrupted after downloading part of the tree but before recording it would leave exactly this shape. Reproduce that, then fix.
+2. **[F2] The mass-delete guard never fired.** The 18:54:57 cycle executed **890 delete-class actions against 891 tracked files** (99%, threshold 0.25) with no guard block and no `mass-delete guard blocked deletions` warning in the journal, in any cycle of the incident. Either those actions were not counted as delete-class or the guard is not wired into the daemon cycle as spec §6/§8.1 require. **Reproducible offline** — do this one first, it is cheap and self-contained.
+
+**Method:** F2 first (offline, fast), then F1 (reconstruct the interrupted-adopt state). Red-first regression tests for both, then the fixes, then testing.md rows; MANUAL §8 carries the user-facing entry until they are fixed (added 2026-07-25).
+
 ### W11 — `info` command: one-shot static environment / paths dump — `done (2026-07-25)`
 
 A read-only `synckeeper info` that prints everything static and useful in one place — every config-file path, the effective config, identity, and version — so a user (or a bug report) gets the whole picture without hunting across `status`/`config`/`account`. **Decision (Max, 2026-07-25): a separate `info` command**, not folded into `status` (which stays focused on live daemon state). The companion "print the manual" command is **deferred** (Max: skip for now).
