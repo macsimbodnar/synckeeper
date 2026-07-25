@@ -13,6 +13,22 @@ Format:
 
 ---
 
+## 2026-07-25 — Remote deletions go to the OS trash, not to Synckeeper's quarantine
+
+**Context:** after the W12 incident Max saw his Mac quarantine ~1145 files and objected to the model itself: *"I remove the folder in drive but it's still on my file system and not marked in any way whatsoever. This confuses me."* A private, dated quarantine directory inside the config dir is invisible to the user — it is a copy they did not make, in a place they do not look, that the desktop offers no way to inspect or restore.
+
+**Agent input to the decision:** the quarantine is less load-bearing for *remote-initiated* deletes than it looks. Edit-beats-delete means a remote delete only ever removes a local file whose content still equals the last synced baseline — so a byte-identical copy is already in Drive's bin. The quarantine is the only copy solely when the Drive copy is unrecoverable (bin emptied, 30-day retention expired, or a permanent delete that skipped the bin).
+
+**Decision (Max, 2026-07-25):** **a deletion arriving from Drive no longer creates a Synckeeper quarantine copy — the local file or folder is moved to the operating system's trash instead** (Linux: freedesktop.org trash; macOS: Finder's Trash; Windows: Recycle Bin, with W8). The user keeps a recovery path they already understand and can see, in the place their desktop already shows them, and Synckeeper stops keeping shadow copies in its config dir.
+
+**Consequences:**
+- **Amends spec §3 invariant 3.** "Deletes go to Drive trash (remote) and a dated local quarantine directory (local)" becomes: remote → Drive trash; local → **the OS trash**. The invariant's substance — *never a permanent delete* — is unchanged; only the destination moves, from a private directory to the user-visible system bin.
+- **New OS module, `trash`, in spec §10** beside fswatch / fsprobe / names / service, with the same per-OS shape: Linux implements the freedesktop trash spec in pure Go (move into `$XDG_DATA_HOME/Trash/files`, write the matching `.trashinfo` with the original path and deletion date, honour the per-volume `.Trash-$uid` when the sync dir is on another filesystem); macOS calls `NSFileManager trashItemAtURL:` through the cgo we already carry for FSEvents; Windows gets `IFileOperation` with `FOF_ALLOWUNDO` when W8 lands.
+- **The quarantine directory does not disappear** — it stays the fallback and keeps its other jobs (conflict rescue copies, uniquified destinations, invisible-leftover sweeps). When the OS trash is unavailable (no trash dir, read-only volume, cross-filesystem move that the per-volume fallback cannot satisfy), the executor falls back to the existing quarantine path and says so, rather than hard-deleting: invariant 3 still holds.
+- **The move stays inside the local-write gate** (spec §7): trashing is a rename of a local path, so it belongs in `internal/executor/localwrite.go` with a stated expectation, like every other local mutation.
+- **Open implementation detail, to settle when built:** granularity. The plan deletes per rel_path, so a trashed 1145-file folder would create 1145 trash entries unless the top-level deleted directory is trashed as a single unit. Recommendation: trash the highest deleted directory whose whole subtree is being deleted, and fall back to per-file for scattered deletes — it matches what the user actually did in Drive and keeps the bin readable.
+- **Priority:** below W12 (a bug that can resurrect deleted content outranks a UX change), above the remaining W7 Linux items.
+
 ## 2026-07-25 — Field incident: a Drive-bin delete came back as a re-upload (W12 opened)
 
 **Context:** hours into Max's own W6 rollout on the Linux box, he moved a tracked folder (`kenney_ui-pack-space-expansion`, ~1145 files) to the bin in the Drive web UI, saw nothing happen on either machine, then deleted the folder from the Linux filesystem by hand and reported a wall of `error upload …: no such file or directory` in `activity`.
