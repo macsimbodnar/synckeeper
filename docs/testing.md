@@ -184,6 +184,17 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 |---|---|---|
 | W7-L6 | The config dir is private and a loose `credentials.json` is flagged, not refused: `Dir()` tightens a pre-existing umask-created dir (`0755` → `0700`) and creates a fresh one `0700`; a group/world-readable `credentials.json` still resolves but warns with its mode and the `chmod 600` fix, while `0600` stays silent; `info` reports the mode in human + JSON and flags a readable file | passing (2026-07-25) — `TestDirTightensExistingConfigDir`, `TestDirCreatesPrivateConfigDir` (`internal/config`), `TestLoosePerms`, `TestResolveClientWarnsButAcceptsLoosePerms`, `TestResolveClientQuietOnTightPerms` (`internal/auth`), `TestPrintInfoCredentialsPerms`, `TestPrintInfoJSONCredentialsPerms` (`cmd/synckeeper`). Red-first: with the tightening disabled the dir stayed `0755`; with the warn disabled the log was empty |
 
+### W13 — remote deletions go to the OS trash (2026-07-25 →)
+
+| ID | Case | Status |
+|---|---|---|
+| T13.1 | A trashed file lands in the freedesktop trash with a paired `.trashinfo` whose `Path=` decodes to the original absolute path and whose `DeletionDate` parses; the source is gone | passing (2026-07-25) — `TestMoveToTrashFile`, plus `TestMoveToTrashRealDesktop` (opt-in, `SYNCKEEPER_TRASH_TEST=1`) verified against the machine's own trash and listed by `gio trash --list` |
+| T13.2 | A colliding name uniquifies (numbered before the extension, matching the desktop trasher) instead of overwriting an earlier rescued item — the `O_EXCL` claim | passing (2026-07-25) — `TestMoveToTrashUniquifiesOnCollision` (three same-named files → `notes.txt`, `notes.2.txt`, `notes.3.txt`, each with its own `.trashinfo`) |
+| T13.3 | An item on a different filesystem than the home trash uses that volume's `.Trash-$uid`, `Path=` recorded relative to the volume root | passing (2026-07-25) — `TestVolumeTrashOnOtherFilesystem` (through the `deviceOf` seam — no second filesystem needed) |
+| T13.8 | A whole directory moves as **one** trash entry, subtree intact | passing (2026-07-25) — `TestMoveToTrashDirectory` |
+| T13.9 | Names needing escaping stay restorable and never corrupt the key/value file (spaces, `#`, `%`, newline) | passing (2026-07-25) — `TestTrashInfoPathEncoding` |
+| T13.10 | macOS: `NSFileManager trashItemAtURL:` trashes a real item; a missing path errors; the trash is always available | written, **unverified — needs one run on the Mac** (2026-07-25) — `TestMoveToTrashDarwin` (opt-in), `TestMoveToTrashDarwinMissing`, `TestAvailableDarwin` |
+
 ### W12 — field incident: Drive-bin delete came back as a re-upload (2026-07-25 →)
 
 | ID | Case | Status |
