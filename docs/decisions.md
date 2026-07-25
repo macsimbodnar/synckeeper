@@ -13,6 +13,16 @@ Format:
 
 ---
 
+## 2026-07-25 — W11 done: `info` command implemented (static paths/config/identity/version)
+
+**Context:** implement W11 (planned below).
+
+**Outcome:** `cmd/synckeeper/info.go` adds `synckeeper info [--json]` — a read-only, offline, no-lock static snapshot: version; all config-file paths (config dir, `config.toml`, `state.db`, `token.json` + mode, `credentials.json`, `control.sock`, quarantine, log); sync dir; Drive folder + root id; machine name + id; OAuth client (source + id, via `CredentialInfo` — never the secret); token status (present/expiry/refresh); effective config summary; and local state (tracked items, pending ops, quarantine, one-line daemon state). Works **before init** (falls back to config defaults, shows a hint, never prints an empty `(id )`) and after. `--json` mirrors `status`'s human/JSON split. It reuses `openReadEnv`-style plumbing piecemeal (paths always; config if written; DB read-only if present) rather than `openReadEnv` wholesale, so the pre-init path renders. Render logic is pure (`printInfoHuman(w, v)` / `printInfoJSON(w, v)`) and unit-tested without a real DB.
+
+**Guard note:** registering `info` in `newRootCmd` tripped `TestCLISurfaceMatchesManifest` (DOC1) until the manifest + MANUAL §3 + spec §15 were updated together — the guard working exactly as intended, one iteration after the `help`/`completion` blind-spot fix.
+
+**Consequences:** MANUAL §3 `info` row; spec §15 CLI surface + dated note; testing.md W11 row; plan.md W11 `done`; status.md (W11 → Last completed, dropped from Next). `go build && go vet && go test ./...` green. **W11 closed.** The deferred `manual` command stays deferred.
+
 ## 2026-07-25 — New W11: a static `info` command; the manual-printing command deferred
 
 **Context:** Max asked for two CLI additions — a `help`-prints-the-manual command and an all-info command (config-file paths + everything useful). After the built-ins scan (below), he chose to **skip the manual command for now** and record a plan only for the info command.

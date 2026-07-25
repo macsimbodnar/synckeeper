@@ -198,7 +198,7 @@ SQLite via `database/sql`, WAL, single connection, writes serialized. Versioned 
 
 ## 15. CLI surface
 
-`init [--adopt|--force] [--service|--no-service]` · `login` · `sync [--dry-run] [--confirm-deletes]` · `watch` · `status [--json] [--watch]` · `activity [-n]` · `pause` / `resume` / `reload` · `config` · `account` · `doctor [--repair]` · `service install|uninstall|status`. Human output first; `--json` where a future UI needs it. *(2026-07-24, W5: `init` gains `--service`/`--no-service` and offers the login service interactively otherwise; `account` names the signed-in Google account from one `about.get` — graceful offline.)*
+`init [--adopt|--force] [--service|--no-service]` · `login` · `sync [--dry-run] [--confirm-deletes]` · `watch` · `status [--json] [--watch]` · `activity [-n]` · `pause` / `resume` / `reload` · `config` · `account` · `info [--json]` · `doctor [--repair]` · `service install|uninstall|status`. Human output first; `--json` where a future UI needs it. *(2026-07-25, W11: `info` — a static paths / effective-config / identity / version snapshot in one place; read-only, offline, `--json`; distinct from `status` which stays about live daemon state.)* *(2026-07-24, W5: `init` gains `--service`/`--no-service` and offers the login service interactively otherwise; `account` names the signed-in Google account from one `about.get` — graceful offline.)*
 
 ## 16. Acceptance criteria
 

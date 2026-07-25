@@ -33,6 +33,7 @@ func TestCLISurfaceMatchesManifest(t *testing.T) {
 		"activity":   {"number"},
 		"config":     {},
 		"account":    {},
+		"info":       {"json"},
 		"sync":       {"confirm-deletes", "dry-run"},
 		"pause":      {},
 		"resume":     {},

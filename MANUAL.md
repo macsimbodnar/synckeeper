@@ -53,6 +53,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print the ve
 | `reload` | Re-read `config.toml` in the running daemon. Hot fields apply live; identity fields are reported as needing a restart (§4). |
 | `config` | Print the effective configuration and the file it's read from. |
 | `account` | Token status, which OAuth client is in use (embedded default or your own), and the signed-in Google account (email, from one `about.get`; shown when online, skipped gracefully when offline). |
+| `info [--json]` | One-shot static snapshot in one place: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json`, `control.sock`, quarantine, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; the effective config; and local state (tracked items, pending ops, quarantine). Read-only, offline (see `account` for the live Google email), works before `init`. `--json` for scripts. |
 | `doctor [--repair]` | Cross-check state DB vs disk vs Drive. `--repair` rebuilds lost metadata and re-adopts matching files — it only ever *adds*; it never deletes, quarantines, or overwrites. |
 | `service install\|uninstall\|status` | Manage the login service that runs `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, which the daemon keeps owner-only at `0600` since it records synced file names). |
 | `help [command]` | Print usage help for Synckeeper or a specific command (built-in). |
