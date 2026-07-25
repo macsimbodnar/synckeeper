@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-07-25 — W12-F2 resolved (guard is correct); the incident's blast radius corrected; W12 re-planned ahead of W13
+
+**Context:** the W12 incident listed two defects. F2 claimed the mass-delete guard had failed to fire on a cycle deleting 890 of 891 tracked files.
+
+**Investigation (agent):** two probes at incident scale under daemon semantics (`DeferMassDelete: true`) — a tracked tree deleted locally (→ `trash_remote`) and the same tree trashed in Drive (→ `quarantine_local`). **Both trip the guard correctly**: `GuardBlocked` set with a reason, zero actions executed, local files untouched. The daemon does set `DeferMassDelete` (`watch.go:163`). Kept as the permanent regression `TestMassDeleteGuardBlocksWholeTreeDeletion`.
+
+**Consequence — a correction to the incident record.** If the guard is correct, the incident's cycles contained **no delete-class actions**. `activityKind` (`internal/watch/status.go`) maps every action to a verb except `Record` and `Forget`, which are deliberately unrecorded, and the incident's two big cycles executed 890 + 890 actions while writing **zero** activity rows. So those actions were `Forget`s — dropping baseline rows for content already gone on both sides, which is the *correct* action — and the only upload attempts were the 255 that **all failed** at the local-write gate. **Nothing was re-uploaded to Drive; nothing was written there at all.** The first reading of this incident (890 files recreated in Drive) was wrong and is corrected in MANUAL §8, plan.md W12, testing.md and status.md.
+
+**What remains (F1), narrowed to two facts:** (a) between the Drive-bin deletion and the user's own local delete, every cycle planned **nothing**, where 1145 tracked files with a trashed remote should have planned 1145 quarantines and hit the guard; (b) 255 files were judged untracked-new and planned as uploads while sitting on disk. Both point at baseline rows that were missing or never seen as remote-deleted — leading suspect, the `init --adopt` still running when the login service first started (journal `another synckeeper instance is running (lock)`, 18:46:37). Reproduction of an interrupted adopt is the next step.
+
+**Decision (Max, 2026-07-25):** **re-plan W12 ahead of W13** — reversing his earlier ordering, on the agent's recommendation that a bug able to push deleted content back to Drive outranks the quarantine UX change. W13's plan is unchanged and stays fully specified.
+
 ## 2026-07-25 — Remote deletions go to the OS trash, not to Synckeeper's quarantine
 
 **Context:** after the W12 incident Max saw his Mac quarantine ~1145 files and objected to the model itself: *"I remove the folder in drive but it's still on my file system and not marked in any way whatsoever. This confuses me."* A private, dated quarantine directory inside the config dir is invisible to the user — it is a copy they did not make, in a place they do not look, that the desktop offers no way to inspect or restore.
