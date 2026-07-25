@@ -140,3 +140,49 @@ func assertGuardHeld(t *testing.T, res *Result, want reconcile.Type) {
 		t.Error("guard blocked without a reason for `status`")
 	}
 }
+
+// W12: the incident's exact race — the folder is trashed in Drive AND the
+// user's `rm -rf` is only part-way through the local tree when the cycle
+// scans. Tracked rows must split cleanly into `forget` (gone on both sides)
+// and `quarantine_local` (still on disk); an upload here would be a
+// resurrection of content the user deleted in Drive. Field shape: Drive bin
+// entry at 18:52, the 18:54:30 cycle planning 890 executed + 255 others.
+func TestRemoteTrashDuringPartialLocalDeletePlansNoUpload(t *testing.T) {
+	fake, rootID := newWorld(t)
+	m := newMachine(t, "A", fake, rootID)
+	const files, deletedLocally = 60, 40
+	for i := 0; i < files; i++ {
+		m.write(t, fmt.Sprintf("pack/Vector/f%03d.svg", i), fmt.Sprintf("c-%d", i))
+	}
+	m.write(t, "keep.pdf", "unrelated")
+	m.sync(t)
+
+	if err := fake.Trash(context.Background(), remoteChildID(t, fake, rootID, "pack")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < deletedLocally; i++ {
+		m.remove(t, fmt.Sprintf("pack/Vector/f%03d.svg", i))
+	}
+
+	res, err := m.eng.Sync(context.Background(), Options{DeferMassDelete: true})
+	if err != nil {
+		t.Fatalf("cycle errored: %v", err)
+	}
+	var forgets, quarantines int
+	for _, a := range res.Plan {
+		switch {
+		case a.Type == reconcile.Upload, a.Type == reconcile.MkdirRemote:
+			t.Errorf("planned %s %s — deleted-in-Drive content must never be pushed back", a.Type, a.RelPath)
+		case a.Type == reconcile.Forget && !a.IsDir:
+			forgets++
+		case a.Type == reconcile.QuarantineLocal && !a.IsDir:
+			quarantines++
+		}
+	}
+	if forgets != deletedLocally {
+		t.Errorf("forget actions = %d, want %d (rows gone on both sides)", forgets, deletedLocally)
+	}
+	if quarantines != files-deletedLocally {
+		t.Errorf("quarantine actions = %d, want %d (rows still on disk)", quarantines, files-deletedLocally)
+	}
+}
