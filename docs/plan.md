@@ -156,6 +156,26 @@ Skipped files (Google-native docs, symlinks, non-regular files, invalid names, D
 - **Priority:** self-contained, needs no hardware — doable on the primary platform anytime; below the platform ports (W7/W8) in importance.
 - **Acceptance:** a daemon cycle with a skipped Google-native file (or symlink) records a `skip` entry visible in `status` and `activity`; recurring identical skips don't flood the capped ring (per the settled dedupe rule). testing.md row lands with the code.
 
+### W11 — `info` command: one-shot static environment / paths dump — `not started`
+
+A read-only `synckeeper info` that prints everything static and useful in one place — every config-file path, the effective config, identity, and version — so a user (or a bug report) gets the whole picture without hunting across `status`/`config`/`account`. **Decision (Max, 2026-07-25): a separate `info` command**, not folded into `status` (which stays focused on live daemon state). The companion "print the manual" command is **deferred** (Max: skip for now).
+
+**Shows** (offline — no network; point to `account` for the live Google email):
+- **version** (binary `main.version`).
+- **paths**: config dir; `config.toml`; `state.db`; `token.json` (+ present / perms); `credentials.json` (present?) and the active OAuth client (source + client id via `auth.CredentialInfo`); `control.sock`; `quarantine/`; log file (`service.LogPath`, darwin).
+- **sync target**: sync dir (expanded); drive folder name + root folder id.
+- **identity**: machine name + machine id.
+- **effective config summary**: poll interval, mass-delete threshold, quarantine retention, ignore globs (the full TOML stays in `config`).
+- **local state**: tracked items, pending ops, quarantine usage (files/bytes), token status (present / expiry); a one-line daemon-state pointer (live details stay in `status`).
+
+**Behavior**: read-only (no instance lock, like `status`/`config`/`account`); works **before init** (prints the config dir + a "run `synckeeper init`" hint and whatever exists) and after; **offline** (no `about.get`); `--json` for scripting / a future UI (mirror `status`'s human + JSON split).
+
+**Implementation**: new `cmd/synckeeper/info.go` (`newInfoCmd` with `--json`), registered in `newRootCmd` — which **trips the DOC1 surface guard** until the manifest + MANUAL §3 + spec §15 are updated in the same commit (the guard working as designed). Reuse `config.Dir`, `statedb.Path`, `auth.TokenPath`/`CredentialInfo`, `service.LogPath`, `cfg.SyncDir`, `db.GetMeta`/`ItemCount`/`PendingOpCount`, and `quarantineUsage` (factor out of `status.go` if shared). Gather into an `infoView`, render human + JSON like `status`.
+
+**Acceptance**: `synckeeper info` shows every path / identity / config / state field above, before and after init, offline, with a valid, complete `--json`; a render test (populated read env / fake) asserts the fields; `info` added to the surface manifest (DOC1); MANUAL §3 row + spec §15 updated in the same commit. Self-contained, no hardware.
+
+**Deferred companion**: a `manual` command (embed MANUAL.md via a build-time copy + a drift test; the `manual` name avoids cobra's built-in `help`) — considered, **skipped for now** (Max, 2026-07-25); revisit if wanted.
+
 ## Working process
 
 1. A workstream item is done when its code, tests, and doc updates land together; check items off here with a date **and rewrite [status.md](status.md)** (last/current/next) before ending the session.

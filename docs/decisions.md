@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-25 — New W11: a static `info` command; the manual-printing command deferred
+
+**Context:** Max asked for two CLI additions — a `help`-prints-the-manual command and an all-info command (config-file paths + everything useful). After the built-ins scan (below), he chose to **skip the manual command for now** and record a plan only for the info command.
+
+**Decisions (Max, 2026-07-25):** (1) **a separate `info` command**, not folding the info block into `status` — `status` stays about live daemon state, while `info` is the static environment / paths / identity / version snapshot (deliberate, consolidated overlap with `status`/`config`/`account` — one place to see everything). (2) **the manual-printing command is deferred** (skip for now), recorded as a "deferred companion" in W11, not scheduled; if ever built it should be named `manual`, since `help` is a real cobra built-in (see the built-ins entry below).
+
+**Consequences:** plan.md gains **W11 — `info` command** (`not started`; no hardware; actionable now) with its shown-fields list, offline/read-only/`--json` behavior, implementation sketch, and acceptance; status.md Next lists W11 alongside W10. Planning only — no code. When built, adding `info` to `newRootCmd` will trip the DOC1 surface guard, forcing the manifest + MANUAL §3 + spec §15 update in the same commit, and it lands with a render test.
+
 ## 2026-07-25 — MANUAL missed cobra's built-in commands (`help`, `completion`, `--version`); documented + DOC1 guard blind spot closed
 
 **Context:** Max noticed `synckeeper help` works but isn't in MANUAL §3, and asked for a full capability scan vs the manual. Running the real binary (`synckeeper --help`) showed **15** invocable top-level commands; the manual documented **13**. Undocumented: the cobra built-ins **`help [command]`** and **`completion {bash|zsh|fish|powershell}`**, plus the global flags **`--version`** and **`-h/--help`**.

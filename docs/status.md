@@ -46,11 +46,12 @@ The 2026-07-18 session (gate + A1 collapse + guard fix + rounds 2–3 analysis +
 
 ## Next
 
-The primary-platform build-out and the **W5.5 security gate are done** (see Last completed). The only actionable non-hardware step is W10; the rollout and ports are hardware-blocked:
+The primary-platform build-out and the **W5.5 security gate are done** (see Last completed). Two actionable non-hardware steps (W10, W11); the rollout and ports are hardware-blocked:
 
-1. **W10 — daemon surfaces skips in `activity`** ([plan.md](plan.md) W10): **the actionable next step — needs no hardware.** The D1 doc-audit gap, scheduled 2026-07-24. Chosen shape: per-skip `activity` entries; the capped-ring/noise question is a flagged build-time detail.
-2. **W6 — Real multi-machine rollout** ([plan.md](plan.md) W6): **blocked on a second physical machine** (Max's step). Adopt on a second real machine, a day under `watch`, clean `doctor` on both, then a service-reboot check. Soak lesson carries in: run any long soak **detached** (nohup → launchd) or keep the machine awake on AC (decisions.md 2026-07-24).
-3. **W7 (Linux) / W8 (Windows) ports** ([plan.md](plan.md)): implement the OS modules (fswatch inotify/RDCW, names hardening, service unit) and run the full suite + soak on real hardware. Not started.
+1. **W10 — daemon surfaces skips in `activity`** ([plan.md](plan.md) W10): **needs no hardware.** The D1 doc-audit gap, scheduled 2026-07-24. Chosen shape: per-skip `activity` entries; the capped-ring/noise question is a flagged build-time detail.
+2. **W11 — `info` command** ([plan.md](plan.md) W11): **needs no hardware.** A read-only `synckeeper info` static dump — every config-file path, effective config, identity, version — separate from `status` (Max's call, 2026-07-25). The companion manual-printing command is deferred. Trips the DOC1 surface guard when added (forces MANUAL §3 / spec §15 update).
+3. **W6 — Real multi-machine rollout** ([plan.md](plan.md) W6): **blocked on a second physical machine** (Max's step). Adopt on a second real machine, a day under `watch`, clean `doctor` on both, then a service-reboot check. Soak lesson carries in: run any long soak **detached** (nohup → launchd) or keep the machine awake on AC (decisions.md 2026-07-24).
+4. **W7 (Linux) / W8 (Windows) ports** ([plan.md](plan.md)): implement the OS modules (fswatch inotify/RDCW, names hardening, service unit) and run the full suite + soak on real hardware. Not started.
 
 Unscheduled, on the table from the W1.8/W1.9 close-outs: the gate's **directory arm** (case-only dir renames + dir fold-adopts + R7-for-dirs + tracked case-only renames — one family, decisions.md "W1.9.1"/"W1.8.8"); W4's convergence oracle deliberately excludes it, so it won't surface there until built.
 
