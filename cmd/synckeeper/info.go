@@ -185,7 +185,7 @@ func printInfoHuman(w io.Writer, v infoView) {
 	} else {
 		fmt.Fprintf(w, "  token.json   %s (absent)\n", v.tokenPath)
 	}
-	fmt.Fprintf(w, "  credentials  %s%s\n", v.credPath, note(!v.credExists, "absent — using embedded default"))
+	fmt.Fprintf(w, "  credentials  %s%s\n", v.credPath, note(!v.credExists, "absent — required, see below"))
 	fmt.Fprintf(w, "  control.sock %s\n", v.socketPath)
 	fmt.Fprintf(w, "  quarantine   %s\n", v.quarantineDir)
 	if v.logPath != "" {

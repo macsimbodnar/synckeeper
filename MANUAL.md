@@ -55,7 +55,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 | `account` | Token status, which OAuth client is active (embedded default or your own), and the signed-in Google account (email via one `about.get`; online only, skipped offline). |
 | `info [--json]` | One-shot static snapshot: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json`, `control.sock`, quarantine, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; local state (tracked items, pending ops, quarantine). Read-only, offline (email → `account`), works before `init`. `--json` for scripts. |
 | `doctor [--repair]` | Cross-check state DB vs disk vs Drive. `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites. |
-| `service install\|uninstall\|status` | Manage the login service running `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, kept owner-only `0600` since it records synced file names). |
+| `service install\|uninstall\|status` | Manage the login service running `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, kept owner-only `0600` since it records synced file names). `install` then checks whether the daemon actually started and names the likely cause (e.g. missing `credentials.json`) if not. |
 | `help [command]` | Usage help for Synckeeper or a specific command (built-in). |
 | `completion <bash\|zsh\|fish\|powershell>` | Print a shell autocompletion script (built-in); `synckeeper completion <shell> --help` shows how to install it. |
 

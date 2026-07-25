@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/macsimbodnar/synckeeper/internal/auth"
+	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
 	"github.com/macsimbodnar/synckeeper/internal/service"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
@@ -93,10 +96,48 @@ func newServiceCmd() *cobra.Command {
 				return err
 			}
 			fmt.Println(msg)
+			if args[0] == "install" {
+				// Confirm the daemon actually came up (or say why not) instead
+				// of leaving the user to discover it from `status`/the log.
+				time.Sleep(2 * time.Second) // let launchd start (or crash) it
+				configDir, derr := config.Dir()
+				reportServiceStartup(os.Stdout, service.Status, func() error {
+					if derr != nil {
+						return derr
+					}
+					_, _, e := auth.CredentialInfo(configDir)
+					return e
+				})
+			}
 			return nil
 		},
 	}
 	return cmd
+}
+
+// reportServiceStartup checks whether the just-installed service came up and,
+// if not, surfaces the likely cause — a missing credentials.json being the
+// common one — rather than leaving the user to read the log.
+func reportServiceStartup(w io.Writer, status func() (service.State, error), credOK func() error) {
+	s, err := status()
+	if err != nil {
+		fmt.Fprintf(w, "\nCould not check whether the service started: %v\n", err)
+		return
+	}
+	if s.Running {
+		fmt.Fprintln(w, "\nService is running.")
+		return
+	}
+	fmt.Fprintln(w, "\nInstalled, but the service is not running.")
+	if cerr := credOK(); cerr != nil {
+		fmt.Fprintf(w, "\nLikely cause — %v\n", cerr)
+		return
+	}
+	if lp := service.LogPath(); lp != "" {
+		fmt.Fprintf(w, "See the service log for why: %s\n", lp)
+	} else {
+		fmt.Fprintln(w, "Check `synckeeper status` and the service log for why.")
+	}
 }
 
 func serviceStatusText() (string, error) {
