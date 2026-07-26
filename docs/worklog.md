@@ -422,3 +422,18 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 > "what are the next steps?"
 - Read back from status.md/plan.md: (1) **W13 close-out on the Mac** — T13.10 (`go test ./internal/trash/ ./internal/engine/ ./internal/executor/`, the darwin cgo path has never been compiled) plus a rebuild there, since that machine still runs a pre-W14 build and is still holding the folder deletion; (2) **W7** items **L1 → L2 → L5 → L3 → L4 → L8 (gates) → L7 (docs)**, L6 done; (3) **W6** rollout (Max's); (4) **W10** skips in `activity`; W8 (Windows) not started and now also owes W13 a recycle-bin backend.
 - No code or doc change this prompt beyond this entry.
+
+### 2026-07-26 — what is still open on macOS
+> "read the docs and tell me if there are open points for macos next in the plan that requires to be closed in order to proceed?"
+- Read status.md, plan.md (W6–W14), testing.md macOS/darwin rows, worklog tail. **One open macOS code point: T13.10** — `trash_darwin.go`/`.m` (cgo, `NSFileManager trashItemAtURL:`) has never been compiled anywhere; `TestMoveToTrashDarwin` (opt-in via `SYNCKEEPER_TRASH_TEST=1`), `TestMoveToTrashDarwinMissing`, `TestAvailableDarwin` are written-unverified. It blocks **W13 closing**, not W7/W10.
+- Also Max's, not agent work: rebuild the Mac (still on a pre-W14 build, still holding the folder deletion) + the on-hardware acceptance (passed on Linux 2026-07-26).
+- Everything else in the plan is not macOS-gated: W7 = Linux, W6 = Max's rollout, W10 platform-neutral, W8 not started. No code or doc change beyond this entry.
+
+### 2026-07-26 — T13.10 run on the Mac: the darwin trash path compiles and works
+> "can you perform the test by yourself and report the result?"
+- **`go test ./internal/trash/ ./internal/engine/ ./internal/executor/` on macOS/arm64, go 1.26.4, `CGO_ENABLED=1`: all three `ok`** (trash 0.249s, engine 12.476s, executor 0.423s). **First compilation of `trash_darwin.go` + `trash_darwin.m` anywhere — clean**, no cgo flag, header or linker change needed (`#cgo LDFLAGS: -framework Foundation` as written).
+- Confirmed the darwin tests are actually compiled in, not constraint-dropped: `-run 'Darwin|Available'` → `TestMoveToTrashDarwinMissing` PASS, `TestAvailableDarwin` PASS, `TestMoveToTrashDarwin` SKIP with its opt-in message.
+- **Opt-in real-Trash check green:** `SYNCKEEPER_TRASH_TEST=1 go test ./internal/trash/ -run 'TestMoveToTrashDarwin$'` → PASS (0.11s) — `NSFileManager trashItemAtURL:` moved a real file to `~/.Trash`, source gone. Left `synckeeper-trash-test.txt` in Max's Trash; **the agent cannot read or clean `~/.Trash` (macOS TCC: `Operation not permitted`)**, so removal is Max's (harmless either way).
+- **Whole-machine gates green on the Mac too**, first time for the W13/W14 code: `go build ./... && go vet ./... && go test ./...` all 19 packages `ok` (`internal/watch` included — the pause flake did not reproduce), plus `make audit` PASS.
+- Docs, same commit: testing.md **T13.10 → passing** (platform/toolchain/what ran); plan.md W13 heading + T1 as-built + Status (macOS half done, only the on-hardware acceptance left) + the current-order line; status.md header, In progress (a) done, Next item 1 narrowed to Max's rebuild + acceptance.
+- **README/MANUAL checked, neither needs a change:** no code, layout, build target, command, flag, default or bug-status change — MANUAL §6's "deleted in Drive → your system bin (macOS Trash…)" and README's `internal/trash` row were already true and are now verified rather than restated. MANUAL §9's "Linux and Windows … not yet validated" stays for **W7-L7**, which is deliberately last.
