@@ -48,6 +48,34 @@ func TestActivityReportsOneTrashEntryPerSubtree(t *testing.T) {
 	}
 }
 
+// A tripped mass-delete guard strips the delete-class actions before
+// anything runs (spec §8.1). They were planned, never performed — reporting
+// them said "trashed 1117 files" once per cycle while the folder was still
+// sitting in the sync dir, which is exactly the opposite of what happened.
+// Found in the field 2026-07-26 (a folder deleted in Drive, held by the
+// guard, reported as trashed every 45s).
+func TestActivityNeverClaimsGuardBlockedDeletes(t *testing.T) {
+	res := &engine.Result{
+		TrashAvailable: true,
+		GuardBlocked:   true,
+		GuardReason:    "plan deletes 1117 of 1118 tracked files",
+		Plan: []reconcile.Action{
+			{Type: reconcile.QuarantineLocal, RelPath: "pack", IsDir: true, SubtreeFiles: 1117},
+			{Type: reconcile.TrashRemote, RelPath: "gone.txt"},
+			{Type: reconcile.Download, RelPath: "other.txt"}, // not delete-class: it did run
+		},
+	}
+	acts := recordedActivity(t, res)
+	for _, a := range acts {
+		if a.Kind == "trash" {
+			t.Errorf("reported %+v — the guard stripped that deletion; nothing was trashed", a)
+		}
+	}
+	if len(acts) != 1 || acts[0].Kind != "download" {
+		t.Errorf("entries = %+v, want only the action that actually ran", acts)
+	}
+}
+
 // Without a bin the same deletion is a quarantine, and says so: the report
 // names the destination that was actually used.
 func TestActivityNamesTheQuarantineWhenThereIsNoBin(t *testing.T) {

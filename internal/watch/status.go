@@ -147,6 +147,16 @@ func (r *recorder) recordActivity(res *engine.Result) {
 	now := time.Now().Unix()
 	if res.Failed == 0 {
 		for _, a := range res.Plan {
+			// A tripped mass-delete guard strips the delete-class actions
+			// before anything runs, while res.Plan deliberately keeps them so
+			// the deferred deletes stay visible (spec §8.1). They were
+			// planned, not performed: reporting them told the user a folder
+			// had been trashed once every cycle while it was still on disk
+			// (found in the field, 2026-07-26). The block itself is `status`'s
+			// job, and it is reported there with its reason.
+			if res.GuardBlocked && (a.Type == reconcile.TrashRemote || a.Type == reconcile.QuarantineLocal) {
+				continue
+			}
 			kind := activityKind(a.Type)
 			if kind == "" {
 				continue
