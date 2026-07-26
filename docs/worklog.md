@@ -404,3 +404,16 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **The noise is frozen history, not a live bug**: every line from 16:20 to 17:43:36 was written by the pre-`6faad6b` binary, one per guard-blocked cycle, claiming a trash that never ran. The fix stops new ones; the existing rows stay until they age out of the 500-entry ring. Verified nothing has been appended since 17:44:34.
 - **Two offers, both declined by Max** (recorded so they are not re-proposed): (a) targeted delete of the stale rows from his live `activity` table — *leave them*, they age out; (b) folding the M3 `deleted` summary into the collapsed `trash` line when a large deletion is already one entry — *keep both*: the trash line says what happened, the summary says where to restore from.
 - No code change this prompt.
+
+### 2026-07-26 — doc audit against the project guidelines
+> "is all that progress recorder and documented as by project guidelines?"
+- **Audited rather than asserted.** Worklog: 6 entries for the day's 6 prompts (7th added here), all committed. plan.md: W13 T1–T6 and W14 M1–M7 marked done with as-built notes; current-order line updated. decisions.md: three entries today (W13-T2/T3, "the mass-delete guard becomes a recoverability guard", "W14 as built"). testing.md: T13.4–T13.16 and M14.1–M14.8 added, G1/G3/R13/R20/R21/W12-F2/T13.5 restated. README checked (only `internal/trash` needed adding, done).
+- **Found five stale claims and fixed them** — the "doc claims are claims about code" rule catching real drift:
+  1. **MANUAL §8** (W12 known bug) still said the mass-delete guard "fires in both directions at that scale" — untrue since W14 — and pointed at the quarantine as the other machine's rescue destination. Now says it was found correct and has since been narrowed, with the quarantine marked as the pre-W13 destination.
+  2. **spec §4.2** described only the local collapse; W14-M4 added the Drive-side arm (one folder = one API call = one bin entry). Added, dated.
+  3. **spec §7** listed `QuarantineLocal` among the gate's primitives; it is now the trash/quarantine pair, and the AST test additionally refuses any `MoveToTrash` outside the gate file. Stated.
+  4. **spec §16 criterion 4** ("Guards G1–G3 block without confirmation") did not say *when*; narrowed to unrecoverable deletions, with the reported-not-blocked case named.
+  5. **spec §2** in-scope line still read "trash/quarantine instead of deletion"; now names Drive's bin + the machine's bin with the quarantine as fallback.
+  6. **testing.md W12-F2** row still described the "both directions" guard; restated with the re-targeting noted.
+- **status.md** "In progress" updated: the on-hardware acceptance **passed on Linux today**; what remains is the Mac (never-compiled darwin trash path + a rebuild there), plus a note that the Mac's `activity` will show the same frozen pre-fix rows.
+- Suite green; no code change this prompt.

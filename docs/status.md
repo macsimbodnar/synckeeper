@@ -50,7 +50,9 @@ The 2026-07-18 session (gate + A1 collapse + guard fix + rounds 2–3 analysis +
 
 ## In progress
 
-**W13 — code complete, two verifications open (2026-07-26).** T1–T6 are built, tested and documented on Linux. Left: **(a)** one run of `go test ./internal/trash/ ./internal/engine/ ./internal/executor/` on the **Mac** — the darwin trash file (`trash_darwin.go`/`.m`, cgo, `NSFileManager trashItemAtURL:`) has never been compiled anywhere (T13.10; `SYNCKEEPER_TRASH_TEST=1` adds the opt-in real-Trash check); **(b)** the acceptance on real hardware — delete a folder in the Drive web UI, confirm one restorable entry in each machine's bin and an empty quarantine. Nothing pushed (Max pushes).
+**W13/W14 — verified on Linux hardware; the macOS half is what remains (2026-07-26).** The end-to-end acceptance **passed on `pop-os` today**: a folder trashed in the Drive web UI was removed with no confirmation and landed in the desktop bin as **one** restorable entry holding all 1117 files (journal: `actions=1 executed=1 failed=0`; Max confirmed the bin entry). Left: **(a)** one run of `go test ./internal/trash/ ./internal/engine/ ./internal/executor/` on the **Mac** — the darwin trash file (`trash_darwin.go`/`.m`, cgo, `NSFileManager trashItemAtURL:`) has never been compiled anywhere (T13.10; `SYNCKEEPER_TRASH_TEST=1` adds the opt-in real-Trash check); **(b)** the same acceptance on the Mac, which still runs a pre-W14 build and will keep holding that deletion until it is rebuilt. Nothing pushed (Max pushes).
+
+*Note for whoever reads the Mac's `activity` after rebuilding:* it will show the same wall of repeated `trash` lines the Linux box had — rows written by the pre-`6faad6b` binary, one per guard-blocked cycle. They are frozen history, not new events, and age out of the 500-entry ring. Max's call (2026-07-26): leave them.
 
 ## Next
 
