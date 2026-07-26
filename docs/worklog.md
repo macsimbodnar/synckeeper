@@ -417,3 +417,8 @@ Append-only, chronological record of **what agents actually did in this repo, ke
   6. **testing.md W12-F2** row still described the "both directions" guard; restated with the re-targeting noted.
 - **status.md** "In progress" updated: the on-hardware acceptance **passed on Linux today**; what remains is the Mac (never-compiled darwin trash path + a rebuild there), plus a note that the Mac's `activity` will show the same frozen pre-fix rows.
 - Suite green; no code change this prompt.
+
+### 2026-07-26 — next steps restated
+> "what are the next steps?"
+- Read back from status.md/plan.md: (1) **W13 close-out on the Mac** — T13.10 (`go test ./internal/trash/ ./internal/engine/ ./internal/executor/`, the darwin cgo path has never been compiled) plus a rebuild there, since that machine still runs a pre-W14 build and is still holding the folder deletion; (2) **W7** items **L1 → L2 → L5 → L3 → L4 → L8 (gates) → L7 (docs)**, L6 done; (3) **W6** rollout (Max's); (4) **W10** skips in `activity`; W8 (Windows) not started and now also owes W13 a recycle-bin backend.
+- No code or doc change this prompt beyond this entry.
