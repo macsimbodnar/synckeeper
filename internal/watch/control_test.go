@@ -87,6 +87,16 @@ func TestControlPauseSuppressesSyncThenResume(t *testing.T) {
 	a := newMachine(t, "a", fake, root)
 	sock := startWatcherWithControl(t, a, time.Hour, "")
 
+	// Let the startup cycle finish before pausing. The pause is checked when a
+	// trigger is *received*, so a cycle already in flight legitimately runs to
+	// completion — and it would then scan (and upload) the file this test
+	// writes next. Under load that made the test flaky against a daemon
+	// behaving exactly as designed.
+	waitFor(t, "startup cycle done", 5*time.Second, func() bool {
+		ds, err := a.db.GetDaemonStatus()
+		return err == nil && ds.LastSyncAt > 0
+	})
+
 	call(t, sock, control.CmdPause, nil)
 	waitFor(t, "paused recorded", 3*time.Second, func() bool {
 		ds, err := a.db.GetDaemonStatus()
