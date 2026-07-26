@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-07-26 — The mass-delete guard becomes a recoverability guard
+
+**Context:** Max uploaded a test folder, confirmed it synced to both machines, then moved it to the Drive bin. Neither machine removed it. Investigation: not a defect — the deletion was seen, planned, and collapsed to one action by W13, and the **mass-delete guard** held it (`plan deletes 1117 of 1118 tracked files`), logging the block every cycle. His sync folder holds that folder plus one PDF, so deleting it *is* deleting ~all tracked content. The guard was working exactly as specified, and that is the problem: with W13, the destination is now the user's own bin, so the block asked permission for something already undoable.
+
+**Decision (Max, 2026-07-26):** *"I don't like this rule. I think we should remove it and keep it only in case the BIN is not available so the deletion is permanent and not just a move into the bin. In that case this needs to be notified if it is not."* The guard's trigger changes from **volume** (deleting a lot is suspicious) to **recoverability** (a deletion the user can undo from a bin they can see is not an emergency, however large). Planned as **W14**, next after W13.
+
+**The cost, stated before the decision and accepted:** the guard is the only thing standing between a deletion *the user never asked for* — an engine bug, an interrupted `init --adopt`, a corrupt baseline, a subtree lost to an unmounted volume (W12's shape) — and its execution on every machine. After W14 such a plan runs, and recovery is bounded by a clock that is not ours: Drive's bin auto-purges at ~30 days, and both GNOME and macOS can be set to empty the trash after 30 days, where the guard's window was unlimited. Two agent-proposed items in W14 buy most of it back cheaply: **M3** reports a large deletion loudly instead of blocking it (so it is noticed inside the window) and **M4** collapses remote trashes so undoing a folder is one restorable Drive-bin entry rather than 1145 files. Max may drop either; the change is coherent without them, just quieter.
+
+**Explicitly unchanged:** `CheckSyncDir` (sync dir missing, unreadable, or empty while rows are tracked → hard error, never "everything was deleted") is a **different guard** and stays. Spec §3 invariant 4 is *amended*, not deleted: its first sentence becomes recoverability-based; its sync-dir sentence stays verbatim. `mass_delete_threshold` stays a config key (unknown keys are rejected — removing it would break existing `config.toml` files) with a narrowed meaning, and `--confirm-deletes` stays for the case that remains.
+
+**Consequences:** plan.md W14 (items M1–M7, with the existing guard tests re-targeted rather than deleted); spec §3/§6/§8.1; MANUAL §6 (the bullet extended earlier the same day describes the *old* rule and gets rewritten); testing.md G1/G3/R10/T13.5 and W12-F2's row change meaning.
+
 ## 2026-07-26 — W13-T2/T3: how a collapsed folder delete is verified, committed, and counted
 
 **Context:** T2/T3 landed the collapse (one bin entry per deleted folder) and the executor's move to the bin. Three points where the plan met the code and the code had the last word — each recorded rather than deviated from silently.
