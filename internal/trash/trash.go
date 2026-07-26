@@ -30,3 +30,22 @@ func Available() bool { return available() }
 // Describe names the destination for `info` / `status` — e.g. the trash
 // directory on Linux — or says why there is none.
 func Describe() string { return describe() }
+
+// Trasher is the system trash as the sync engine consumes it. The engine and
+// the executor hold one instead of calling the package functions directly, so
+// tests inject a fake bin and the suite never touches the developer's own
+// trash.
+type Trasher interface {
+	MoveToTrash(path string) error
+	Available() bool
+	Describe() string
+}
+
+// OS returns the platform's trash — the Trasher every non-test caller wants.
+func OS() Trasher { return osTrash{} }
+
+type osTrash struct{}
+
+func (osTrash) MoveToTrash(path string) error { return MoveToTrash(path) }
+func (osTrash) Available() bool               { return Available() }
+func (osTrash) Describe() string              { return Describe() }

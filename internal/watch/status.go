@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -150,9 +151,19 @@ func (r *recorder) recordActivity(res *engine.Result) {
 			if kind == "" {
 				continue
 			}
+			// A remote-initiated deletion names where it really went: the
+			// system bin, or the quarantine on a platform with no bin (W13).
+			if a.Type == reconcile.QuarantineLocal && !res.TrashAvailable {
+				kind = "quarantine"
+			}
 			detail := ""
-			if a.NewRelPath != "" {
+			switch {
+			case a.NewRelPath != "":
 				detail = "-> " + a.NewRelPath
+			case a.SubtreeFiles > 0:
+				// One entry for the whole folder, not one per file — the count
+				// is what tells the user how much went with it.
+				detail = fmt.Sprintf("(%d files)", a.SubtreeFiles)
 			}
 			r.append(statedb.Activity{TS: now, Kind: kind, RelPath: a.RelPath, Detail: detail, Source: activitySource(a.Type)})
 		}
@@ -211,7 +222,7 @@ func activityKind(t reconcile.Type) string {
 	case reconcile.TrashRemote:
 		return "trash"
 	case reconcile.QuarantineLocal:
-		return "quarantine"
+		return "trash" // to the user's own bin since W13; "drive→local" tells it from a remote trash
 	case reconcile.MoveLocal, reconcile.MoveRemote:
 		return "move"
 	case reconcile.MkdirLocal, reconcile.MkdirRemote:

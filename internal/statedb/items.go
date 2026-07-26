@@ -80,6 +80,29 @@ func DeleteItemByID(tx *sql.Tx, driveFileID string) error {
 	return err
 }
 
+// DeleteItemsByID removes the rows for a set of drive file ids inside tx —
+// the commit of a collapsed directory delete (W13-T2), which retires the
+// whole subtree's rows in one action. Ids, not a rel_path prefix: a delete's
+// rel_path can be a post-move local path while its rows are still keyed at
+// the baseline path, and an id is unambiguous either way. Batched so the
+// statement count stays bounded whatever the subtree's size.
+func DeleteItemsByID(tx *sql.Tx, driveFileIDs []string) error {
+	const batch = 400
+	for len(driveFileIDs) > 0 {
+		n := min(batch, len(driveFileIDs))
+		args := make([]any, n)
+		for i, id := range driveFileIDs[:n] {
+			args[i] = id
+		}
+		q := `delete from items where drive_file_id in (?` + strings.Repeat(",?", n-1) + `)`
+		if _, err := tx.Exec(q, args...); err != nil {
+			return err
+		}
+		driveFileIDs = driveFileIDs[n:]
+	}
+	return nil
+}
+
 // RenameItemPath moves a row (and, for directories, every descendant row)
 // from oldPath to newPath inside tx.
 func RenameItemPath(tx *sql.Tx, oldPath, newPath string) error {

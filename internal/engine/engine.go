@@ -22,6 +22,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
 	"github.com/macsimbodnar/synckeeper/internal/scanner"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 // MetaLastSkipped stores the previous run's skip report for `status`.
@@ -36,8 +37,23 @@ type Engine struct {
 	QuarantineDir string
 	RootID        string
 
+	// Trash receives content deleted in Drive (W13). nil means the
+	// platform's own bin; tests inject a fake one.
+	Trash trash.Trasher
+
 	caseFold *bool // lazily probed once; sync cycles are serialized
 	normFold *bool
+}
+
+// defaultTrash is the bin used when Engine.Trash is nil. A var so the suite's
+// TestMain can pin it away from the developer's own trash.
+var defaultTrash trash.Trasher = trash.OS()
+
+func (e *Engine) trasher() trash.Trasher {
+	if e.Trash != nil {
+		return e.Trash
+	}
+	return defaultTrash
 }
 
 // caseInsensitive reports (and caches) whether the sync dir folds case, so
@@ -83,6 +99,11 @@ type Result struct {
 	Errors       []string
 	GuardBlocked bool // a mass-delete guard tripped and its deletes were deferred
 	GuardReason  string
+
+	// TrashAvailable reports where this cycle's remote-initiated deletions
+	// went: the system bin, or the quarantine when the platform has no bin
+	// (W13). `activity` names the destination it actually used.
+	TrashAvailable bool
 }
 
 // Sync runs one full cycle.
@@ -144,7 +165,20 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 			trackedFiles++
 		}
 	}
-	if guardErr := guards.CheckMassDelete(plan, trackedFiles, e.Cfg.Engine.MassDeleteThreshold, opts.ConfirmDeletes); guardErr != nil {
+	guardErr := guards.CheckMassDelete(plan, trackedFiles, e.Cfg.Engine.MassDeleteThreshold, opts.ConfirmDeletes)
+
+	// The collapse runs AFTER the guard has counted the plan and never
+	// before (W13-T2): the guard counts delete-class files, and a folder
+	// collapsed into one action would make it count zero exactly when it
+	// matters most. Only worth doing when there is a bin to receive the
+	// folder — without one the quarantine takes it item by item, as before.
+	res.TrashAvailable = e.trasher().Available()
+	if res.TrashAvailable {
+		plan = reconcile.CollapseDirDeletes(plan)
+		res.Plan = plan
+	}
+
+	if guardErr != nil {
 		if !opts.DeferMassDelete {
 			return res, guardErr // interactive one-shot: abort with the hint (spec §6)
 		}
@@ -163,7 +197,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	x := &executor.Executor{
 		DB: e.DB, Client: e.Client, SyncDir: e.SyncDir,
 		QuarantineDir: e.QuarantineDir, RootID: e.RootID,
-		Ignore: e.Cfg.Engine.Ignore,
+		Ignore: e.Cfg.Engine.Ignore, Trash: e.trasher(),
 	}
 	sum, err := x.Apply(ctx, plan)
 	if err != nil {

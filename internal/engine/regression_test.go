@@ -827,8 +827,8 @@ func TestR19CrossMachineFoldConflictNoQuarantine(t *testing.T) {
 
 // R20 (C3, engine): the reproduced wedge — a remotely-deleted folder whose
 // local copy holds a Finder-dropped .DS_Store repeated "directory not
-// empty" forever. Now the ignored leftover travels to quarantine with the
-// dir, the tracked child is rescued, and the next cycle is idle.
+// empty" forever. Now the ignored leftover travels to the bin inside the
+// folder, the tracked child rides along, and the next cycle is idle.
 func TestR20RemoteDeletedDirWithDSStoreUnwedges(t *testing.T) {
 	fake, rootID := newWorld(t)
 	a := newMachine(t, "a", fake, rootID)
@@ -851,22 +851,23 @@ func TestR20RemoteDeletedDirWithDSStoreUnwedges(t *testing.T) {
 	if res := b.sync(t); len(res.Plan) != 0 {
 		t.Errorf("second cycle not idle: %+v", res.Plan)
 	}
-	// The tracked child was rescued into the quarantine.
-	found := false
-	filepath.WalkDir(b.eng.QuarantineDir, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && d.Name() == "file.txt" {
-			found = true
-		}
-		return nil
-	})
-	if !found {
-		t.Error("rescued file.txt not found in machine b's quarantine")
+	// The whole folder is one restorable entry in b's bin, tracked child and
+	// invisible leftover both inside it.
+	if got := b.binRead(t, "docs", "file.txt"); got != "rescue me" {
+		t.Errorf("rescued file.txt not readable from the bin's docs entry: %q", got)
+	}
+	if got := b.binRead(t, "docs", ".DS_Store"); got != "finder junk" {
+		t.Errorf("ignored leftover did not travel with the folder: %q", got)
+	}
+	if moved := b.bin.Moved(); len(moved) != 1 || moved[0] != "docs" {
+		t.Errorf("bin received %v, want exactly one entry: the folder", moved)
 	}
 }
 
 // R21 (C4, engine): delete, restore, delete again — all in one day. Both
-// deletions quarantine the same rel_path; both rescue copies must survive
-// (was: the second silently overwrote the first).
+// deletions rescue the same rel_path; both copies must survive (was: the
+// second silently overwrote the first). Since W13 the destination is the
+// system bin, which uniquifies the name the same way (T13.2).
 func TestR21SameDayRequarantineKeepsBothCopies(t *testing.T) {
 	fake, rootID := newWorld(t)
 	a := newMachine(t, "a", fake, rootID)
@@ -889,7 +890,7 @@ func TestR21SameDayRequarantineKeepsBothCopies(t *testing.T) {
 	b.sync(t) // b quarantines v2 — same rel_path, same day
 
 	got := map[string]bool{}
-	filepath.WalkDir(b.eng.QuarantineDir, func(p string, d fs.DirEntry, err error) error {
+	filepath.WalkDir(b.bin.Dir, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			raw, _ := os.ReadFile(p)
 			got[string(raw)] = true
@@ -897,7 +898,7 @@ func TestR21SameDayRequarantineKeepsBothCopies(t *testing.T) {
 		return nil
 	})
 	if !got["v1"] || !got["v2"] {
-		t.Errorf("machine b's quarantine holds %v, want both v1 and v2", got)
+		t.Errorf("machine b's bin holds %v, want both v1 and v2", got)
 	}
 }
 

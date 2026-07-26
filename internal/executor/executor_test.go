@@ -13,6 +13,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 // R4 (spec §7 overwrite guard): a local edit landing between the scan and
@@ -329,8 +330,9 @@ func TestR13QuarantineLocalRefusesDriftedSource(t *testing.T) {
 	}
 }
 
-// R13 companion: a quarantine whose pinned stat still matches proceeds — the
-// guard must not over-refuse the normal delete path.
+// R13 companion: a remote-deletion removal whose pinned stat still matches
+// proceeds — the guard must not over-refuse the normal delete path. Since
+// W13 the destination is the system bin.
 func TestR13QuarantineLocalProceedsWhenPinMatches(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
@@ -358,8 +360,9 @@ func TestR13QuarantineLocalProceedsWhenPinMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	bin := trash.NewFake(filepath.Join(base, "bin"))
 	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
-		QuarantineDir: filepath.Join(base, "quarantine"), RootID: folder.ID}
+		QuarantineDir: filepath.Join(base, "quarantine"), RootID: folder.ID, Trash: bin}
 	sum, err := x.Apply(ctx, []reconcile.Action{{
 		Type: reconcile.QuarantineLocal, RelPath: "f.txt", FileID: "some-id",
 		LocalExists: true, LocalSize: scanned.Size(), LocalMtimeNS: scanned.ModTime().UnixNano(),
@@ -368,14 +371,13 @@ func TestR13QuarantineLocalProceedsWhenPinMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sum.Failed != 0 {
-		t.Fatalf("matching pin must quarantine cleanly; failed=%d errors=%v", sum.Failed, sum.Errors)
+		t.Fatalf("matching pin must remove cleanly; failed=%d errors=%v", sum.Failed, sum.Errors)
 	}
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
 		t.Fatal("file should have left the sync dir")
 	}
-	quarantined := filepath.Join(base, "quarantine", time.Now().Format("2006-01-02"), "f.txt")
-	if got, err := os.ReadFile(quarantined); err != nil || string(got) != "stable content" {
-		t.Fatalf("rescue copy missing or wrong: %q, %v", got, err)
+	if got, err := os.ReadFile(filepath.Join(bin.Dir, "f.txt")); err != nil || string(got) != "stable content" {
+		t.Fatalf("rescued copy missing or wrong in the bin: %q, %v", got, err)
 	}
 }
 
@@ -421,10 +423,10 @@ func TestR12ApplyRefusesOverlappingTransferStage(t *testing.T) {
 	}
 }
 
-// R20 (C3, spec §3 invariant 3): a quarantined directory carries its
-// invisible leftovers — ignored and temp files, the only content the plan
-// cannot see by design — into the quarantine destination instead of wedging
-// on "directory not empty" forever.
+// R20 (C3, spec §3 invariant 3): a removed directory carries its invisible
+// leftovers — ignored and temp files, the only content the plan cannot see
+// by design — with it instead of wedging on "directory not empty" forever.
+// Since W13 they ride along inside the folder as it moves to the bin.
 func TestR20QuarantinedDirSweepsIgnoredLeftovers(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
@@ -452,9 +454,10 @@ func TestR20QuarantinedDirSweepsIgnoredLeftovers(t *testing.T) {
 	}
 
 	quarantine := filepath.Join(base, "quarantine")
+	bin := trash.NewFake(filepath.Join(base, "bin"))
 	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
 		QuarantineDir: quarantine, RootID: folder.ID,
-		Ignore: []string{".DS_Store"}}
+		Ignore: []string{".DS_Store"}, Trash: bin}
 	sum, err := x.Apply(ctx, []reconcile.Action{{
 		Type: reconcile.QuarantineLocal, RelPath: "docs", FileID: "dir-id", IsDir: true,
 	}})
@@ -462,10 +465,58 @@ func TestR20QuarantinedDirSweepsIgnoredLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sum.Failed != 0 {
-		t.Fatalf("quarantine of a dir with only invisible leftovers failed: %v", sum.Errors)
+		t.Fatalf("removal of a dir with only invisible leftovers failed: %v", sum.Errors)
 	}
 	if _, err := os.Stat(filepath.Join(syncDir, "docs")); !os.IsNotExist(err) {
-		t.Error("docs still present after quarantine")
+		t.Error("docs still present after removal")
+	}
+	if _, err := os.Stat(filepath.Join(bin.Dir, "docs", ".DS_Store")); err != nil {
+		t.Errorf("ignored leftover not carried into the bin with the dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(bin.Dir, "docs", tmpName)); err != nil {
+		t.Errorf("temp leftover not carried into the bin with the dir: %v", err)
+	}
+}
+
+// R20, fallback road: with no usable bin the directory still cannot wedge —
+// the invisible leftovers are swept into the quarantine and the empty dir is
+// removed, exactly as before W13.
+func TestR20DirWithoutTrashFallsBackToQuarantineSweep(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	syncDir := filepath.Join(base, "sync")
+	if err := os.MkdirAll(filepath.Join(syncDir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := statedb.Open(filepath.Join(base, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	fake := driveclient.NewFake()
+	folder, err := fake.Mkdir(ctx, driveclient.FakeRootID, "Synckeeper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(syncDir, "docs", ".DS_Store"), []byte("finder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	quarantine := filepath.Join(base, "quarantine")
+	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
+		QuarantineDir: quarantine, RootID: folder.ID,
+		Ignore: []string{".DS_Store"}, Trash: &trash.Fake{Unavailable: true}}
+	sum, err := x.Apply(ctx, []reconcile.Action{{
+		Type: reconcile.QuarantineLocal, RelPath: "docs", FileID: "dir-id", IsDir: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Failed != 0 {
+		t.Fatalf("quarantine fallback for a dir failed: %v", sum.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(syncDir, "docs")); !os.IsNotExist(err) {
+		t.Error("docs still present after the fallback removal")
 	}
 	day := time.Now().Format("2006-01-02")
 	if _, err := os.Stat(filepath.Join(quarantine, day, "docs", ".DS_Store")); err != nil {
@@ -534,8 +585,10 @@ func TestR21QuarantineNeverOverwritesRescueCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	quarantine := filepath.Join(base, "quarantine")
+	// The quarantine is the fallback road since W13 (T13.4); its rescue
+	// copies must still never overwrite each other.
 	x := &Executor{DB: db, Client: fake, SyncDir: syncDir,
-		QuarantineDir: quarantine, RootID: folder.ID}
+		QuarantineDir: quarantine, RootID: folder.ID, Trash: &trash.Fake{Unavailable: true}}
 
 	target := filepath.Join(syncDir, "f.txt")
 	quarantineOnce := func(content string) {

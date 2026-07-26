@@ -127,18 +127,30 @@ func assertGuardHeld(t *testing.T, res *Result, want reconcile.Type) {
 	if res.Executed != 0 {
 		t.Errorf("guard blocked but %d actions executed", res.Executed)
 	}
-	deletes := 0
-	for _, a := range res.Plan {
-		if a.Type == want && !a.IsDir {
-			deletes++
-		}
-	}
-	if deletes == 0 {
+	if deletes := plannedFileDeletes(res.Plan, want); deletes == 0 {
 		t.Errorf("expected %s actions in the blocked plan, got none", want)
 	}
 	if res.GuardReason == "" {
 		t.Error("guard blocked without a reason for `status`")
 	}
+}
+
+// plannedFileDeletes counts the FILES a plan deletes, seeing through the
+// W13-T2 collapse: a directory action that absorbed its subtree stands for
+// SubtreeFiles files, and every count that matters — the mass-delete guard's
+// above all — has to keep saying 1145, not 1.
+func plannedFileDeletes(plan []reconcile.Action, want reconcile.Type) int {
+	n := 0
+	for _, a := range plan {
+		switch {
+		case a.Type != want:
+		case a.IsDir:
+			n += a.SubtreeFiles
+		default:
+			n++
+		}
+	}
+	return n
 }
 
 // W12: the incident's exact race — the folder is trashed in Drive AND the
@@ -168,21 +180,15 @@ func TestRemoteTrashDuringPartialLocalDeletePlansNoUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cycle errored: %v", err)
 	}
-	var forgets, quarantines int
 	for _, a := range res.Plan {
-		switch {
-		case a.Type == reconcile.Upload, a.Type == reconcile.MkdirRemote:
+		if a.Type == reconcile.Upload || a.Type == reconcile.MkdirRemote {
 			t.Errorf("planned %s %s — deleted-in-Drive content must never be pushed back", a.Type, a.RelPath)
-		case a.Type == reconcile.Forget && !a.IsDir:
-			forgets++
-		case a.Type == reconcile.QuarantineLocal && !a.IsDir:
-			quarantines++
 		}
 	}
-	if forgets != deletedLocally {
+	if forgets := plannedFileDeletes(res.Plan, reconcile.Forget); forgets != deletedLocally {
 		t.Errorf("forget actions = %d, want %d (rows gone on both sides)", forgets, deletedLocally)
 	}
-	if quarantines != files-deletedLocally {
-		t.Errorf("quarantine actions = %d, want %d (rows still on disk)", quarantines, files-deletedLocally)
+	if deletes := plannedFileDeletes(res.Plan, reconcile.QuarantineLocal); deletes != files-deletedLocally {
+		t.Errorf("local delete actions = %d, want %d (rows still on disk)", deletes, files-deletedLocally)
 	}
 }

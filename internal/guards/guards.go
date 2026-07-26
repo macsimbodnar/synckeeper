@@ -47,9 +47,21 @@ func CheckMassDelete(plan []reconcile.Action, trackedFiles int, threshold float6
 	}
 	deletions := 0
 	for _, a := range plan {
-		if (a.Type == reconcile.TrashRemote || a.Type == reconcile.QuarantineLocal) && !a.IsDir {
-			deletions++
+		if a.Type != reconcile.TrashRemote && a.Type != reconcile.QuarantineLocal {
+			continue
 		}
+		// A directory delete that absorbed its subtree (W13-T2) still stands
+		// for every file inside it: count those, or a whole tree collapsed
+		// into one action would read as zero deletions and walk straight
+		// past the guard. The guard is called before the collapse for
+		// exactly that reason; counting SubtreeFiles here means the order
+		// can never silently become load-bearing again. An uncollapsed
+		// directory carries zero and stays excluded (R10).
+		if a.IsDir {
+			deletions += a.SubtreeFiles
+			continue
+		}
+		deletions++
 	}
 	if deletions > 10 && float64(deletions)/float64(trackedFiles) > threshold {
 		return fmt.Errorf("plan deletes %d of %d tracked files (over the %.0f%% mass-delete threshold); re-run with --confirm-deletes if intended: %w",

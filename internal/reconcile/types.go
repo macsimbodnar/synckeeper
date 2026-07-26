@@ -93,6 +93,20 @@ type Action struct {
 	// protection.
 	ProtectedBy string
 
+	// Subtree is what a collapsed directory delete stands for (W13-T2): the
+	// descendant deletes it absorbed, each carrying the stat the scan pinned,
+	// so the executor can verify at execution time that the directory still
+	// holds exactly the content the plan reasoned about — and nothing else —
+	// before moving the whole thing to the trash. Empty on every other action,
+	// including a directory delete that absorbed nothing.
+	Subtree []SubtreeEntry
+
+	// SubtreeFiles is the number of FILES a collapsed delete covers (the file
+	// entries of Subtree). It keeps counting honest after the collapse: the
+	// mass-delete guard counts content, not containers (spec §6, R10), and one
+	// action now stands for many files — reporting says "1145 files", not "1".
+	SubtreeFiles int
+
 	// Downloads: the local state the plan assumes will be at RelPath when
 	// the atomic replace happens (after moves and backups have run). The
 	// executor re-stats the target immediately before the rename and
@@ -101,6 +115,19 @@ type Action struct {
 	LocalExists  bool
 	LocalSize    int64
 	LocalMtimeNS int64
+}
+
+// SubtreeEntry is one covered descendant of a collapsed directory delete:
+// its rel_path plus, for a file, the size/mtime the scan observed. The
+// executor re-stats against those before the directory moves, so an edit
+// landing between scan and execution still wins the cycle (§4.2 "edit beats
+// delete", R13) even though its own action was absorbed.
+type SubtreeEntry struct {
+	RelPath string
+	IsDir   bool
+	FileID  string // the baseline row this entry retires
+	Size    int64
+	MtimeNS int64
 }
 
 // Skip is a reported, non-fatal exclusion (invalid name, type clash, ...).

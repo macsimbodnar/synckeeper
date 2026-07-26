@@ -71,6 +71,14 @@ func TestGateNoRawFSMutationOutsideLocalwrite(t *testing.T) {
 			if !ok {
 				return true
 			}
+			// Handing a path to the system trash removes it from the sync
+			// dir just as surely as os.Rename does (W13), whoever the
+			// receiver is — it belongs behind the gate with everything else.
+			if sel.Sel.Name == "MoveToTrash" {
+				t.Errorf("%s: local-path removal MoveToTrash outside the gate file (spec §7) — route it through localwrite.go",
+					fset.Position(call.Pos()))
+				return true
+			}
 			pkg, ok := sel.X.(*ast.Ident)
 			if !ok || pkg.Name != osName || !bannedOSCalls[sel.Sel.Name] {
 				return true

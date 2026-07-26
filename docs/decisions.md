@@ -13,6 +13,20 @@ Format:
 
 ---
 
+## 2026-07-26 — W13-T2/T3: how a collapsed folder delete is verified, committed, and counted
+
+**Context:** T2/T3 landed the collapse (one bin entry per deleted folder) and the executor's move to the bin. Three points where the plan met the code and the code had the last word — each recorded rather than deviated from silently.
+
+**1. The execution-time re-check is exact, not a count, and a refusal falls back to per-item (agent-proposed, within the plan's rule).** The plan asked the write gate to "walk the directory and refuse the collapse if anything unexpected lives there". A cheap file *count* would have been blind to a create+delete pair, and — worse — the absorbed per-file actions had carried the scan's size/mtime pin (R13, "edit beats delete"), which collapsing would have thrown away. So the collapsed action carries `Subtree []SubtreeEntry` — every covered descendant with the stat the scan observed — and `verifySubtree` walks the folder before the move: an entry the plan never saw, a type change, or any drift refuses. On refusal the executor deletes the subtree **item by item** (which re-applies the per-file guard, so the drifted file alone is refused and the op fails with its rows intact) instead of failing outright — that keeps today's envelope exactly: content is still rescued, and the survivor's directory still refuses to be removed. Cost: a subtree's paths + stats ride in one journal payload (~70 KB for 1145 files, in place of 1145 journal rows).
+
+**2. Rows are retired by file id, not by rel_path prefix (agent-proposed).** T4 specified `statedb.DeleteItemsUnder(relPath)`. But a directory delete's `RelPath` can be a *post-move local* path (`plan.go:586` emits the rewritten path) while its rows are still keyed at the baseline path — a prefix delete would then retire nothing, and in the mirror case could reach rows the action never covered. Shipped as `statedb.DeleteItemsByID(ids)` (batched, 400 per statement), fed by the `FileID` on each subtree entry: unambiguous whatever the paths did.
+
+**3. The mass-delete guard also counts `SubtreeFiles` (agent-proposed, belt and braces).** The plan's rule — run the guard *before* the collapse — is implemented and holds. But an ordering rule that is invisible in the code it protects is exactly how A2 shipped, so `guards.CheckMassDelete` now counts a directory delete's `SubtreeFiles` as well. An uncollapsed directory carries zero and stays excluded (R10 intact); a collapsed 1145-file folder counts 1145 whichever order it is called in. Pinned by `TestT13GuardCountsACollapsedSubtreesFiles` and `TestT13CollapseKeepsTheMassDeleteGuardCounting`.
+
+**Also decided here (agent-proposed):** the collapse only runs when a bin is actually available, so a platform without one keeps the exact per-item quarantine path that has been in production since W1 — the fallback is proven code, not a second new road. And **no test may reach the developer's own trash**: `trash.Fake` is the default in both suites' `TestMain`, after an early run of the suite put four items in Max's real Linux bin (removed; his own entries untouched).
+
+**Consequences:** spec §3 invariant 3 rewritten, §4.2 gains the collapse rule, §10 gains the `trash` module row; MANUAL §6/§7 rewritten around the system bin with the quarantine as fallback; `activity` reports one `trash` entry per subtree with its file count and names the quarantine when there is no bin; `info` shows the bin destination. The local-write gate now covers `MoveToTrash` (spec §7), enforced by the AST test. testing.md T13.4–T13.15; R13/R20/R21 restated for the new destination.
+
 ## 2026-07-25 — W12-F2 resolved (guard is correct); the incident's blast radius corrected; W12 re-planned ahead of W13
 
 **Context:** the W12 incident listed two defects. F2 claimed the mass-delete guard had failed to fire on a cycle deleting 890 of 891 tracked files.

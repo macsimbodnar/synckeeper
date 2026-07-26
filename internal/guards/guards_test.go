@@ -86,3 +86,20 @@ func TestR10GuardCountsContentNotContainers(t *testing.T) {
 		t.Errorf("small file fraction must pass regardless of dir count: %v", err)
 	}
 }
+
+// T13.5 (W13-T2, A2's mirror image): a directory delete that absorbed its
+// whole subtree stands for the files inside it. Counting the container as one
+// deletion — or as none — would wave a 1145-file folder straight past the
+// guard, which is the exact moment it exists for.
+func TestT13GuardCountsACollapsedSubtreesFiles(t *testing.T) {
+	collapsed := []reconcile.Action{
+		{Type: reconcile.QuarantineLocal, RelPath: "pack", IsDir: true, SubtreeFiles: 50},
+	}
+	if err := CheckMassDelete(collapsed, 100, 0.25, false); err == nil {
+		t.Error("a collapsed 50-file folder must trip the guard, not read as zero deletions")
+	}
+	// The R10 rule is unchanged for a directory that stands for nothing.
+	if err := CheckMassDelete(dirDeletionPlan(21), 21, 0.25, false); err != nil {
+		t.Errorf("an uncollapsed directory delete must still be a container, not content: %v", err)
+	}
+}

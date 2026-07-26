@@ -15,6 +15,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 type machine struct {
@@ -22,6 +23,7 @@ type machine struct {
 	dir  string
 	db   *statedb.DB
 	eng  *Engine
+	bin  *trash.Fake // this machine's system bin (W13)
 }
 
 func newWorld(t *testing.T) (*driveclient.Fake, string) {
@@ -55,15 +57,35 @@ func newMachine(t *testing.T, name string, fake *driveclient.Fake, rootID string
 	}
 	cfg := config.Default()
 	cfg.Engine.MachineName = name
+	bin := trash.NewFake(filepath.Join(base, "bin"))
 	return &machine{
 		name: name,
 		dir:  dir,
 		db:   db,
+		bin:  bin,
 		eng: &Engine{
 			DB: db, Client: fake, Cfg: cfg, SyncDir: dir,
 			QuarantineDir: filepath.Join(base, "quarantine"), RootID: rootID,
+			Trash: bin,
 		},
 	}
+}
+
+// binPath is where a trashed rel_path lands in this machine's bin: the item
+// keeps its base name, since the bin is flat like the real ones.
+func (m *machine) binPath(rel string) string {
+	return filepath.Join(m.bin.Dir, filepath.Base(rel))
+}
+
+// binHas reports whether the bin holds the item at the given path inside a
+// trashed entry (e.g. "docs" trashed whole still holds "docs/a.txt").
+func (m *machine) binRead(t *testing.T, entry, sub string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(m.bin.Dir, entry, filepath.FromSlash(sub)))
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func (m *machine) sync(t *testing.T) *Result {
@@ -293,16 +315,9 @@ func TestS5DeletePropagates(t *testing.T) {
 			t.Error("gone.txt still listed (not trashed) on Drive")
 		}
 	}
-	// b's copy is preserved in quarantine, not destroyed.
-	quarantined := false
-	filepath.WalkDir(b.eng.QuarantineDir, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && d.Name() == "gone.txt" {
-			quarantined = true
-		}
-		return nil
-	})
-	if !quarantined {
-		t.Error("gone.txt not found in machine b's quarantine")
+	// b's copy is preserved in b's system bin, not destroyed (W13).
+	if raw, err := os.ReadFile(b.binPath("gone.txt")); err != nil || string(raw) != "delete me" {
+		t.Errorf("gone.txt not recoverable from machine b's bin: %q, %v", raw, err)
 	}
 	assertConverged(t, a, b)
 }
@@ -444,16 +459,9 @@ func TestS7MoveOutOfTreeQuarantines(t *testing.T) {
 	if a.exists("escaping.txt") {
 		t.Error("file moved out of tree still present locally")
 	}
-	// Preserved in quarantine, not destroyed.
-	found := false
-	filepath.WalkDir(a.eng.QuarantineDir, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && d.Name() == "escaping.txt" {
-			found = true
-		}
-		return nil
-	})
-	if !found {
-		t.Error("out-of-tree file not quarantined")
+	// Preserved in the system bin, not destroyed.
+	if raw, err := os.ReadFile(a.binPath("escaping.txt")); err != nil || string(raw) != "bye" {
+		t.Errorf("out-of-tree file not recoverable from the bin: %q, %v", raw, err)
 	}
 }
 

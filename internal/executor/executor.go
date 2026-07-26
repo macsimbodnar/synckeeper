@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 const transferWorkers = 4
@@ -40,6 +43,7 @@ const (
 	CPDownloadTempWritten  = "download_temp_written"  // temp complete, target untouched
 	CPDownloadBeforeCommit = "download_before_commit" // target replaced, DB row still old
 	CPQuarantineBeforeMove = "quarantine_before_move" // quarantine decided, file untouched
+	CPTrashBeforeCommit    = "trash_before_commit"    // content in the bin, rows not yet dropped
 )
 
 func checkpoint(name string) error {
@@ -61,6 +65,13 @@ type Executor struct {
 	// sweeps ignored (and temp) leftovers — the only content invisible to
 	// the plan by design — into the quarantine with the dir (R20).
 	Ignore []string
+
+	// Trash is where content deleted in Drive goes: the user's own system
+	// bin, which their desktop already shows and can restore from (W13).
+	// nil means the platform's trash; tests inject a fake so the suite never
+	// touches the developer's real one. The quarantine stays as the fallback
+	// for every build and failure that has no usable trash.
+	Trash trash.Trasher
 
 	mu               sync.Mutex
 	pathIDs          map[string]string // rel_path -> drive file id, for parent lookup
@@ -276,7 +287,7 @@ func (x *Executor) execute(ctx context.Context, opID int64, a reconcile.Action) 
 	case reconcile.TrashRemote:
 		return x.trashRemote(ctx, opID, a)
 	case reconcile.QuarantineLocal:
-		return x.quarantineLocal(opID, a)
+		return x.trashLocal(opID, a)
 	case reconcile.Forget:
 		return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 			return statedb.DeleteItemByID(tx, a.FileID)
@@ -586,38 +597,156 @@ func uniqueRescueDest(dest string) string {
 	}
 }
 
-func (x *Executor) quarantineLocal(opID int64, a reconcile.Action) error {
-	abs := x.abs(a.RelPath)
+// defaultTrash is the bin used when Executor.Trash is nil. A var so the
+// suite's TestMain can pin it to a temporary one: no test may ever move a
+// file into the developer's own trash.
+var defaultTrash trash.Trasher = trash.OS()
+
+// trasher is the system trash this run uses.
+func (x *Executor) trasher() trash.Trasher {
+	if x.Trash != nil {
+		return x.Trash
+	}
+	return defaultTrash
+}
+
+// trashLocal removes local content whose remote was deleted — the only
+// deletion Drive can cause on this machine (spec §4.2). It goes to the user's
+// system bin, where their desktop shows it and can restore it; the private
+// quarantine is the fallback for builds and failures with no usable trash.
+// Nothing here ever deletes content outright (invariant 3).
+//
+// A directory action may stand for its whole subtree (the W13-T2 collapse),
+// so one folder deleted in Drive leaves one restorable entry in the bin
+// instead of one per file.
+func (x *Executor) trashLocal(opID int64, a reconcile.Action) error {
+	var err error
 	if a.IsDir {
-		// Children were quarantined first (bottom-up); the dir should be
-		// empty now except for content the plan cannot see by design —
-		// ignored and temp leftovers travel to the quarantine with the dir
-		// (R20). A survivor beyond those means something unexpected;
-		// leave it and fail the op rather than lose data.
-		if err := sweepInvisibleLeftovers(abs, x.quarantineDest(a.RelPath), x.Ignore); err != nil {
-			return fmt.Errorf("sweep invisible leftovers: %w", err)
-		}
-		if err := guardedRemoveEmptyDir(abs); err != nil {
-			return fmt.Errorf("remove dir (should be empty after children): %w", err)
-		}
+		err = x.removeDir(a)
 	} else {
-		dest := uniqueRescueDest(x.quarantineDest(a.RelPath))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		err = x.removeFile(a.RelPath, expFromAction(a))
+	}
+	if err != nil {
+		return err
+	}
+	if err := checkpoint(CPTrashBeforeCommit); err != nil {
+		return err
+	}
+	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
+		if err := statedb.DeleteItemByID(tx, a.FileID); err != nil {
 			return err
 		}
-		if err := checkpoint(CPQuarantineBeforeMove); err != nil {
+		if len(a.Subtree) == 0 {
+			return nil
+		}
+		ids := make([]string, 0, len(a.Subtree))
+		for _, e := range a.Subtree {
+			ids = append(ids, e.FileID)
+		}
+		return statedb.DeleteItemsByID(tx, ids)
+	})
+}
+
+// removeFile moves one file out of the sync dir: to the bin, or to the
+// quarantine when there is no usable bin. exp is the scan's pinned stat and
+// is enforced on both roads (R13).
+func (x *Executor) removeFile(rel string, exp expectation) error {
+	abs := x.abs(rel)
+	if err := checkpoint(CPQuarantineBeforeMove); err != nil {
+		return err
+	}
+	t := x.trasher()
+	if t.Available() {
+		err := guardedTrashPath(abs, "trash source "+rel, exp, t)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, errTrashUnusable) {
 			return err
 		}
-		// R13 (spec §4.2 "edit beats delete", A7): the source must still be
-		// the file the scan observed — an edit landing between scan and
-		// execution wins the cycle instead of being quarantined.
-		if err := guardedMoveFile(abs, dest, "quarantine source "+a.RelPath, expFromAction(a)); err != nil {
+		slog.Warn("system trash refused the file; using the quarantine instead", "rel_path", rel, "err", err)
+	}
+	dest := uniqueRescueDest(x.quarantineDest(rel))
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	// R13 (spec §4.2 "edit beats delete", A7): the source must still be the
+	// file the scan observed — an edit landing between scan and execution
+	// wins the cycle instead of being rescued out from under the user.
+	return guardedMoveFile(abs, dest, "quarantine source "+rel, exp)
+}
+
+// removeDir moves a directory out of the sync dir. When the plan collapsed
+// the subtree into this one action the whole tree goes to the bin in one
+// move; otherwise the directory is the empty leftover of per-item deletes
+// and the same walk proves it holds nothing unexpected. Anything the plan
+// did not reason about — a file created after the scan, a survivor the
+// scanner skipped — falls the action back to item-by-item removal, so a
+// stranger is never carried off with the folder.
+func (x *Executor) removeDir(a reconcile.Action) error {
+	abs := x.abs(a.RelPath)
+	covered := map[string]reconcile.SubtreeEntry{}
+	for _, e := range a.Subtree {
+		rel, ok := strings.CutPrefix(e.RelPath, a.RelPath+"/")
+		if !ok {
+			return fmt.Errorf("subtree entry %s is not under %s", e.RelPath, a.RelPath)
+		}
+		covered[rel] = e
+	}
+	t := x.trasher()
+	if t.Available() {
+		err := guardedTrashDir(abs, covered, x.Ignore, t)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, errSubtreeUnexpected):
+			slog.Warn("directory changed since the scan; deleting it item by item instead",
+				"rel_path", a.RelPath, "err", err)
+		case errors.Is(err, errTrashUnusable):
+			slog.Warn("system trash refused the directory; deleting it item by item instead",
+				"rel_path", a.RelPath, "err", err)
+		default:
 			return err
 		}
 	}
-	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
-		return statedb.DeleteItemByID(tx, a.FileID)
+	return x.removeDirPerItem(a)
+}
+
+// removeDirPerItem is the fallback road: every covered file moved on its own
+// (bin first, quarantine second), then the directories emptied out
+// deepest-first. A directory that still holds something unexpected refuses to
+// be removed — os.Remove's own refusal is the guard — and the op fails with
+// its rows intact, so the next cycle replans against what is actually there.
+func (x *Executor) removeDirPerItem(a reconcile.Action) error {
+	dirs := []string{a.RelPath}
+	for _, e := range a.Subtree {
+		if e.IsDir {
+			dirs = append(dirs, e.RelPath)
+			continue
+		}
+		if err := x.removeFile(e.RelPath, expectation{exists: true, size: e.Size, mtimeNS: e.MtimeNS}); err != nil {
+			return err
+		}
+	}
+	// Deepest first: a parent is only empty once its children are gone.
+	sort.Slice(dirs, func(i, j int) bool {
+		if d1, d2 := strings.Count(dirs[i], "/"), strings.Count(dirs[j], "/"); d1 != d2 {
+			return d1 > d2
+		}
+		return dirs[i] > dirs[j]
 	})
+	for _, rel := range dirs {
+		// Ignored and temp leftovers are the only content the plan cannot
+		// see by design; they travel to the quarantine with the dir (R20)
+		// rather than wedging its removal forever.
+		if err := sweepInvisibleLeftovers(x.abs(rel), x.quarantineDest(rel), x.Ignore); err != nil {
+			return fmt.Errorf("sweep invisible leftovers: %w", err)
+		}
+		if err := guardedRemoveEmptyDir(x.abs(rel)); err != nil {
+			return fmt.Errorf("remove dir (should be empty after its content): %w", err)
+		}
+	}
+	return nil
 }
 
 func (x *Executor) renamePathIDs(from, to string) {

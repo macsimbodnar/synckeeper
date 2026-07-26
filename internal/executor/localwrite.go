@@ -11,14 +11,17 @@ package executor
 // point and not a convention.
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 // expectation is what a mutation expects to find at the path it acts on.
@@ -160,6 +163,104 @@ func guardedMoveFile(from, to, what string, exp expectation) error {
 		return err
 	}
 	return os.Remove(from)
+}
+
+// errTrashUnusable marks a failure of the system trash itself — no trash on
+// this platform, a destination we cannot write, a rename the OS refused. The
+// caller falls back to the quarantine on it (invariant 3: a remote deletion
+// is never a permanent local one). It is deliberately NOT returned for a
+// guard refusal: content that drifted since the scan must fail the action,
+// never quietly take the other road.
+var errTrashUnusable = errors.New("system trash unusable")
+
+// errSubtreeUnexpected means a directory holds something its collapsed
+// delete never reasoned about (a file created after the scan, a survivor the
+// plan skipped) or something that changed since the scan. The caller falls
+// back to deleting the subtree item by item, so nothing the plan never saw
+// is moved anywhere.
+var errSubtreeUnexpected = errors.New("directory content changed since the scan")
+
+// guardedTrashPath verifies the path against exp and hands it to the system
+// trash. exp is checked first and its refusal is returned bare: an edit that
+// landed after the scan wins the cycle (§4.2 "edit beats delete", R13), and
+// it must not be rescued to the quarantine instead.
+func guardedTrashPath(abs, what string, exp expectation, t trash.Trasher) error {
+	if exp.exists {
+		if _, err := guardedStat(abs, what, exp, refuseVanished); err != nil {
+			return err
+		}
+	}
+	if err := t.MoveToTrash(abs); err != nil {
+		return fmt.Errorf("%w: %v", errTrashUnusable, err)
+	}
+	return nil
+}
+
+// guardedTrashDir moves a whole directory to the system trash after proving
+// it holds exactly what the collapsed delete says it holds: every covered
+// entry still matching the stat the scan pinned, and nothing else except the
+// content invisible to the plan by design (ignored and temp files, which ride
+// along inside the directory — R20's guarantee, now via the bin).
+//
+// covered is keyed by path relative to abs. An empty map is the ordinary
+// "this directory should be empty" case and is checked by the same walk.
+func guardedTrashDir(abs string, covered map[string]reconcile.SubtreeEntry, ignore []string, t trash.Trasher) error {
+	if err := verifySubtree(abs, covered, ignore); err != nil {
+		return err
+	}
+	if err := t.MoveToTrash(abs); err != nil {
+		return fmt.Errorf("%w: %v", errTrashUnusable, err)
+	}
+	return nil
+}
+
+// verifySubtree walks dir and checks every visible entry against covered.
+// Ignored and temp names are skipped whole (an ignored directory is not
+// descended into), matching what the scanner never reported and the plan
+// therefore never reasoned about.
+func verifySubtree(dir string, covered map[string]reconcile.SubtreeEntry, ignore []string) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == dir {
+			return nil
+		}
+		name := d.Name()
+		if names.Ignored(name, ignore) || strings.HasPrefix(name, names.TempPrefix) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		e, ok := covered[rel]
+		if !ok {
+			return fmt.Errorf("%w: %s was not part of the planned deletion", errSubtreeUnexpected, rel)
+		}
+		if e.IsDir != d.IsDir() {
+			return fmt.Errorf("%w: %s changed type since the scan", errSubtreeUnexpected, rel)
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil // vanished on its own; the deletion still gets its way
+			}
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Size() != e.Size || info.ModTime().UnixNano() != e.MtimeNS {
+			return fmt.Errorf("%w: %s (size %d mtime %d, scanned %d/%d)",
+				errSubtreeUnexpected, rel, info.Size(), info.ModTime().UnixNano(), e.Size, e.MtimeNS)
+		}
+		return nil
+	})
 }
 
 // removeOwnTemp deletes one of synckeeper's own temp files and refuses any

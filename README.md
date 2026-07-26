@@ -1,6 +1,6 @@
 # Synckeeper
 
-Personal bidirectional sync: one local folder (`~/Synckeeper`) ↔ one Google Drive folder. Go, daemon-first. Many machines sync independently against Drive as the hub. Built for one user, with strict durability: three-way reconcile against a local SQLite baseline, atomic writes, trash/quarantine instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable ops. Non-negotiable invariants: [spec §3](docs/spec.md).
+Personal bidirectional sync: one local folder (`~/Synckeeper`) ↔ one Google Drive folder. Go, daemon-first. Many machines sync independently against Drive as the hub. Built for one user, with strict durability: three-way reconcile against a local SQLite baseline, atomic writes, Drive bin + system trash instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable ops. Non-negotiable invariants: [spec §3](docs/spec.md).
 
 **Status:** build-out phases (0–7) complete and retired; the primary-platform workstreams (correctness, fuzzer, FSEvents watcher, daemon-first polish) are done and the tool is daily-usable there. Current: real multi-machine rollout + the Linux/Windows ports. Live pointer: [docs/status.md](docs/status.md); backlog: [docs/plan.md](docs/plan.md).
 
@@ -44,6 +44,7 @@ The daemon is the product; the CLI (and any future UI) are thin clients of it. O
 | `internal/names` | name mapping, case/normalization fold, validity rules |
 | `internal/guards` | mass-delete guard, sync-dir sanity, instance lock |
 | `internal/service` | login service (launchd / systemd / Task Scheduler); log-perm hardening |
+| `internal/trash` | OS trash module: freedesktop (Linux, pure Go), `NSFileManager` (macOS, cgo), unavailable elsewhere; `Fake` bin for tests |
 | `internal/doctor` | DB ↔ disk ↔ Drive cross-check + additive repair |
 | `internal/audit` | pre-publication secret-scan gate (`make audit`) |
 

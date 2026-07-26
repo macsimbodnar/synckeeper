@@ -16,6 +16,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/service"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 func newInfoCmd() *cobra.Command {
@@ -56,6 +57,7 @@ type infoView struct {
 	credLoose     bool // readable by group/world (W7-L6)
 	socketPath    string
 	quarantineDir string
+	trashDest     string // where remote deletions go (W13); quarantine is the fallback
 	logPath       string // "" when logs aren't file-based (Linux/Windows)
 
 	syncDir     string
@@ -102,6 +104,7 @@ func gatherInfo() infoView {
 	v.credPath = filepath.Join(configDir, auth.CredentialsFile)
 	v.socketPath = filepath.Join(configDir, "control.sock")
 	v.quarantineDir = filepath.Join(configDir, "quarantine")
+	v.trashDest = trash.Describe()
 	v.logPath = service.LogPath()
 
 	if fi, err := os.Stat(v.credPath); err == nil {
@@ -200,6 +203,7 @@ func printInfoHuman(w io.Writer, v infoView) {
 	}
 	fmt.Fprintf(w, "  control.sock %s\n", v.socketPath)
 	fmt.Fprintf(w, "  quarantine   %s\n", v.quarantineDir)
+	fmt.Fprintf(w, "  system bin   %s\n", v.trashDest)
 	if v.logPath != "" {
 		fmt.Fprintf(w, "  log          %s\n", v.logPath)
 	}
@@ -248,6 +252,7 @@ func printInfoJSON(w io.Writer, v infoView) error {
 			"credentials_json": v.credPath,
 			"control_socket":   v.socketPath,
 			"quarantine":       v.quarantineDir,
+			"system_bin":       v.trashDest,
 			"log":              v.logPath,
 		},
 		"credentials_present": v.credExists,

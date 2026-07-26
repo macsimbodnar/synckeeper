@@ -22,6 +22,7 @@ func sampleInfoView() infoView {
 		credPath:      "/cfg/credentials.json",
 		socketPath:    "/cfg/control.sock",
 		quarantineDir: "/cfg/quarantine",
+		trashDest:     "freedesktop trash at /home/max/.local/share/Trash",
 		logPath:       "/logs/synckeeper.log",
 		syncDir:       "/home/max/Synckeeper",
 		driveFolder:   "Synckeeper",
@@ -52,6 +53,7 @@ func TestPrintInfoHuman(t *testing.T) {
 		"synckeeper 1.2.3",
 		"/cfg/config.toml", "/cfg/state.db", "/cfg/token.json", "0600",
 		"/cfg/credentials.json", "/cfg/control.sock", "/cfg/quarantine", "/logs/synckeeper.log",
+		"system bin   freedesktop trash at /home/max/.local/share/Trash",
 		"/home/max/Synckeeper", `"Synckeeper"`, "root123", "max_mbp", "ab12cd",
 		"embedded default (author's client)", "984-client.apps.googleusercontent.com",
 		"refresh token present", "poll interval:    45s", "mass-delete:      0.25",
@@ -108,6 +110,10 @@ func TestPrintInfoJSON(t *testing.T) {
 	}
 	if m["version"] != "1.2.3" || m["machine_id"] != "ab12cd" {
 		t.Errorf("version/machine_id wrong: %v / %v", m["version"], m["machine_id"])
+	}
+	// W13-T5: where a deletion arriving from Drive ends up.
+	if paths["system_bin"] != "freedesktop trash at /home/max/.local/share/Trash" {
+		t.Errorf("paths.system_bin = %v, want the trash destination", paths["system_bin"])
 	}
 }
 
