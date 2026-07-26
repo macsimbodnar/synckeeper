@@ -350,3 +350,8 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Verified on real hardware:** trashed a file through the module into the actual desktop trash; `gio trash --list` shows it with the right restore path, and the `.trashinfo` reads correctly. 7 Linux tests + 3 darwin tests; `CGO_ENABLED=0 GOOS=darwin` and `GOOS=windows` builds green. **The darwin path is written but not compiled anywhere yet — it needs one `go test ./internal/trash/` on the Mac.**
 - Noticed while checking the desktop trash: **Max's local `kenney_ui-pack-space-expansion` is in his Linux desktop trash** (`trash:///kenney_ui-pack-space-expansion → /home/max/Synckeeper/…`), i.e. his "deleted by hand" was a file-manager trash, and that copy is still restorable.
 - testing.md W13 section (T13.1/2/3/8/9 passing, T13.10 unverified-on-Mac); plan.md T1 done. Next: T2 (collapse pass) + T3 (executor wiring).
+
+### 2026-07-26 — status check: what's next
+> "what is the next step in the plan?"
+- Read status.md + plan.md W13. Answer: **W13-T2** (collapse pass — trash the highest fully-deleted directory, guard runs *before* the collapse, action carries `SubtreeFiles`), then T3 (executor/write-gate `trashLocal` with the quarantine as fallback). Outstanding side item from T1: the darwin trash path is written but never compiled — needs one `go test ./internal/trash/` on the Mac.
+- No code, spec, or plan change this prompt.
