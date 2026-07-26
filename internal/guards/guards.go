@@ -34,20 +34,35 @@ func CheckSyncDir(dir string, trackedItems int) error {
 	return nil
 }
 
-// CheckMassDelete refuses plans that delete more than threshold of tracked
-// files (and more than 10 absolute) unless the user confirmed. It counts
-// content, not containers (spec §6, R10): directory deletions are excluded
-// from the count and trackedFiles excludes directories — an empty folder
-// disappearing is not the loss the guard exists to catch, and counting
-// containers made an ordinary folder reorganisation abort the one-shot and
-// wedge the daemon in a standing block (A2).
-func CheckMassDelete(plan []reconcile.Action, trackedFiles int, threshold float64, confirmed bool) error {
-	if confirmed || trackedFiles == 0 {
+// CheckMassDelete refuses a plan whose deletions would land somewhere the
+// user cannot restore them from. **The trigger is recoverability, not volume**
+// (W14, 2026-07-26): deleting a lot is not suspicious when every deleted item
+// is one gesture away in a bin the user can see.
+//
+//   - Deletions on Drive (TrashRemote) are never guarded: they go to Drive's
+//     own bin, visible and restorable in the web UI.
+//   - Deletions on this machine (QuarantineLocal) are guarded only when there
+//     is no system bin to receive them (binAvailable false) — then the content
+//     goes to the private dated quarantine, which the user does not see and
+//     which purges itself after quarantine_retention_days. That is the one
+//     case where a large deletion is worth a question.
+//
+// For the case that remains the old rule is unchanged: more than threshold of
+// tracked files AND more than 10 absolute, counting content and not containers
+// (spec §6, R10) — an empty folder disappearing is not the loss the guard
+// exists to catch, and counting containers made an ordinary folder
+// reorganisation abort the one-shot and wedge the daemon in a standing block
+// (A2). CheckSyncDir is a different guard and is not affected by any of this:
+// a missing, unreadable, or empty sync dir is never a deletion.
+func CheckMassDelete(plan []reconcile.Action, trackedFiles int, threshold float64, confirmed, binAvailable bool) error {
+	if confirmed || trackedFiles == 0 || binAvailable {
 		return nil
 	}
 	deletions := 0
 	for _, a := range plan {
-		if a.Type != reconcile.TrashRemote && a.Type != reconcile.QuarantineLocal {
+		// Drive-side deletions are recoverable from Drive's bin whatever
+		// this machine can offer, so they never count.
+		if a.Type != reconcile.QuarantineLocal {
 			continue
 		}
 		// A directory delete that absorbed its subtree (W13-T2) still stands
@@ -64,7 +79,7 @@ func CheckMassDelete(plan []reconcile.Action, trackedFiles int, threshold float6
 		deletions++
 	}
 	if deletions > 10 && float64(deletions)/float64(trackedFiles) > threshold {
-		return fmt.Errorf("plan deletes %d of %d tracked files (over the %.0f%% mass-delete threshold); re-run with --confirm-deletes if intended: %w",
+		return fmt.Errorf("plan removes %d of %d tracked files from this machine (over the %.0f%% threshold) and there is no system bin to rescue them to — they would go to the private quarantine instead; re-run with --confirm-deletes if intended: %w",
 			deletions, trackedFiles, threshold*100, ErrMassDelete)
 	}
 	return nil

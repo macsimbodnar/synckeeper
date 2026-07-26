@@ -47,14 +47,14 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 | `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Stop the daemon first — `login` takes the instance lock, because a running daemon holds the old token in memory. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon runs, delegated to it and awaited. `--dry-run`: print the plan, change nothing (needs daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously, foreground: local changes picked up under a second, remote within the poll interval. |
-| `status [--json] [--watch]` | Daemon state, last sync, config, guard blocks, recent activity. Works daemon up or down. `--watch` refreshes until interrupted. |
+| `status [--json] [--watch]` | Daemon state, last sync, config, guard blocks, where deletions from Drive land (system bin or quarantine), recent activity. Works daemon up or down. `--watch` refreshes until interrupted. |
 | `activity [-n N]` | Last N (default 20) synced items with direction (local→drive / drive→local / conflict). |
 | `pause` / `resume` | Suspend / resume automatic syncing in the running daemon. Explicit `sync` still works while paused. Pause doesn't survive a daemon restart. |
 | `reload` | Re-read `config.toml` in the running daemon. Hot fields apply live; identity fields reported as needing a restart (§4). |
 | `config` | Print the effective config and the file it's read from. |
 | `account` | Token status, which OAuth client is active (embedded default or your own), and the signed-in Google account (email via one `about.get`; online only, skipped offline). |
 | `info [--json]` | One-shot static snapshot: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json` — both with their permission mode, flagged when other users can read them; `control.sock`, quarantine, system bin, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; local state (tracked items, pending ops, quarantine). Read-only, offline (email → `account`), works before `init`. `--json` for scripts. |
-| `doctor [--repair]` | Cross-check state DB vs disk vs Drive. `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites. |
+| `doctor [--repair]` | Cross-check state DB vs disk vs Drive; reports the system-bin destination. `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites. |
 | `service install\|uninstall\|status` | Manage the login service running `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, kept owner-only `0600` since it records synced file names). `install` then checks whether the daemon actually started and names the likely cause (e.g. missing `credentials.json`) if not. |
 | `help [command]` | Usage help for Synckeeper or a specific command (built-in). |
 | `completion <bash\|zsh\|fish\|powershell>` | Print a shell autocompletion script (built-in); `synckeeper completion <shell> --help` shows how to install it. |
@@ -72,7 +72,7 @@ sync_dir = "~/Synckeeper"        # the synced folder — restart
 
 [engine]
 poll_interval_secs = 45          # how often remote changes are polled — hot
-mass_delete_threshold = 0.25     # fraction of tracked files, see §6 — hot
+mass_delete_threshold = 0.25     # only where deletions are unrecoverable, see §6 — hot
 machine_name = "max_mbp"         # appears in conflict-copy names — restart
 quarantine_retention_days = 30   # rescue copies kept this long — hot
 ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # hot
@@ -101,12 +101,12 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 - **Conflicts.** Same file changed both sides → remote keeps the name, your local version kept beside it as `name (conflict <machine> <date_time>).ext` — and uploaded too, so every machine sees both. Nothing lost.
 - **Deletes never permanent.** Deleted in Drive → the local copy goes to **your system bin** (macOS Trash / Linux desktop trash), where you can restore it like anything else you deleted; deleted locally → the Drive file goes to Drive's bin (restorable ~30 days).
-- **A deleted folder is one bin entry.** A folder deleted in Drive arrives in your bin as that folder, contents inside, restorable in one go — not as one entry per file. If anything inside it changed since the scan, or a file the sync never saw is in there, the folder is removed file by file instead and the stranger is left alone.
+- **A deleted folder is one bin entry, both ways.** A folder deleted in Drive arrives in your bin as that folder, contents inside, restorable in one go — not as one entry per file. A folder you delete locally likewise goes into Drive's bin as one folder. If anything inside it changed since the scan, or a file the sync never saw is in there, the folder is removed file by file instead and the stranger is left alone.
 - **No system bin? Quarantine.** Where the OS offers no trash (unsupported platform, a build without it, a bin that refuses the move), the copy goes to the dated quarantine folder (`<config dir>/quarantine/<date>/…`, kept `quarantine_retention_days` days) exactly as before. `activity` names the one that was used (`trash` vs `quarantine`); `info` shows the bin destination.
 - **Edit beats delete, always.** Deleted one side, edited the other → the edit survives and comes back.
 - **Moves/renames synced as moves**, files and folders alike: the Drive file/folder keeps its identity and history; a folder rename travels as one operation. (Exception: renaming an *empty* folder syncs as delete + recreate — no contents as evidence — costing only the folder's Drive-side id.)
-- **Mass-delete guard.** A plan deleting >25% of your files (and >10) is held back: a one-shot `sync` stops and asks for `--confirm-deletes`; the daemon keeps syncing everything else and shows the block in `status` until you confirm with `synckeeper sync --confirm-deletes`. The daemon never self-confirms deletions. **Deleting one big folder trips this** whenever that folder holds most of your synced files — the block is the guard working, not a stuck sync: `status` names the count and the reason. **Confirm on each machine** (every machine guards its own copy); held-back deletions are *not* listed by `activity`, since nothing was deleted.
-- **Sanity guard.** Sync folder missing, unreadable, or suddenly empty while files are tracked (an unmounted disk looks exactly like "everything deleted") → syncing stops with an error instead of propagating deletions.
+- **Mass-delete guard — only when a deletion can't be undone.** Deleting a lot is not held back: everything you delete is one restore away, in Drive's bin or your own. The guard fires only where that isn't true — **a machine with no system bin**, where the local copies fall back to the quarantine folder — and then only past >25% of your files and >10 absolute. There, a one-shot `sync` stops and asks for `--confirm-deletes`, the daemon keeps syncing everything else and shows the block in `status` until you confirm, and it never self-confirms. `status`/`doctor` say plainly when your machine has no bin. **A large deletion that *did* run is reported**, not hidden: a `deleted` line in `activity` with the count and where to restore from.
+- **Sanity guard (not confirmable).** Sync folder missing, unreadable, or suddenly empty while files are tracked → syncing stops with an error. No flag overrides it: an unmounted disk is never a deletion.
 - **Not synced (skipped — reported in `sync` output, not `status`):** Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, filesystem-invalid names, Drive same-name duplicates in one folder (first wins, rest skipped). Listed by a one-shot `synckeeper sync` (and `init --adopt`); the daemon doesn't surface them in `status`. Ignored patterns skipped silently.
 - **Crash safe.** Interrupt at any point (crash, kill, power loss) → recovered next run; partial transfers discarded and replanned.
 
@@ -118,7 +118,8 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 | `login`/`init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run the `login`/`init`, then reinstall the service. |
 | Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). The service runs `watch`, which can't sign in by itself: if you've never signed in, `synckeeper service uninstall` → `synckeeper init` → reinstall. |
 | State DB lost or corrupted | `synckeeper doctor --repair` — rebuilds metadata and re-adopts matching files; next `sync` re-uploads/downloads the rest. Never deletes. |
-| Need a deleted file back | Check your system bin (a folder comes back whole), then Drive's bin. On a platform with no system bin, the quarantine folder (`<config dir>/quarantine/<date>/…`). |
+| Need a deleted file back | Check your system bin (a folder comes back whole), then Drive's bin. On a platform with no system bin, the quarantine folder (`<config dir>/quarantine/<date>/…`). Bins are not forever — Drive's empties after ~30 days, and your desktop's may too. |
+| Deleted a lot and want to see what went | `synckeeper activity` — a large deletion leaves a `deleted` line with the count and the destination. |
 | Something looks off | `synckeeper status -v`, then `synckeeper doctor` for a full cross-check. |
 
 ## 8. Known bugs

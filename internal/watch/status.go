@@ -177,12 +177,46 @@ func (r *recorder) recordActivity(res *engine.Result) {
 			}
 			r.append(statedb.Activity{TS: now, Kind: kind, RelPath: a.RelPath, Detail: detail, Source: activitySource(a.Type)})
 		}
+		r.recordDeletionSummary(res, now)
 		return
 	}
 	r.append(statedb.Activity{TS: now, Kind: "error", Detail: cycleSummaryText(res)})
 	for _, e := range res.Errors {
 		r.append(statedb.Activity{TS: now, Kind: "error", Detail: e})
 	}
+}
+
+// recordDeletionSummary is what replaced the mass-delete block for
+// recoverable deletions (W14-M3): a cycle that removed a large share of the
+// tracked files is not stopped, but it leaves a line the user cannot miss —
+// bins keep their contents for a while, not forever. A cycle that could not
+// reach the bin at all says so too (W14-M2), since a capability probe cannot
+// see an item the bin refused.
+func (r *recorder) recordDeletionSummary(res *engine.Result, now int64) {
+	if res.QuarantineFell > 0 {
+		r.append(statedb.Activity{TS: now, Kind: "quarantine", Source: "remote",
+			Detail: fmt.Sprintf("(%d items could not reach the system bin; rescued to the quarantine)", res.QuarantineFell)})
+	}
+	if !res.LargeDeletion {
+		return
+	}
+	switch {
+	case res.DeletedLocal >= res.DeletedRemote:
+		r.append(statedb.Activity{TS: now, Kind: "deleted", Source: "remote",
+			Detail: fmt.Sprintf("(%d files removed from this machine — restore them from the %s)",
+				res.DeletedLocal, deletionDestination(res.TrashAvailable))})
+	default:
+		r.append(statedb.Activity{TS: now, Kind: "deleted", Source: "local",
+			Detail: fmt.Sprintf("(%d files moved to Drive's bin — restore them there)", res.DeletedRemote)})
+	}
+}
+
+// deletionDestination names this machine's rescue destination for the report.
+func deletionDestination(binAvailable bool) string {
+	if binAvailable {
+		return "system bin"
+	}
+	return "quarantine folder"
 }
 
 // recordError logs a failed cycle as a single activity entry. On failure we

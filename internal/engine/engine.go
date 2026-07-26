@@ -104,6 +104,17 @@ type Result struct {
 	// went: the system bin, or the quarantine when the platform has no bin
 	// (W13). `activity` names the destination it actually used.
 	TrashAvailable bool
+
+	// DeletedLocal / DeletedRemote are how many FILES the executed plan
+	// removed from this machine and from Drive (a collapsed folder counts
+	// the files inside it). LargeDeletion marks a cycle whose deletions
+	// crossed the mass-delete threshold and ran anyway because they are
+	// recoverable — it is reported loudly rather than blocked (W14-M3), so
+	// the user finds out well inside the bin's retention window.
+	DeletedLocal   int
+	DeletedRemote  int
+	LargeDeletion  bool
+	QuarantineFell int // items that could not reach the bin and went to the quarantine
 }
 
 // Sync runs one full cycle.
@@ -165,16 +176,18 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 			trackedFiles++
 		}
 	}
-	guardErr := guards.CheckMassDelete(plan, trackedFiles, e.Cfg.Engine.MassDeleteThreshold, opts.ConfirmDeletes)
+	// Where this cycle's deletions would land decides whether they need a
+	// question at all (W14-M1): a bin the user can see needs none.
+	res.TrashAvailable = e.trasher().Available()
+	guardErr := guards.CheckMassDelete(plan, trackedFiles, e.Cfg.Engine.MassDeleteThreshold, opts.ConfirmDeletes, res.TrashAvailable)
 
 	// The collapse runs AFTER the guard has counted the plan and never
 	// before (W13-T2): the guard counts delete-class files, and a folder
 	// collapsed into one action would make it count zero exactly when it
 	// matters most. Only worth doing when there is a bin to receive the
 	// folder — without one the quarantine takes it item by item, as before.
-	res.TrashAvailable = e.trasher().Available()
 	if res.TrashAvailable {
-		plan = reconcile.CollapseDirDeletes(plan)
+		plan = reconcile.CollapseDirDeletes(plan, remote)
 		res.Plan = plan
 	}
 
@@ -204,6 +217,8 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		return res, err
 	}
 	res.Executed, res.Failed, res.Errors = sum.Executed, sum.Failed, sum.Errors
+	res.QuarantineFell = sum.QuarantineFallbacks
+	e.reportDeletions(res, plan, trackedFiles)
 
 	if skipJSON, err := json.Marshal(res.Skips); err == nil {
 		e.DB.SetMeta(MetaLastSkipped, string(skipJSON))
@@ -212,6 +227,48 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		purgeQuarantine(e.QuarantineDir, e.Cfg.Engine.QuarantineRetentionDays)
 	}
 	return res, nil
+}
+
+// reportDeletions counts what the executed plan removed and, when that
+// crossed the mass-delete threshold, says so loudly (W14-M3). Since W14 a
+// large deletion is no longer a question — every item is one gesture away in
+// a bin — but it must still be impossible to miss, because the bins do not
+// keep their contents forever. Skipped when actions failed: with a partial
+// cycle we cannot claim what was removed.
+func (e *Engine) reportDeletions(res *Result, executed []reconcile.Action, trackedFiles int) {
+	if res.Failed > 0 {
+		return
+	}
+	for _, a := range executed {
+		n := 1
+		if a.IsDir {
+			n = a.SubtreeFiles
+		}
+		switch a.Type {
+		case reconcile.QuarantineLocal:
+			res.DeletedLocal += n
+		case reconcile.TrashRemote:
+			res.DeletedRemote += n
+		}
+	}
+	deleted := max(res.DeletedLocal, res.DeletedRemote)
+	if trackedFiles == 0 || deleted <= 10 ||
+		float64(deleted)/float64(trackedFiles) <= e.Cfg.Engine.MassDeleteThreshold {
+		return
+	}
+	res.LargeDeletion = true
+	slog.Warn("large deletion executed — recoverable, but not forever",
+		"removed_locally", res.DeletedLocal, "trashed_in_drive", res.DeletedRemote,
+		"tracked_files", trackedFiles, "local_destination", deletionDestination(res.TrashAvailable))
+}
+
+// deletionDestination names where this machine's deletions went, for the log
+// line and the activity entry.
+func deletionDestination(binAvailable bool) string {
+	if binAvailable {
+		return "system bin"
+	}
+	return "quarantine"
 }
 
 // expandShadowed returns the baseline file ids to hold harmless this cycle:

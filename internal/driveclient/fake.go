@@ -18,11 +18,20 @@ const FakeRootID = "root"
 // Fake is an in-memory Client used by tests: ids, versions, md5, trash,
 // and a changes feed. Page tokens are integer offsets into the change log.
 type Fake struct {
-	mu        sync.Mutex
-	nextID    int
-	files     map[string]*fakeFile
-	log       []Change
-	AboutInfo About // returned by About; tests set it to simulate an account
+	mu         sync.Mutex
+	nextID     int
+	files      map[string]*fakeFile
+	log        []Change
+	trashCalls int   // API calls, so a test can prove a folder went in ONE
+	AboutInfo  About // returned by About; tests set it to simulate an account
+}
+
+// TrashCount is how many Trash calls the client has made — the measure of
+// whether a deleted folder cost one API call or one per file (W14-M4).
+func (f *Fake) TrashCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.trashCalls
 }
 
 type fakeFile struct {
@@ -176,6 +185,7 @@ func (f *Fake) Download(_ context.Context, fileID string) (io.ReadCloser, error)
 func (f *Fake) Trash(_ context.Context, fileID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.trashCalls++
 	file, err := f.get(fileID)
 	if err != nil {
 		return err

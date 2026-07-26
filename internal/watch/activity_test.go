@@ -6,6 +6,7 @@ package watch
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/macsimbodnar/synckeeper/internal/engine"
@@ -73,6 +74,57 @@ func TestActivityNeverClaimsGuardBlockedDeletes(t *testing.T) {
 	}
 	if len(acts) != 1 || acts[0].Kind != "download" {
 		t.Errorf("entries = %+v, want only the action that actually ran", acts)
+	}
+}
+
+// W14-M3: a large deletion is no longer a question, so it has to be a
+// statement — the user must be able to find out inside the window their bin
+// keeps things for.
+func TestActivityReportsALargeDeletion(t *testing.T) {
+	acts := recordedActivity(t, &engine.Result{
+		TrashAvailable: true, LargeDeletion: true, DeletedLocal: 1117,
+		Plan: []reconcile.Action{{Type: reconcile.QuarantineLocal, RelPath: "pack", IsDir: true, SubtreeFiles: 1117}},
+	})
+	var summary *statedb.Activity
+	for i := range acts {
+		if acts[i].Kind == "deleted" {
+			summary = &acts[i]
+		}
+	}
+	if summary == nil {
+		t.Fatalf("no deletion summary recorded: %+v", acts)
+	}
+	if !strings.Contains(summary.Detail, "1117") || !strings.Contains(summary.Detail, "system bin") {
+		t.Errorf("detail = %q, want the count and where to restore from", summary.Detail)
+	}
+
+	// The Drive side reads the other way round.
+	acts = recordedActivity(t, &engine.Result{
+		TrashAvailable: true, LargeDeletion: true, DeletedRemote: 900,
+		Plan: []reconcile.Action{{Type: reconcile.TrashRemote, RelPath: "pack", IsDir: true, SubtreeFiles: 900}},
+	})
+	for _, a := range acts {
+		if a.Kind == "deleted" && (!strings.Contains(a.Detail, "900") || !strings.Contains(a.Detail, "Drive")) {
+			t.Errorf("detail = %q, want the count and Drive's bin", a.Detail)
+		}
+	}
+}
+
+// W14-M2: a bin that refused an item is invisible to a capability probe, so
+// the cycle that fell back to the quarantine says so itself.
+func TestActivityReportsQuarantineFallbacks(t *testing.T) {
+	acts := recordedActivity(t, &engine.Result{
+		TrashAvailable: true, QuarantineFell: 3,
+		Plan: []reconcile.Action{{Type: reconcile.QuarantineLocal, RelPath: "a.txt"}},
+	})
+	found := false
+	for _, a := range acts {
+		if a.Kind == "quarantine" && strings.Contains(a.Detail, "3 items") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no fallback report recorded: %+v", acts)
 	}
 }
 

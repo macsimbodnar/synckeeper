@@ -76,6 +76,7 @@ type Executor struct {
 	mu               sync.Mutex
 	pathIDs          map[string]string // rel_path -> drive file id, for parent lookup
 	failedProtectors map[string]bool   // failed ConflictBackup/MoveLocal sources (invariant 7)
+	quarantineFellTo int               // items the bin refused; reported in the Summary (W14-M2)
 }
 
 // Summary reports what happened.
@@ -83,6 +84,12 @@ type Summary struct {
 	Executed int
 	Failed   int
 	Errors   []string
+
+	// QuarantineFallbacks counts items that could not reach the system bin
+	// and were rescued to the quarantine instead (W14-M2). Invisible to a
+	// capability probe — the bin can be present and still refuse an item —
+	// so the daemon reports it per cycle rather than only at startup.
+	QuarantineFallbacks int
 }
 
 // Apply journals and executes the plan. Individual action failures are
@@ -103,6 +110,7 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 		x.pathIDs[it.RelPath] = it.DriveFileID
 	}
 	x.failedProtectors = map[string]bool{}
+	x.quarantineFellTo = 0
 
 	ops := make([]statedb.PendingOp, len(plan))
 	for i, a := range plan {
@@ -188,6 +196,9 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 			return sum, err
 		}
 	}
+	x.mu.Lock()
+	sum.QuarantineFallbacks = x.quarantineFellTo
+	x.mu.Unlock()
 	return sum, nil
 }
 
@@ -566,13 +577,33 @@ func (x *Executor) record(opID int64, a reconcile.Action) error {
 	})
 }
 
+// trashRemote moves a Drive item to Drive's own bin. A folder may stand for
+// its whole subtree (W14-M4): trashing the folder takes its contents with it,
+// which is one API call instead of one per file and one restorable entry in
+// the bin instead of a thousand — the mirror image of what W13 did locally.
 func (x *Executor) trashRemote(ctx context.Context, opID int64, a reconcile.Action) error {
 	if err := x.Client.Trash(ctx, a.FileID); err != nil {
 		return err
 	}
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
-		return statedb.DeleteItemByID(tx, a.FileID)
+		if err := statedb.DeleteItemByID(tx, a.FileID); err != nil {
+			return err
+		}
+		return statedb.DeleteItemsByID(tx, subtreeIDs(a))
 	})
+}
+
+// subtreeIDs is the baseline rows a collapsed delete retires along with its
+// own; empty for every uncollapsed action.
+func subtreeIDs(a reconcile.Action) []string {
+	if len(a.Subtree) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(a.Subtree))
+	for _, e := range a.Subtree {
+		ids = append(ids, e.FileID)
+	}
+	return ids
 }
 
 // quarantineDest is the dated quarantine location for one rel_path.
@@ -636,14 +667,7 @@ func (x *Executor) trashLocal(opID int64, a reconcile.Action) error {
 		if err := statedb.DeleteItemByID(tx, a.FileID); err != nil {
 			return err
 		}
-		if len(a.Subtree) == 0 {
-			return nil
-		}
-		ids := make([]string, 0, len(a.Subtree))
-		for _, e := range a.Subtree {
-			ids = append(ids, e.FileID)
-		}
-		return statedb.DeleteItemsByID(tx, ids)
+		return statedb.DeleteItemsByID(tx, subtreeIDs(a))
 	})
 }
 
@@ -656,7 +680,9 @@ func (x *Executor) removeFile(rel string, exp expectation) error {
 		return err
 	}
 	t := x.trasher()
-	if t.Available() {
+	if !t.Available() {
+		x.noteQuarantineFallback()
+	} else {
 		err := guardedTrashPath(abs, "trash source "+rel, exp, t)
 		if err == nil {
 			return nil
@@ -665,6 +691,7 @@ func (x *Executor) removeFile(rel string, exp expectation) error {
 			return err
 		}
 		slog.Warn("system trash refused the file; using the quarantine instead", "rel_path", rel, "err", err)
+		x.noteQuarantineFallback()
 	}
 	dest := uniqueRescueDest(x.quarantineDest(rel))
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -674,6 +701,13 @@ func (x *Executor) removeFile(rel string, exp expectation) error {
 	// file the scan observed — an edit landing between scan and execution
 	// wins the cycle instead of being rescued out from under the user.
 	return guardedMoveFile(abs, dest, "quarantine source "+rel, exp)
+}
+
+// noteQuarantineFallback records one item the bin could not take.
+func (x *Executor) noteQuarantineFallback() {
+	x.mu.Lock()
+	x.quarantineFellTo++
+	x.mu.Unlock()
 }
 
 // removeDir moves a directory out of the sync dir. When the plan collapsed

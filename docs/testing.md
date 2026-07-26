@@ -39,9 +39,9 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 
 | ID | Guard | Expected | Status |
 |---|---|---|---|
-| G1 | Delete 50% of files | Blocked without `--confirm-deletes` (interactive one-shot aborts the cycle) | passing (2026-07-08, unit + scenario level) |
+| G1 | Delete 50% of files **into an unrecoverable destination** (a machine with no system bin) | Blocked without `--confirm-deletes` (interactive one-shot aborts the cycle); with a bin the same deletion runs unblocked | passing (2026-07-08; re-targeted 2026-07-26 by W14-M1) — `TestG1MassDeleteBlocked` (engine, `bin.Unavailable`), `TestCheckMassDelete` + `TestMassDeleteUnguardedWhenRecoverable` (guards) |
 | G2 | Empty local dir with populated DB | Hard error | passing (2026-07-08, unit + scenario level) |
-| G3 | Mass delete under the daemon (`DeferMassDelete`) | Deletes deferred, everything else synced, block surfaced in status (spec §8.1) | passing (2026-07-17) — `TestG3DaemonDefersMassDeleteButSyncsRest` (engine) |
+| G3 | Unrecoverable mass delete under the daemon (`DeferMassDelete`) | Deletes deferred, everything else synced, block surfaced in status (spec §8.1) | passing (2026-07-17; re-targeted 2026-07-26 by W14-M1) — `TestG3DaemonDefersMassDeleteButSyncsRest` (engine, `bin.Unavailable`) |
 
 ## Multi-machine matrix (phase 4)
 
@@ -183,6 +183,19 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | ID | Case | Status |
 |---|---|---|
 | W7-L6 | The config dir is private and a loose `credentials.json` is flagged, not refused: `Dir()` tightens a pre-existing umask-created dir (`0755` → `0700`) and creates a fresh one `0700`; a group/world-readable `credentials.json` still resolves but warns with its mode and the `chmod 600` fix, while `0600` stays silent; `info` reports the mode in human + JSON and flags a readable file | passing (2026-07-25) — `TestDirTightensExistingConfigDir`, `TestDirCreatesPrivateConfigDir` (`internal/config`), `TestLoosePerms`, `TestResolveClientWarnsButAcceptsLoosePerms`, `TestResolveClientQuietOnTightPerms` (`internal/auth`), `TestPrintInfoCredentialsPerms`, `TestPrintInfoJSONCredentialsPerms` (`cmd/synckeeper`). Red-first: with the tightening disabled the dir stayed `0755`; with the warn disabled the log was empty |
+
+### W14 — the mass-delete guard fires on recoverability, not volume (2026-07-26)
+
+| ID | Case | Status |
+|---|---|---|
+| M14.1 | A whole tree deleted in Drive, with a system bin present: **no** guard block, no confirmation, one restorable bin entry, and the cycle reports it as a large deletion (`LargeDeletion`, `DeletedLocal`) | passing (2026-07-26) — `TestM14RecoverableWholeTreeDeletionNeedsNoConfirmation`, `TestMassDeleteGuardBlocksWholeTreeDeletion/with_a_system_bin` (engine), `TestMassDeleteUnguardedWhenRecoverable` (guards) |
+| M14.2 | The same deletion on a machine with **no** system bin: blocked with its reason, nothing executed, local files untouched; `--confirm-deletes` then releases it into the quarantine, nothing hard-deleted | passing (2026-07-26) — `TestM14UnrecoverableWholeTreeDeletionIsHeldUntilConfirmed`, `TestMassDeleteGuardBlocksWholeTreeDeletion/no_system_bin`, `TestG1MassDeleteBlocked`, `TestG3DaemonDefersMassDeleteButSyncsRest` (engine) |
+| M14.3 | A whole tree deleted locally is never guarded — Drive's bin is the destination — whatever this machine's bin can do | passing (2026-07-26) — `TestM14LocalWholeTreeDeletionTrashesTheFolderInOneCall` (engine), `TestMassDeleteNeverGuardsTheDriveSide` (guards, both bin states + a mixed plan) |
+| M14.4 | An absent bin is a standing, visible state: `status` and `doctor` name it with the fallback destination and the flag that releases it; a cycle that fell back per item reports it in `activity` | passing (2026-07-26) — `TestSystemBinLine` (cmd, shared by both printers), `TestActivityReportsQuarantineFallbacks` (watch); the daemon logs it once at startup (`watch.Run`) |
+| M14.5 | W14-M4: a locally-deleted folder is **one** `TrashRemote` — one Drive API call, one restorable entry in Drive's bin, `SubtreeFiles` set — and the other machine still removes its copy; a Drive item the plan never accounted for refuses the collapse | passing (2026-07-26) — `TestM14LocalWholeTreeDeletionTrashesTheFolderInOneCall` (asserts `fake.TrashCount()` == 1 and machine b converging), `TestM14RemoteCollapseRefusedWhenDriveHoldsAStranger` (engine), `TestCollapseAbsorbsRemoteTrashSubtree` / `TestCollapseRefusedWhenDriveHoldsAnUnplannedItem` / `TestCollapseRemoteAllowsForgottenRows` / `TestCollapseKeepsTheTwoDirectionsApart` (reconcile, pure) |
+| M14.6 | Counting stays honest through both collapses: the guard reads `SubtreeFiles` in the case that still guards, and the deletion report counts files, not actions | passing (2026-07-26) — `TestT13GuardCountsACollapsedSubtreesFiles` (guards), `TestT13CollapseKeepsTheMassDeleteGuardCounting` (engine), `TestActivityReportsALargeDeletion` (watch) |
+| M14.7 | W14-M3: a large deletion that ran is reported — count and destination — for both directions | passing (2026-07-26) — `TestActivityReportsALargeDeletion` (watch), `res.LargeDeletion`/`DeletedLocal`/`DeletedRemote` asserted in the engine rows above |
+| M14.8 | `CheckSyncDir` is untouched by all of this: a missing or empty sync dir is still a hard error no flag overrides | passing (unchanged) — `TestCheckSyncDir` (guards), G2/F5 (engine) |
 
 ### W13 — remote deletions go to the OS trash (2026-07-25 →)
 

@@ -69,34 +69,19 @@ func TestRemoteFolderTrashPropagatesLocally(t *testing.T) {
 	}
 }
 
-// W12-F2: the mass-delete guard must fire in *both* directions when a large
-// tracked tree disappears — the field incident (2026-07-25) showed a daemon
-// executing ~890 actions against 891 tracked files with no guard block, so
-// this pins the guard at incident scale under daemon semantics
-// (DeferMassDelete: strip the deletes, keep syncing, record the block).
+// W12-F2, re-targeted by W14: the field incident (2026-07-25) showed a daemon
+// executing ~890 actions against 891 tracked files with no guard block, and
+// this pins the guard at incident scale under daemon semantics. Since W14 the
+// guard's trigger is **recoverability**, so the scale alone is not enough —
+// the case that still asks is a machine with no system bin, where the removed
+// files would land in the private, self-purging quarantine.
 func TestMassDeleteGuardBlocksWholeTreeDeletion(t *testing.T) {
 	const files = 60 // over the absolute floor of 10, and ~98% of tracked
 
-	t.Run("deleted locally", func(t *testing.T) {
+	t.Run("no system bin", func(t *testing.T) {
 		fake, rootID := newWorld(t)
 		m := newMachine(t, "A", fake, rootID)
-		for i := 0; i < files; i++ {
-			m.write(t, fmt.Sprintf("pack/Vector/f%03d.svg", i), fmt.Sprintf("c-%d", i))
-		}
-		m.write(t, "keep.pdf", "unrelated")
-		m.sync(t)
-
-		m.remove(t, "pack")
-		res, err := m.eng.Sync(context.Background(), Options{DeferMassDelete: true})
-		if err != nil {
-			t.Fatalf("daemon cycle must not fail on a guard trip: %v", err)
-		}
-		assertGuardHeld(t, res, reconcile.TrashRemote)
-	})
-
-	t.Run("trashed in drive", func(t *testing.T) {
-		fake, rootID := newWorld(t)
-		m := newMachine(t, "A", fake, rootID)
+		m.bin.Unavailable = true
 		for i := 0; i < files; i++ {
 			m.write(t, fmt.Sprintf("pack/Vector/f%03d.svg", i), fmt.Sprintf("c-%d", i))
 		}
@@ -113,6 +98,39 @@ func TestMassDeleteGuardBlocksWholeTreeDeletion(t *testing.T) {
 		assertGuardHeld(t, res, reconcile.QuarantineLocal)
 		if got := len(m.listTree(t)); got != files+1 {
 			t.Errorf("guard blocked but %d of %d local files were removed anyway", files+1-got, files)
+		}
+	})
+
+	// The same deletion with a bin present is not held at all (W14-M1): every
+	// file is one restore away, so there is nothing to ask about.
+	t.Run("with a system bin", func(t *testing.T) {
+		fake, rootID := newWorld(t)
+		m := newMachine(t, "A", fake, rootID)
+		for i := 0; i < files; i++ {
+			m.write(t, fmt.Sprintf("pack/Vector/f%03d.svg", i), fmt.Sprintf("c-%d", i))
+		}
+		m.write(t, "keep.pdf", "unrelated")
+		m.sync(t)
+		if err := fake.Trash(context.Background(), remoteChildID(t, fake, rootID, "pack")); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := m.eng.Sync(context.Background(), Options{DeferMassDelete: true})
+		if err != nil {
+			t.Fatalf("cycle errored: %v", err)
+		}
+		if res.GuardBlocked {
+			t.Fatalf("a recoverable deletion must not be held: %s", res.GuardReason)
+		}
+		if m.exists("pack") {
+			t.Error("the folder deleted in Drive is still on disk")
+		}
+		if moved := m.bin.Moved(); len(moved) != 1 || moved[0] != "pack" {
+			t.Errorf("bin received %v, want the folder as one entry", moved)
+		}
+		if !res.LargeDeletion || res.DeletedLocal != files {
+			t.Errorf("large deletion not reported: LargeDeletion=%v DeletedLocal=%d, want true/%d",
+				res.LargeDeletion, res.DeletedLocal, files)
 		}
 	})
 }

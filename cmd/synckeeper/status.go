@@ -16,6 +16,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/auth"
 	"github.com/macsimbodnar/synckeeper/internal/service"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 	"github.com/macsimbodnar/synckeeper/internal/watch"
 )
 
@@ -66,6 +67,8 @@ type statusView struct {
 	pending      int
 	qFiles       int
 	qBytes       int64
+	binDest      string // where deletions arriving from Drive go (W14-M2)
+	binAvailable bool
 	autostart    service.State
 	autostartErr error
 	activity     []statedb.Activity
@@ -97,6 +100,7 @@ func gatherStatus(env *readEnv) statusView {
 	v.items, _ = env.db.ItemCount()
 	v.pending, _ = env.db.PendingOpCount()
 	v.qFiles, v.qBytes = quarantineUsage(filepath.Join(env.configDir, "quarantine"))
+	v.binAvailable, v.binDest = trash.Available(), trash.Describe()
 	v.autostart, v.autostartErr = service.Status()
 	v.activity, _ = env.db.RecentActivity(5)
 	return v
@@ -166,6 +170,7 @@ func printStatusHuman(v statusView) {
 	fmt.Printf("tracked items: %d\n", v.items)
 	fmt.Printf("pending ops:   %d\n", v.pending)
 	fmt.Printf("quarantine:    %d files, %d bytes\n", v.qFiles, v.qBytes)
+	fmt.Printf("system bin:    %s\n", systemBinLine(v.binAvailable, v.binDest))
 
 	if len(v.activity) > 0 {
 		fmt.Println("recent activity:")
@@ -230,6 +235,7 @@ func printStatusJSON(v statusView) error {
 		"tracked_items": v.items,
 		"pending_ops":   v.pending,
 		"quarantine":    map[string]any{"files": v.qFiles, "bytes": v.qBytes},
+		"system_bin":    map[string]any{"available": v.binAvailable, "destination": v.binDest},
 		"autostart": map[string]any{
 			"installed": v.autostart.Installed,
 			"enabled":   v.autostart.Enabled,

@@ -17,6 +17,7 @@ import (
 
 	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 // Watcher drives continuous sync for one engine.
@@ -103,6 +104,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 			go control.Serve(ctx, ln, w.controlHandler(syncNow, reloadCh, rec))
 			slog.Debug("control socket listening", "path", w.ControlSocket)
 		}
+	}
+
+	// Where deletions arriving from Drive will land, said once at startup
+	// (W14-M2). With no bin they go to the private quarantine instead, which
+	// is also the only remaining case where a mass deletion is held for
+	// confirmation — a standing condition, so it is stated up front rather
+	// than discovered from a blocked cycle.
+	if !trash.Available() {
+		slog.Warn("no system bin on this machine; deletions arriving from Drive will be rescued to the quarantine, and a mass deletion will wait for --confirm-deletes",
+			"reason", trash.Describe())
+	} else {
+		slog.Info("deletions arriving from Drive go to the system bin", "destination", trash.Describe())
 	}
 
 	var latch failureLatch

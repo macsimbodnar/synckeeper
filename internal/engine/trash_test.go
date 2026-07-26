@@ -71,11 +71,11 @@ func TestT13RemoteFolderTrashLandsInBinAsOneEntry(t *testing.T) {
 	}
 }
 
-// T13.5 (A2's mirror image, W1.8.3): the mass-delete guard counts content,
-// not containers — so it must see the 12 files inside the collapsed action,
-// not one directory. Counting the collapsed plan instead of the plan the
-// guard was handed would silence the guard exactly when a whole tree is
-// disappearing, which is the one moment it exists for.
+// T13.5 (A2's mirror image, W1.8.3), as W14 leaves it: the guard counts
+// content and not containers, so on a machine with no bin — the one case that
+// still asks — a collapsed folder must not read as zero deletions. (With a
+// bin the collapse runs and nothing is held; that path is
+// TestMassDeleteGuardBlocksWholeTreeDeletion/with_a_system_bin.)
 func TestT13CollapseKeepsTheMassDeleteGuardCounting(t *testing.T) {
 	const files = 12
 	fake, rootID := newWorld(t)
@@ -87,6 +87,7 @@ func TestT13CollapseKeepsTheMassDeleteGuardCounting(t *testing.T) {
 	a.sync(t)
 	b := newMachine(t, "b", fake, rootID)
 	b.sync(t)
+	b.bin.Unavailable = true
 	if err := fake.Trash(context.Background(), remoteChildID(t, fake, rootID, "pack")); err != nil {
 		t.Fatal(err)
 	}
@@ -97,21 +98,19 @@ func TestT13CollapseKeepsTheMassDeleteGuardCounting(t *testing.T) {
 		t.Fatalf("daemon cycle must not fail on a guard trip: %v", err)
 	}
 	if !res.GuardBlocked {
-		t.Fatalf("guard did not fire on a %d-of-%d file deletion; plan=%+v", files, files+1, res.Plan)
-	}
-	if b.bin.Moved() != nil {
-		t.Errorf("guard blocked but the bin received %v", b.bin.Moved())
+		t.Fatalf("guard did not fire on a %d-of-%d file deletion into the quarantine; plan=%+v", files, files+1, res.Plan)
 	}
 	if got := len(b.listTree(t)); got != files+1 {
 		t.Errorf("guard blocked but %d files were removed anyway", files+1-got)
 	}
 	if got := plannedFileDeletes(res.Plan, reconcile.QuarantineLocal); got != files {
-		t.Errorf("the blocked plan accounts for %d files, want %d — SubtreeFiles is what keeps later counts honest", got, files)
+		t.Errorf("the blocked plan accounts for %d files, want %d", got, files)
 	}
-	// Belt and braces: the guard runs before the collapse, and it also sees
-	// through one — so a reordering can never quietly hide a whole tree.
-	if err := guards.CheckMassDelete(res.Plan, files+1, 0.10, false); err == nil {
-		t.Error("the collapsed plan is invisible to the guard; SubtreeFiles must keep it counted")
+	// Belt and braces: the guard also sees through a collapsed folder, so the
+	// "guard before collapse" ordering can never quietly become load-bearing.
+	collapsed := []reconcile.Action{{Type: reconcile.QuarantineLocal, RelPath: "pack", IsDir: true, SubtreeFiles: files}}
+	if err := guards.CheckMassDelete(collapsed, files+1, 0.10, false, false); err == nil {
+		t.Error("a collapsed folder is invisible to the guard; SubtreeFiles must keep it counted")
 	}
 }
 

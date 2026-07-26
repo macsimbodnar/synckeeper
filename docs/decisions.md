@@ -13,6 +13,16 @@ Format:
 
 ---
 
+## 2026-07-26 — W14 as built: two implementation calls
+
+**Context:** W14 landed the same day it was planned. Two places where the plan met the code.
+
+**1. M3's "status field" is the activity ring, not a new column (agent-proposed).** The plan asked for a `status` field surviving a few cycles. `DaemonStatus` is a typed row, so a new field means a schema migration — for a report. The cycle counters (`DeletedLocal`/`DeletedRemote`/`LargeDeletion` on `engine.Result`) already flow into the recorder, and the activity ring holds 500 entries, which outlives "a few cycles" by a wide margin and is what `status` prints under *recent activity* anyway. So the large-deletion report is a WARN log plus a `deleted` activity entry naming the count and the destination. No migration.
+
+**2. The guard is told where deletions are going, rather than probing (agent-proposed).** `CheckMassDelete` gained `binAvailable bool`, fed from the same `Result.TrashAvailable` the collapse pass uses. One probe per cycle, one source of truth: plan-time (should this be held?) and execution-time (where does this go?) cannot disagree, which they could if the guard probed the trash itself.
+
+**Also, unplanned but adjacent:** `internal/watch`'s `TestControlPauseSuppressesSyncThenResume` was flaky on master (~1 uncached full-package run in 3, verified against a clean tree). The daemon was right — a cycle already in flight when `pause` arrives runs to completion, since the pause is checked when a trigger is *received* — and the test raced it by writing its file immediately. It now waits for the startup cycle to record itself before pausing. Fixed in its own commit, not folded into W14.
+
 ## 2026-07-26 — The mass-delete guard becomes a recoverability guard
 
 **Context:** Max uploaded a test folder, confirmed it synced to both machines, then moved it to the Drive bin. Neither machine removed it. Investigation: not a defect — the deletion was seen, planned, and collapsed to one action by W13, and the **mass-delete guard** held it (`plan deletes 1117 of 1118 tracked files`), logging the block every cycle. His sync folder holds that folder plus one PDF, so deleting it *is* deleting ~all tracked content. The guard was working exactly as specified, and that is the problem: with W13, the destination is now the user's own bin, so the block asked permission for something already undoable.

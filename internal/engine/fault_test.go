@@ -219,36 +219,38 @@ func TestF5SyncDirUnmounted(t *testing.T) {
 	}
 }
 
-// --- G1: mass delete blocked without --confirm-deletes -------------------
+// --- G1: an UNRECOVERABLE mass delete is blocked without --confirm-deletes
+// (W14: the guard's trigger is recoverability, not volume — the case that
+// still asks is a large removal on a machine with no system bin, where the
+// content would land in the private, self-purging quarantine).
 
 func TestG1MassDeleteBlocked(t *testing.T) {
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
+	a.bin.Unavailable = true // no system bin: the quarantine would take them
 
 	for i := 0; i < 12; i++ {
 		a.write(t, fmt.Sprintf("bulk-%02d.txt", i), fmt.Sprintf("content %d", i))
 	}
 	a.sync(t)
 
-	// Delete 11 of 12: over 25% and over 10 absolute.
+	// 11 of 12 deleted in Drive: over 25% and over 10 absolute.
 	for i := 0; i < 11; i++ {
-		a.remove(t, fmt.Sprintf("bulk-%02d.txt", i))
+		trashRemoteChild(t, fake, root, fmt.Sprintf("bulk-%02d.txt", i))
 	}
 	if _, err := a.eng.Sync(context.Background(), Options{}); err == nil {
-		t.Fatal("mass delete must be blocked without confirmation")
+		t.Fatal("mass delete into the quarantine must be blocked without confirmation")
 	}
-	children, _ := fake.List(context.Background(), root)
-	if len(children) != 12 {
-		t.Fatalf("remote has %d files after blocked sync, want all 12 untouched", len(children))
+	if got := len(a.listTree(t)); got != 12 {
+		t.Fatalf("local tree has %d files after the blocked sync, want all 12 untouched", got)
 	}
 
 	res, err := a.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
 	if err != nil || res.Failed > 0 {
 		t.Fatalf("confirmed sync: err=%v failed=%d", err, res.Failed)
 	}
-	children, _ = fake.List(context.Background(), root)
-	if len(children) != 1 {
-		t.Errorf("remote has %d files after confirmed delete, want 1", len(children))
+	if got := len(a.listTree(t)); got != 1 {
+		t.Errorf("local tree has %d files after the confirmed delete, want 1", got)
 	}
 }
 
@@ -257,15 +259,17 @@ func TestG1MassDeleteBlocked(t *testing.T) {
 func TestG3DaemonDefersMassDeleteButSyncsRest(t *testing.T) {
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
+	a.bin.Unavailable = true
 
 	for i := 0; i < 12; i++ {
 		a.write(t, fmt.Sprintf("bulk-%02d.txt", i), fmt.Sprintf("content %d", i))
 	}
 	a.sync(t)
 
-	// Delete 11 of 12 (over the threshold) and add an unrelated new file.
+	// 11 of 12 deleted in Drive (over the threshold), plus an unrelated new
+	// local file that must sync despite the block.
 	for i := 0; i < 11; i++ {
-		a.remove(t, fmt.Sprintf("bulk-%02d.txt", i))
+		trashRemoteChild(t, fake, root, fmt.Sprintf("bulk-%02d.txt", i))
 	}
 	a.write(t, "new.txt", "fresh content")
 
@@ -279,11 +283,10 @@ func TestG3DaemonDefersMassDeleteButSyncsRest(t *testing.T) {
 	if res.Failed != 0 {
 		t.Fatalf("failed = %d, want 0: %v", res.Failed, res.Errors)
 	}
-	// The deletes were deferred: all 12 originals still on Drive, plus the new
-	// upload that synced despite the block.
-	children, _ := fake.List(context.Background(), root)
-	if len(children) != 13 {
-		t.Fatalf("remote has %d files, want 13 (12 originals kept + new upload)", len(children))
+	// The deletes were deferred: all 12 originals still on disk, plus the new
+	// file that uploaded despite the block.
+	if got := len(a.listTree(t)); got != 13 {
+		t.Fatalf("local tree has %d files, want 13 (12 kept + the new one)", got)
 	}
 	if countByName(t, fake, root, "new.txt") != 1 {
 		t.Error("new.txt was not uploaded; the daemon must sync everything else")
@@ -294,9 +297,8 @@ func TestG3DaemonDefersMassDeleteButSyncsRest(t *testing.T) {
 	if err != nil || res.Failed > 0 {
 		t.Fatalf("confirmed sync: err=%v failed=%d", err, res.Failed)
 	}
-	children, _ = fake.List(context.Background(), root)
-	if len(children) != 2 {
-		t.Errorf("remote has %d files after confirm, want 2 (bulk-11 + new.txt)", len(children))
+	if got := len(a.listTree(t)); got != 2 {
+		t.Errorf("local tree has %d files after the confirm, want 2 (bulk-11 + new.txt)", got)
 	}
 }
 

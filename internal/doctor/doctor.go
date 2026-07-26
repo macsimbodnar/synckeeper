@@ -25,6 +25,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
 	"github.com/macsimbodnar/synckeeper/internal/scanner"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
 // Doctor bundles what checks and repairs need.
@@ -48,6 +49,13 @@ type Report struct {
 	OrphanTemps    []string
 	Adopted        int // rows written by repair
 	Notes          []string
+
+	// SystemBin is where a deletion arriving from Drive lands on this
+	// machine, and whether that destination is the user's own bin (W14-M2).
+	// Reported, never a fault: a platform without a bin is not broken, it is
+	// the platform where a mass deletion still asks for confirmation.
+	SystemBin   string
+	SystemBinOK bool
 }
 
 // Healthy reports whether nothing needs attention.
@@ -61,7 +69,7 @@ func (r *Report) Healthy() bool {
 // Check is read-only: it compares DB vs disk vs Drive and reports every
 // divergence. With no page token (lost DB) it degrades to what it can see.
 func (d *Doctor) Check(ctx context.Context) (*Report, error) {
-	rep := &Report{}
+	rep := &Report{SystemBin: trash.Describe(), SystemBinOK: trash.Available()}
 
 	rootID, err := d.DB.GetMeta(statedb.MetaRootFolderID)
 	if errors.Is(err, statedb.ErrNotFound) {

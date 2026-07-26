@@ -12,7 +12,7 @@ func TestCollapseAbsorbsFullyDeletedSubtree(t *testing.T) {
 		{Type: QuarantineLocal, RelPath: "pack/vec", FileID: "vec", IsDir: true},
 		{Type: QuarantineLocal, RelPath: "pack", FileID: "pack", IsDir: true},
 	}
-	got := CollapseDirDeletes(plan)
+	got := CollapseDirDeletes(plan, nil)
 	if len(got) != 1 {
 		t.Fatalf("plan = %d actions, want 1 collapsed folder delete: %+v", len(got), got)
 	}
@@ -47,7 +47,7 @@ func TestCollapseRefusedWhenSubtreeHasOtherWork(t *testing.T) {
 			{Type: QuarantineLocal, RelPath: "pack/vec/a.svg", FileID: "a"},
 			{Type: QuarantineLocal, RelPath: "pack", FileID: "pack", IsDir: true},
 		}
-		got := CollapseDirDeletes(plan)
+		got := CollapseDirDeletes(plan, nil)
 		if len(got) != len(plan) {
 			t.Errorf("%s under the folder must block the collapse, got %+v", other.Type, got)
 		}
@@ -63,7 +63,7 @@ func TestCollapseAllowsOtherDeleteClassActions(t *testing.T) {
 		{Type: QuarantineLocal, RelPath: "pack/vec/a.svg", FileID: "a"},
 		{Type: QuarantineLocal, RelPath: "pack", FileID: "pack", IsDir: true},
 	}
-	got := CollapseDirDeletes(plan)
+	got := CollapseDirDeletes(plan, nil)
 	if len(got) != 3 {
 		t.Fatalf("plan = %+v, want the trash_remote, the forget, and one collapsed delete", got)
 	}
@@ -81,7 +81,7 @@ func TestCollapseKeepsOnlyTheHighestDirectory(t *testing.T) {
 		{Type: QuarantineLocal, RelPath: "a/b", FileID: "b", IsDir: true},
 		{Type: QuarantineLocal, RelPath: "a", FileID: "a", IsDir: true},
 	}
-	got := CollapseDirDeletes(plan)
+	got := CollapseDirDeletes(plan, nil)
 	if len(got) != 1 || got[0].RelPath != "a" {
 		t.Fatalf("got %+v, want only the top directory", got)
 	}
@@ -94,7 +94,7 @@ func TestCollapseKeepsOnlyTheHighestDirectory(t *testing.T) {
 // no Subtree, so the executor takes the ordinary empty-directory road.
 func TestCollapseLeavesLoneDirectoryUntouched(t *testing.T) {
 	plan := []Action{{Type: QuarantineLocal, RelPath: "empty", FileID: "e", IsDir: true}}
-	got := CollapseDirDeletes(plan)
+	got := CollapseDirDeletes(plan, nil)
 	if len(got) != 1 || got[0].Subtree != nil || got[0].SubtreeFiles != 0 {
 		t.Fatalf("got %+v, want the action unchanged", got)
 	}
@@ -110,13 +110,96 @@ func TestCollapseHandlesSiblingsAndLooseFiles(t *testing.T) {
 		{Type: QuarantineLocal, RelPath: "two/f.txt", FileID: "2f"},
 		{Type: QuarantineLocal, RelPath: "two", FileID: "2", IsDir: true},
 	}
-	got := CollapseDirDeletes(plan)
+	got := CollapseDirDeletes(plan, nil)
 	if len(got) != 3 {
 		t.Fatalf("got %+v, want the loose file plus one action per folder", got)
 	}
 	for _, a := range got {
 		if a.IsDir && a.SubtreeFiles != 1 {
 			t.Errorf("%s covers %d files, want 1", a.RelPath, a.SubtreeFiles)
+		}
+	}
+}
+
+// W14-M4: the mirror image on the Drive side — a locally-deleted folder is
+// trashed as ONE Drive item, which is one API call instead of one per file
+// and one restorable entry in Drive's bin instead of a thousand.
+func TestCollapseAbsorbsRemoteTrashSubtree(t *testing.T) {
+	plan := []Action{
+		{Type: TrashRemote, RelPath: "pack/vec/a.svg", FileID: "a"},
+		{Type: TrashRemote, RelPath: "pack/vec/b.svg", FileID: "b"},
+		{Type: TrashRemote, RelPath: "pack/vec", FileID: "vec", IsDir: true},
+		{Type: TrashRemote, RelPath: "pack", FileID: "pack", IsDir: true},
+	}
+	remote := map[string]RemoteItem{
+		"pack":           {FileID: "pack", IsDir: true},
+		"pack/vec":       {FileID: "vec", IsDir: true},
+		"pack/vec/a.svg": {FileID: "a"},
+		"pack/vec/b.svg": {FileID: "b"},
+	}
+	got := CollapseDirDeletes(plan, remote)
+	if len(got) != 1 || got[0].RelPath != "pack" || got[0].Type != TrashRemote {
+		t.Fatalf("got %+v, want one trash_remote for the folder", got)
+	}
+	if got[0].SubtreeFiles != 2 || len(got[0].Subtree) != 3 {
+		t.Errorf("collapsed action = %+v, want 2 files and 3 covered entries", got[0])
+	}
+}
+
+// Trashing a folder on Drive takes everything under it. A remote item the
+// plan never planned to delete — a file another machine just added, one the
+// scanner skipped — must not be swept along, so the folder is trashed the
+// long way instead.
+func TestCollapseRefusedWhenDriveHoldsAnUnplannedItem(t *testing.T) {
+	plan := []Action{
+		{Type: TrashRemote, RelPath: "pack/a.svg", FileID: "a"},
+		{Type: TrashRemote, RelPath: "pack", FileID: "pack", IsDir: true},
+	}
+	remote := map[string]RemoteItem{
+		"pack":         {FileID: "pack", IsDir: true},
+		"pack/a.svg":   {FileID: "a"},
+		"pack/new.svg": {FileID: "n"}, // nobody planned anything for this
+	}
+	if got := CollapseDirDeletes(plan, remote); len(got) != len(plan) {
+		t.Errorf("got %+v, want the plan untouched — a stranger lives under the folder", got)
+	}
+}
+
+// A forgotten row (gone on both sides) is not a survivor: it is content the
+// plan already accounts for.
+func TestCollapseRemoteAllowsForgottenRows(t *testing.T) {
+	plan := []Action{
+		{Type: Forget, RelPath: "pack/old.svg", FileID: "o"},
+		{Type: TrashRemote, RelPath: "pack/a.svg", FileID: "a"},
+		{Type: TrashRemote, RelPath: "pack", FileID: "pack", IsDir: true},
+	}
+	remote := map[string]RemoteItem{
+		"pack":         {FileID: "pack", IsDir: true},
+		"pack/a.svg":   {FileID: "a"},
+		"pack/old.svg": {FileID: "o"},
+	}
+	got := CollapseDirDeletes(plan, remote)
+	if len(got) != 2 {
+		t.Fatalf("got %+v, want the forget plus one collapsed trash_remote", got)
+	}
+}
+
+// The two arms never absorb each other: a local removal and a Drive removal
+// move different things, and a subtree mixing them means the sides disagree
+// about what is gone.
+func TestCollapseKeepsTheTwoDirectionsApart(t *testing.T) {
+	plan := []Action{
+		{Type: QuarantineLocal, RelPath: "pack/local.txt", FileID: "l"},
+		{Type: TrashRemote, RelPath: "pack", FileID: "pack", IsDir: true},
+	}
+	remote := map[string]RemoteItem{"pack": {FileID: "pack", IsDir: true}}
+	got := CollapseDirDeletes(plan, remote)
+	if len(got) != 2 {
+		t.Fatalf("got %+v, want both actions kept", got)
+	}
+	for _, a := range got {
+		if a.SubtreeFiles != 0 {
+			t.Errorf("%s absorbed across directions: %+v", a.RelPath, a)
 		}
 	}
 }

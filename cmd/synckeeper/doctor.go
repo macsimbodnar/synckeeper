@@ -77,6 +77,7 @@ func printReport(r *doctor.Report, repaired bool) {
 	for _, n := range r.Notes {
 		fmt.Printf("note: %s\n", n)
 	}
+	fmt.Printf("system bin:        %s\n", systemBinLine(r.SystemBinOK, r.SystemBin))
 	if r.Healthy() {
 		fmt.Println("Everything checks out: DB, disk, and Drive agree.")
 	} else if !repaired {
