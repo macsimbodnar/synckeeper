@@ -4,7 +4,7 @@ How to *use* Synckeeper. (Build / dev / design docs → [README.md](README.md).)
 
 Keeps **one local folder** ↔ **one Google Drive folder** identical, both directions. Many machines sync against the same Drive folder (the hub + durable copy). Runs as a background daemon; **never silently loses or corrupts a file**: deletes → Drive bin + your system bin (never permanent); conflicting edits → conflict copy (never last-writer-wins); edit always beats delete.
 
-**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-07-26.
+**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-07-27.
 
 ---
 
@@ -47,7 +47,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 | `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Stop the daemon first — `login` takes the instance lock, because a running daemon holds the old token in memory. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon runs, delegated to it and awaited. `--dry-run`: print the plan, change nothing (needs daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously, foreground: local changes picked up under a second, remote within the poll interval. |
-| `status [--plain] [--json] [--interval D]` | **Human:** on a terminal, the live dashboard (§10). **Scriptable:** piped/redirected it prints the one-shot report — daemon state, last sync, config, guard blocks, where deletions from Drive land (system bin or quarantine), recent activity; `--plain` forces that report on a terminal, `--json` emits it for scripts. Works daemon up or down. `--interval` sets the dashboard refresh (default 1s). |
+| `status [--plain] [--json] [--interval D]` | **Human:** on a terminal, the live dashboard (§10). **Scriptable:** piped/redirected it prints the one-shot report — daemon state, last sync, config, guard blocks, where deletions from Drive land (system bin or quarantine), recent activity; `--plain` forces that report on a terminal, `--json` emits it for scripts. Works daemon up or down. `--interval` sets how often the dashboard re-reads state (default 1s; it redraws ~4×/s regardless). |
 | `activity [-n N]` | **Scriptable.** Last N (default 20) synced items with direction (local→drive / drive→local / conflict). The dashboard's activity view (§10) is the interactive equivalent. |
 | `pause` / `resume` | Suspend / resume automatic syncing in the running daemon. Explicit `sync` still works while paused. Pause doesn't survive a daemon restart. |
 | `reload` | Re-read `config.toml` in the running daemon. Hot fields apply live; identity fields reported as needing a restart (§4). |
@@ -150,9 +150,20 @@ Three views, switched with number keys or Tab:
 | View | Shows |
 |---|---|
 | **1 overview** | next poll (an estimate — see below), last sync + cycle summary, tracked/pending/quarantine counts, where deletions from Drive land, and an **attention** block that appears only when something needs it (guard block + how to release it, last error, no system bin, dead daemon, missing credentials, autostart not installed), then recent activity |
-| **2 activity** | the recorded history (500 entries), newest first, with direction and file count |
+| **2 activity** | the recorded history (500 entries), newest first, with direction and file count. Scroll it, filter by direction (`f`), or search paths/details/kinds (`/`) — the heading reports `N of M` and what is filtering |
 | **3 info** | the static picture — version, every path with permission modes, sync target + Drive folder id, machine name + id, OAuth client, token status, effective config. Same data `info` prints |
 
-Keys: `1`/`2`/`3` views · `Tab`/`←→` cycle · `r` refresh now · `?` help · `q` or `Ctrl-C` quit. Colour follows `NO_COLOR` and `TERM=dumb`.
+| Keys | |
+|---|---|
+| `1` `2` `3` · `Tab` · `←` `→` | select / cycle views |
+| `j` `k` · `↑` `↓` | scroll the activity list |
+| `PgUp` `PgDn` · `Space` | scroll a page |
+| `g` `G` | jump to newest / oldest |
+| `f` | filter activity: all → local→drive → drive→local → conflict → errors |
+| `/` | search paths, details and kinds — `Enter` keeps it, `Esc` cancels |
+| `c` | clear filter and search |
+| `r` · `?` · `q`/`Ctrl-C` | refresh now · help · quit |
 
-**"next poll ≈"** is an estimate, deliberately marked: the figure is recorded when a cycle ends, while the poll timer runs independently and any local change pre-empts it — so the real next sync is usually *sooner*. Sync-now, pause/resume from inside the dashboard, and a precise countdown are not wired yet.
+Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
+
+**"next poll ≈"** is an estimate, deliberately marked: the figure is recorded when a cycle ends, while the poll timer runs independently and any local change pre-empts it — so the real next sync is usually *sooner*. Sync-now and pause/resume from inside the dashboard, and a precise countdown, are not wired yet.

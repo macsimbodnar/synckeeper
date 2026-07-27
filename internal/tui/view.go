@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/macsimbodnar/synckeeper/internal/statedb"
 	"github.com/macsimbodnar/synckeeper/internal/status"
 )
 
@@ -24,6 +25,11 @@ const chromeRows = 6
 func (m Model) View() string {
 	t := theme{color: m.color}
 	w := m.width
+	// Every relative time in the frame is measured from this instant, not from
+	// when the snapshot was read: at a long --interval the countdown must keep
+	// moving between database reads (U3). The snapshot's own Now stays as the
+	// record of when it was gathered.
+	m.snap.Status.Now = m.now()
 	body := m.body(t, w)
 
 	var b strings.Builder
@@ -177,7 +183,7 @@ func (m Model) overviewBody(t theme, w int) string {
 	rows := m.bodyBudget() - countLines(out) - 2
 	if rows > 0 && len(s.Activity) > 0 {
 		out = append(out, "", t.rule("activity", w))
-		out = append(out, indent(m.activityRows(t, w-1, rows))...)
+		out = append(out, indent(m.rowsFor(t, s.Activity, w-1, rows))...)
 	}
 	return strings.Join(out, "\n")
 }
@@ -268,22 +274,53 @@ func (m Model) attention(t theme, w int) []string {
 }
 
 func (m Model) activityBody(t theme, w int) string {
-	s := m.snap.Status
-	head := t.rule(fmt.Sprintf("activity — %d entries", len(s.Activity)), w)
-	if len(s.Activity) == 0 {
-		return head + "\n" + indentOne(t.muted("nothing recorded yet"))
+	all := m.snap.Status.Activity
+	shown := m.filteredActivity()
+
+	label := fmt.Sprintf("activity — %d entries", len(all))
+	if f := filterLabel(m.dirFilter, m.query); f != "" {
+		label = fmt.Sprintf("activity — %d of %d · %s", len(shown), len(all), f)
 	}
-	rows := m.activityRows(t, w-1, m.bodyBudget()-1)
-	return head + "\n" + strings.Join(indent(rows), "\n")
+	out := []string{t.rule(label, w)}
+
+	if m.searching {
+		out = append(out, indentOne(t.accent("/")+m.query+t.muted("▏  enter keep · esc cancel")))
+	}
+
+	budget := m.activityRowBudget()
+	switch {
+	case len(all) == 0:
+		out = append(out, indentOne(t.muted("nothing recorded yet")))
+	case len(shown) == 0:
+		out = append(out, indentOne(t.muted("no entry matches — `c` clears the filter")))
+	default:
+		window := shown[min(m.offset, len(shown)):]
+		out = append(out, indent(m.rowsFor(t, window, w-1, budget))...)
+		if more := len(shown) - m.offset - budget; more > 0 {
+			out = append(out, indentOne(t.muted(fmt.Sprintf("… %d older (j/k scroll · G end)", more))))
+		} else if m.offset > 0 {
+			out = append(out, indentOne(t.muted("— end · g back to newest")))
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
-// activityRows renders newest-first, one line each, clipped to limit.
-func (m Model) activityRows(t theme, w, limit int) []string {
+// activityRowBudget is how many activity rows the activity view can draw, after
+// its heading and (when open) the search line.
+func (m Model) activityRowBudget() int {
+	budget := m.bodyBudget() - 2 // heading + the "… N older" footer line
+	if m.searching {
+		budget--
+	}
+	return max(1, budget)
+}
+
+// rowsFor renders activity rows newest-first, one line each, clipped to limit.
+func (m Model) rowsFor(t theme, acts []statedb.Activity, w, limit int) []string {
 	s := m.snap.Status
 	if limit <= 0 {
 		return nil
 	}
-	acts := s.Activity
 	if len(acts) > limit {
 		acts = acts[:limit]
 	}
@@ -402,6 +439,12 @@ func (m Model) helpBody(t theme, w int) string {
 	rows := [][2]string{
 		{"1 / 2 / 3", "overview · activity · info"},
 		{"tab / ←→", "cycle through the views"},
+		{"j / k", "scroll the activity list (↑↓ too)"},
+		{"pgup/pgdn", "scroll a page (space pages down)"},
+		{"g / G", "jump to the newest / oldest entry"},
+		{"f", "filter activity: all → local→drive → drive→local → conflict → errors"},
+		{"/", "search paths, details and kinds; enter keeps it, esc cancels"},
+		{"c", "clear the filter and the search"},
 		{"r", "refresh now"},
 		{"?", "toggle this help"},
 		{"q / ctrl+c", "quit"},
@@ -426,6 +469,9 @@ func (m Model) footer(t theme, w int) string {
 	}
 	left := strings.Join(tabs, t.muted(" · "))
 	right := t.muted("? help · q quit")
+	if m.view == ViewActivity && !m.showHelp {
+		right = t.muted("f filter · / search · j/k scroll · ? help · q quit")
+	}
 	return joinEnds(left, right, w)
 }
 

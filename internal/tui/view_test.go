@@ -80,7 +80,7 @@ func testSnapshot(ref time.Time) Snapshot {
 }
 
 func frames(ref time.Time) map[string]Model {
-	base := Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30}
+	base := Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30, Clock: testRef}
 
 	overview := New(base)
 
@@ -93,7 +93,7 @@ func frames(ref time.Time) map[string]Model {
 	help := New(base)
 	help.showHelp = true
 
-	narrow := Options{Snapshot: testSnapshot(ref), Width: 60, Height: 24}
+	narrow := Options{Snapshot: testSnapshot(ref), Width: 60, Height: 24, Clock: testRef}
 
 	guardOpts := base
 	gs := testSnapshot(ref)
@@ -127,7 +127,23 @@ func frames(ref time.Time) map[string]Model {
 	ps.Status.Daemon.Mode = "paused"
 	paused.Snapshot = ps
 
+	busy := New(Options{Snapshot: busySnapshot(ref), Width: 100, Height: 20, Clock: testRef})
+	busy.view = ViewActivity
+
+	scrolled := busy
+	scrolled.offset = 12
+
+	filtered := busy
+	filtered.dirFilter = "error"
+
+	searching := busy
+	searching.searching = true
+	searching.query = "note"
+
 	return map[string]Model{
+		"activity_scrolled": scrolled,
+		"activity_filtered": filtered,
+		"activity_search":   searching,
 		"overview":          overview,
 		"activity":          activity,
 		"info":              info,
@@ -182,8 +198,8 @@ func TestNoEscapeCodesWithColorOff(t *testing.T) {
 // halves into uselessness.
 func TestNarrowLayoutStacksPanels(t *testing.T) {
 	ref := testRef()
-	wide := New(Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30}).View()
-	narrow := New(Options{Snapshot: testSnapshot(ref), Width: 60, Height: 24}).View()
+	wide := New(Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30, Clock: testRef}).View()
+	narrow := New(Options{Snapshot: testSnapshot(ref), Width: 60, Height: 24, Clock: testRef}).View()
 
 	// Wide: the cycle and totals headings share a line. Narrow: they do not.
 	wideShared, narrowShared := false, false
@@ -215,7 +231,7 @@ func TestFrameNeverOverflowsWidth(t *testing.T) {
 	ref := testRef()
 	for _, w := range []int{40, 60, 80, 100, 140} {
 		for v := ViewOverview; v < numViews; v++ {
-			m := New(Options{Snapshot: testSnapshot(ref), Width: w, Height: 20})
+			m := New(Options{Snapshot: testSnapshot(ref), Width: w, Height: 20, Clock: testRef})
 			m.view = v
 			for _, line := range strings.Split(m.View(), "\n") {
 				if got := len([]rune(strings.TrimRight(line, " "))); got > w {
@@ -229,7 +245,7 @@ func TestFrameNeverOverflowsWidth(t *testing.T) {
 // TestKeysNavigateAndQuit covers the whole key surface U2 ships.
 func TestKeysNavigateAndQuit(t *testing.T) {
 	ref := testRef()
-	start := New(Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30})
+	start := New(Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30, Clock: testRef})
 
 	press := func(m Model, key string) (Model, tea.Cmd) {
 		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
@@ -289,6 +305,7 @@ func TestResizeAndTickAreHandled(t *testing.T) {
 	m := New(Options{
 		Snapshot: testSnapshot(ref),
 		Width:    80, Height: 24,
+		Clock:    testRef,
 		Interval: 10 * time.Millisecond,
 		Refresh: func() Snapshot {
 			calls++
@@ -324,7 +341,7 @@ func TestResizeAndTickAreHandled(t *testing.T) {
 	}
 
 	// A model with no refresher must not schedule ticks or panic on one.
-	still := New(Options{Snapshot: testSnapshot(ref)})
+	still := New(Options{Snapshot: testSnapshot(ref), Clock: testRef})
 	if still.Init() != nil {
 		t.Error("a model without Refresh should not start a ticker")
 	}
@@ -337,7 +354,7 @@ func TestResizeAndTickAreHandled(t *testing.T) {
 // machine, and must name both the problem and the way out when there is one.
 func TestAttentionOnlyWhenSomethingIsWrong(t *testing.T) {
 	ref := testRef()
-	healthy := New(Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30}).View()
+	healthy := New(Options{Snapshot: testSnapshot(ref), Width: 100, Height: 30, Clock: testRef}).View()
 	if strings.Contains(healthy, "attention") {
 		t.Error("a healthy machine should draw no attention panel")
 	}
@@ -349,7 +366,7 @@ func TestAttentionOnlyWhenSomethingIsWrong(t *testing.T) {
 	s.Status.BinDest = "no trash implementation for this platform"
 	s.Status.TokenOK = false
 	s.Status.Autostart = service.State{}
-	got := New(Options{Snapshot: s, Width: 100, Height: 40}).View()
+	got := New(Options{Snapshot: s, Width: 100, Height: 40, Clock: testRef}).View()
 
 	for _, want := range []string{
 		"attention",
@@ -369,7 +386,7 @@ func TestAttentionOnlyWhenSomethingIsWrong(t *testing.T) {
 // the ticker runs independently and a local change pre-empts it, so the
 // dashboard must not present it as a deadline (W15 finding, decisions.md).
 func TestNextPollIsMarkedAsAnEstimate(t *testing.T) {
-	got := New(Options{Snapshot: testSnapshot(testRef()), Width: 100, Height: 30}).View()
+	got := New(Options{Snapshot: testSnapshot(testRef()), Width: 100, Height: 30, Clock: testRef}).View()
 	if !strings.Contains(got, "≈") {
 		t.Error("the next-poll figure must be marked as an estimate")
 	}

@@ -1,0 +1,18 @@
+synckeeper  ● running · watching · pid 4242 · up 3d4h                                       14:45:02
+max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
+
+── activity — 40 entries ───────────────────────────────────────────────────────────────────────────
+ 13m ago   ↑ local→drive upload    Photos/2026/img_8812.raf
+ 14m ago   ↓ drive→local download  Notes/note-13.md
+ 15m ago   ⇅ conflict    conflict  Budget-14.xlsx
+ 16m ago   ! —           error     refresh remote state: attempt 15 failed
+ 17m ago   ↑ local→drive upload    Photos/2026/img_8816.raf
+ 18m ago   ↓ drive→local download  Notes/note-17.md
+ 19m ago   ⇅ conflict    conflict  Budget-18.xlsx
+ 20m ago   ! —           error     refresh remote state: attempt 19 failed
+ 21m ago   ↑ local→drive upload    Photos/2026/img_8820.raf
+ 22m ago   ↓ drive→local download  Notes/note-21.md
+ 23m ago   ⇅ conflict    conflict  Budget-22.xlsx
+ 24m ago   ! —           error     refresh remote state: attempt 23 failed
+ … 16 older (j/k scroll · G end)
+1 overview · 2 activity · 3 info                  f filter · / search · j/k scroll · ? help · q quit

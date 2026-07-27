@@ -61,7 +61,7 @@ func newStatusCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the status as JSON (one-shot, for scripts)")
 	cmd.Flags().BoolVar(&plain, "plain", false, "print the one-shot report instead of the dashboard")
-	cmd.Flags().DurationVar(&interval, "interval", tui.DefaultInterval, "dashboard refresh interval")
+	cmd.Flags().DurationVar(&interval, "interval", tui.DefaultInterval, "how often the dashboard re-reads state (it redraws ~4x/s regardless)")
 	return cmd
 }
 

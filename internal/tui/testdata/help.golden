@@ -4,6 +4,12 @@ max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
 ── keys ────────────────────────────────────────────────────────────────────────────────────────────
  1 / 2 / 3   overview · activity · info
  tab / ←→    cycle through the views
+ j / k       scroll the activity list (↑↓ too)
+ pgup/pgdn   scroll a page (space pages down)
+ g / G       jump to the newest / oldest entry
+ f           filter activity: all → local→drive → drive→local → conflict → errors
+ /           search paths, details and kinds; enter keeps it, esc cancels
+ c           clear the filter and the search
  r           refresh now
  ?           toggle this help
  q / ctrl+c  quit
