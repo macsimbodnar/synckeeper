@@ -13,6 +13,35 @@ Format:
 
 ---
 
+## 2026-07-27 — W9 (tray/menu-bar app) parked: W15 is the UI
+
+**Context:** W15 makes `status` an interactive dashboard — Max's framing was *"like the gui application but just from command line"*. W9 planned a tray/menu-bar binary on the control socket for the same jobs (mode at a glance, sync now, pause/resume, open folder/logs).
+
+**Decision (Max, 2026-07-27, agent-proposed):** park W9. A tray icon and a TUI want the same data with different ergonomics; once the TUI is the front end, the tray is polish rather than capability. Reopen if the always-on menu-bar presence is actually missed.
+
+**Consequences:** plan.md W9 → `parked (2026-07-27)`. Reviving it stays cheap **by design**: W15-U5's `stat` control payload is specified as *the* shared client read model, so a tray would consume it instead of inventing a second one — the reason U5's payload is worth designing carefully even though only one client exists today. File-manager badges are untouched by this (no API on the primary platform regardless — phase-7 history). Nothing in the spec's roadmap is deleted; W9 keeps its section and its number.
+
+## 2026-07-27 — W15 — `status` becomes the dashboard (the CLI's UI)
+
+**Context:** Max asked for *"some sort of cli application that show me in real time what is happening… time to next scan, last activities, recent modified files, status of the service. Like a btop but specific for synckeeper"*, to be planned collaboratively before any code. Planned over three iterations, each of which changed the shape:
+
+1. First proposal was a **new** `top` command (`watch` is taken by the daemon, so it could not name a viewer).
+2. Max: *"I want to change the name top. Let's put it under status. because status will become obsolete with this command. So we just replace what it does."* → no new command; `status` is the dashboard.
+3. Max: *"I want in the new status to also have a section with static information. It should replace at long run the old status and activities. It's like the gui application but just from command line."* → not a monitor but the front end, so panels became **three views** (Overview / Activity / Info) with an always-visible identity strip.
+
+**Decisions (Max, 2026-07-27; the analysis and options were agent-proposed):**
+
+1. **`status` replaces itself.** Dashboard on a TTY; today's plain dump when stdout is not a terminal (auto-detected, so pipes, cron and bug-report pastes are unaffected); `--plain` forces the dump on a TTY; **`--json` unchanged**; `--interval` sets the refresh rate; **`--watch` removed** — it was a naive first draft of this and two things must not claim one job. The DOC1 manifest therefore *changes* a row instead of adding a command.
+2. **The one-shot commands survive as the machine surface.** A TUI cannot be piped, so `status --plain`, `status --json` and `activity -n` remain for scripts, cron and any future client; MANUAL §3 marks each row human or scriptable. Retiring `activity` later is a one-line manifest change. Rejected: retiring `activity` (and `info`) now — it would delete the offline, pre-init dump a bug report pastes.
+3. **bubbletea + lipgloss**, the repo's first UI dependency (~8 pure-Go modules, all Windows-capable). Chosen over a zero-dep hand-rolled renderer (≈400 lines of termios/resize/Windows-VT plumbing that is not the product) and over tview/tcell (higher-level widgets, but imperative state that does not test as pure renders). The deciding property is that `Update`/`View` are **pure functions**, so every panel state is a golden-string test with no TTY — how this repo already tests `printInfoHuman`, `printAccountIdentity` and `systemBinLine`. Cost accepted knowingly: the largest dependency addition in the repo's history, in a project that otherwise prefers pure Go and few deps.
+4. **Ship tier 1 first (release 1), tier 2 right after.** Release 1 (U1–U4, U6) is entirely DB-backed and needs **no daemon change**, so it runs against the binaries already installed on both machines; release 2 (U5) adds the read-only `stat` control command for in-flight detail. Rejected: one big release (nothing runnable until the daemon loop changes too) and tier-1-only (a long cycle would show stale numbers with no explanation).
+5. **Both a history panel and a pending panel.** *Recently synced* comes free from the activity ring; *seen on disk, not yet synced* needs the watcher's event ring, so the WAITING panel arrives with U5 and is **hidden, not empty, in release 1** — a box that can never fill reads as "nothing changed" when it means "your daemon cannot tell me yet".
+6. **W15 runs before W7** (the Linux port). No ordering hazard either way: W7-L2 changes where the Linux daemon logs, which the dashboard reads as a path from `service.LogPath()`, not as behavior.
+
+**Two findings from reading the code that constrain the build** (both recorded so they are not re-derived): **(a) `NextPollAt` is an estimate, not a deadline** — written as `time.Now().Add(w.Poll)` at cycle end (`watch.go:249`) while the ticker (`watch.go:145`) runs independently and is never reset, and any watcher wake pre-empts it; tier 1 must render `next poll ≈`, and only U5 may render a precise countdown. **(b) today's `status` renderer has no automated test** — `gatherStatus`/`printStatusHuman` are referenced only by `status.go`, and testing.md's *"CLI render smoke"* row (2026-07-14) names no test, unlike its neighbours and unlike `info`'s renderer; so U1 writes characterization goldens **before** the behavior around them changes, with `--plain` guaranteed byte-identical to today's output.
+
+**Consequences:** plan.md **W15** (items U1–U7, next workstream) and the current-order line; W9 parked (separate entry above); MANUAL §3 + a dashboard section, spec §15 and §8.2, README layout + dep note, and the surface manifest all move in U6's commit; `internal/control`'s "read-only monitoring goes through the state DB instead" doc comment is amended by U5, deliberately, rather than writing per-file rows into SQLite at transfer rate. U7 (bytes/sec, per-file progress) is **deferred out of the workstream** — it instruments the durability-critical transfer path for a cosmetic gain, and `googleapi.ProgressUpdater` plumbing deserves its own risk review. The dashboard is read-only by construction: no instance lock, no writes, no migration (spec §14 / R5), pinned by a structural test that `internal/tui` cannot reach a writable `statedb.Open`.
+
 ## 2026-07-26 — W14 as built: two implementation calls
 
 **Context:** W14 landed the same day it was planned. Two places where the plan met the code.

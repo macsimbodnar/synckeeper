@@ -19,7 +19,7 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 
 Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`. Work strictly in order within a workstream; W1 blocks everything else (correctness first).
 
-**Current order (Max, 2026-07-26): ~~W14~~ (done) → ~~W13 close-out~~ (done 2026-07-27) → W7 (L1–L5, L7, L8) → W6 → W10.** W13 is **closed** — code, the macOS compile/run (T13.10), and the on-hardware acceptance on both platforms (T13.17). **W7 is the next agent workstream.** W12 is parked.
+**Current order (Max, 2026-07-27): ~~W14~~ → ~~W13 close-out~~ → **W15** → W7 (L1–L5, L7, L8) → W6 → W10.** W13 is **closed** — code, the macOS compile/run (T13.10), and the on-hardware acceptance on both platforms (T13.17). **W15 (`status` becomes a live TUI dashboard) is next**, ahead of the Linux port at Max's call. W12 and **W9** are parked (W9 because W15 is the UI now).
 
 **Execution order on the primary platform (updated 2026-07-18): W1.8 → W1.9 → W4 → W3 → W5.** W1.8, W1.9, W4, W3, and **W5 are done** (W4 closed 2026-07-23 finding R25; W3 closed 2026-07-24 — adversarial check + 2 h FSEvents soak passed; **W5 closed 2026-07-24** — init offers `service install`, `account` shows the Google email, pause kept in-memory). **Next is W6** (real multi-machine rollout, blocked on a second physical machine) or the platform ports W7/W8. W3 and W4 kept their identifiers and swapped execution order — correctness never depends on the watcher (spec §8.1), so the fuzzer earned more than FSEvents did; see decisions.md 2026-07-18 "Roadmap". W1.9 (adversarial round 3, over the code) preceded W4 for the same reason: the fuzzer simulates machines on the real, fold-happy local filesystem, and two of round 3's reproduced defects (C2, C3) would turn its oracle red from day one. W6+ follow the spec roadmap.
 
@@ -161,9 +161,11 @@ Order: **L6 → L1 → L2 → L5 → L3 → L4 → gates (L8) → docs (L7).** L
 
 Names hardening (reserved names, illegal chars, trailing dots/spaces, long paths), fswatch/RDCW, rename-replace semantics under the journal (F3 on-platform), Task Scheduler, native build, full suite + soak.
 
-### W9 — UI (after CLI is solid, spec roadmap) — `not started`
+### W9 — UI (after CLI is solid, spec roadmap) — `parked (2026-07-27) — W15 is the UI now; reopen if the menu-bar presence is missed`
 
 Tray/menu-bar app as a separate binary on the control socket (mode icon, sync now, pause/resume, open folder/logs); then file-manager badges where the OS has an API. Strictly a client; no sync logic.
+
+**Parked (Max, 2026-07-27)** when W15 was planned: a tray icon and a TUI want the same data for different ergonomics, and W15 delivers the interactive front end — *"like the GUI application but just from command line"*. The tray becomes optional polish, not capability. Reviving it stays cheap by design: **W15-D5's `stat` control payload is specified as the shared client read model**, so a tray would consume it rather than invent a second one. File-manager badges are unaffected by this parking (no API on the primary platform anyway — phase-7 history).
 
 ### W10 — Daemon surfaces skips in `activity` (from the 2026-07-24 doc audit) — `not started`
 
@@ -173,6 +175,57 @@ Skipped files (Google-native docs, symlinks, non-regular files, invalid names, D
 - **Open design detail to settle at build time (flagged, not pre-decided):** the `activity` ring is **capped**, and a permanent skip (e.g. a Google-native file that lives in the folder forever) recurs identically every cycle — re-logging it each cycle would evict real sync history from the ring, the same per-cycle noise spec §5 deliberately made ignore-matches silent to avoid. Likely resolution: emit a skip entry only when a rel_path's skip **first appears or its reason changes** (dedupe unchanged repeats) so the display stays per-skip without flooding the ring. Confirm the dedupe rule with Max when built.
 - **Priority:** self-contained, needs no hardware — doable on the primary platform anytime; below the platform ports (W7/W8) in importance.
 - **Acceptance:** a daemon cycle with a skipped Google-native file (or symlink) records a `skip` entry visible in `status` and `activity`; recurring identical skips don't flood the capped ring (per the settled dedupe rule). testing.md row lands with the code.
+
+### W15 — `status` becomes a live TUI dashboard (the CLI's UI) — `not started` · **next**
+
+Max's call, 2026-07-27, planned interactively over three iterations (decisions.md "W15 — `status` becomes the dashboard"): *"I want a new tool. Some sort of cli application that show me in real time what is happening… Like a btop but specific for synckeeper"* → *"I want to change the name top. Let's put it under status. because status will become obsolete with this command"* → *"I want in the new status to also have a section with static information. It should replace at long run the old status and activities. It's like the gui application but just from command line."*
+
+**No new command.** `status` gains the dashboard; the DOC1 manifest **changes a row rather than adding one** (`{"json","watch"}` → `{"interval","json","plain"}`).
+
+| Invocation | Behavior |
+|---|---|
+| `status`, stdout a TTY | the dashboard |
+| `status`, piped/redirected/cron | today's plain dump, one shot — auto-detected, so `status \| grep`, bug-report pastes and scripts keep working |
+| `status --plain` | that dump, forced on a TTY |
+| `status --json` | **unchanged** — the scripting contract |
+| `status --interval <dur>` | refresh rate (default 1 s) |
+| ~~`status --watch`~~ | **removed**: a naive first draft of this; two things claiming one job |
+
+**Three views**, persistent header (state · mode · pid · uptime) + footer (keys) + an always-visible identity strip (`machine · sync dir · drive folder`); switch with `1`/`2`/`3`/Tab, `?` for a key overlay:
+
+| View | Content | Replaces (as the *human* surface) |
+|---|---|---|
+| **[1] Overview** | CYCLE (next poll, last cycle, in-flight), TOTALS (tracked, pending ops, quarantine, bin), ATTENTION — rendered only when non-empty (guard block + reason, last error, no system bin, stale heartbeat, autostart missing, loose `credentials.json`), ACTIVITY tail (~8), WAITING (U5) | `status`'s live half |
+| **[2] Activity** | the full 500-entry ring: scroll, filter by kind and direction, search | reading `activity` by hand |
+| **[3] Info** | version; every path (`config.toml`, `state.db`, `token.json` + mode, `credentials.json` + mode, `control.sock`, quarantine, system bin, log); sync target + root id; machine name + id; OAuth client; token status; effective config | `status`'s static half; `info` as a thing you *read* |
+
+**The one-shot commands survive as the machine surface** (Max, 2026-07-27): a TUI cannot be piped, so `status --plain`, `status --json` and `activity -n` stay for scripts, cron, bug reports and any future client, with MANUAL §3 marking each row human or scriptable. Retiring `activity` later is a one-line manifest change, not a rewrite.
+
+**Three tiers of data, and only two are cheap** (established by reading the code, 2026-07-27):
+
+1. **Free — DB-backed, cycle-granular.** `statedb.DaemonStatus` + `RecentActivity` + `service.Status()` already carry state/mode/pid/uptime/paused, last sync + `CycleSummary`, next-poll estimate, guard block + reason, last error, tracked items, pending journal ops, quarantine usage, bin destination, autostart, and the activity ring. **Release 1 needs no daemon change at all** and runs against the binaries already installed on both machines.
+2. **Needs one new read-only control command (U5).** What the cycle is doing *now* — stage, elapsed, actions done/total, watcher backend name, debounce-armed, the **true** next-tick deadline, a bounded watcher-event ring — lives only in daemon memory. `internal/control`'s doc comment states the current split (*"read-only monitoring goes through the state DB instead"*); U5 amends it deliberately rather than writing per-file rows into SQLite at transfer rate.
+3. **Deferred (U7).** Bytes/sec and per-file progress need `googleapi.ProgressUpdater` in `driveclient` plus a progress sink threaded through the executor — the durability-critical path — for a cosmetic gain. Not in this workstream.
+
+**Two honesty findings the design must respect:**
+- **`NextPollAt` is an estimate, not a deadline.** It is written as `time.Now().Add(w.Poll)` at cycle *end* (`watch.go:249`) while the real ticker (`watch.go:145`) runs independently and is never reset, and any watcher wake pre-empts it. Tier 1 renders `next poll ≈`; only U5 may render a precise countdown. (`status` prints the same estimate today with the same imprecision — the dashboard must not amplify it into a big ticking clock.)
+- **Today's `status` renderer has no automated test.** `gatherStatus`/`printStatusHuman` are referenced only by `status.go`; testing.md's *"CLI render smoke: `status` never-run / running / stale"* row (2026-07-14) names no test, unlike its neighbours and unlike `info`'s renderer (W11). So U1 **characterizes before it changes**.
+
+**Dependency (Max, 2026-07-27): bubbletea + lipgloss** — the repo's first UI dependency, ~8 pure-Go modules, all Windows-capable. Chosen over a zero-dep hand-rolled renderer and over tview/tcell because `Update`/`View` are **pure functions**: every panel state becomes a golden-string test with no TTY, which is how this repo already tests renderers (`printInfoHuman`, `printAccountIdentity`, `systemBinLine`). decisions.md carries the rationale.
+
+**Release 1 = U1–U4 + U6. Release 2 = U5.**
+
+1. **[U1] One read model per fact, and characterization tests first** — `not started`. Extract `gatherStatus`/`statusView` (`cmd/synckeeper/status.go:81`) into a shared, non-printing gatherer used by `status --plain`, `status --json` and the dashboard, and **reuse `info`'s existing gatherer + pure renderer** (`cmd/synckeeper/info.go`, W11, already tested) for view [3] — so `status`, `info` and the dashboard can never disagree about a path, a default, or what "stale" means. **Lands with golden tests for the plain renderer across never-run / stopped / stale / running / polling-only / paused / guard-blocked / last-error / empty-activity**, written *before* the behavior around it changes, and testing.md's manual smoke row upgraded to a named test. **Guarantee: `--plain` output stays byte-identical to today's** — the new tests pass before and after. New `internal/tui` package: `Snapshot` in, pure `Model`/`Update`/`View`.
+2. **[U2] Views, layout, degradation** — `not started`. The three views, header/footer/identity strip, ATTENTION suppressed when empty. Narrow terminal (<70 col) collapses each view to one column; the identity strip truncates, never wraps. **No TTY → the plain dump, not a refusal** (that is the auto-detect above); an explicit `--interval` on a non-TTY is a named error rather than a silent no-op. TTY detection reuses the existing `isTerminal` seam (`cmd/synckeeper/serviceoffer.go:70`, used this way by `init.go:115`) so it is injectable and testable.
+3. **[U3] The live loop** — `not started`. 1 Hz DB read (WAL + `busy_timeout(5000)` already make concurrent reads safe against the writing daemon); the countdown interpolated locally at ~8 Hz off an **injected clock** (the `nowFunc` idiom) so it ticks smoothly without hammering SQLite. Activity view: scroll (`j`/`k`/arrows), filter by kind and direction, search. **Unknown activity kinds must render, not vanish** — W10 will add a `skip` kind later, so the kind→glyph map needs a default case.
+4. **[U4] Actions over the existing control socket** — `not started`. `s` sync now, `p` pause, `P` resume, `R` reload — the already-shipped `CmdSync`/`CmdPause`/`CmdResume`/`CmdReload`, so release 1 adds **no** daemon capability. Inline per-action feedback and failure text; a fake control-client seam for tests. **`s` never auto-confirms deletes:** a guard-blocked state shows the reason and the `sync --confirm-deletes` hint as text, and releasing it stays an explicit CLI act — the daemon never self-confirms (spec §8.1) and neither may a keystroke.
+5. **[U5] Tier 2: a read-only `stat` control command** — `not started` (release 2). Publishes the in-memory snapshot: cycle stage + elapsed + actions done/total, watcher backend name, debounce-armed flag, true next-tick deadline, bounded (~50) watcher-event ring. **Additive: `ProtocolVersion` stays 1** and an unknown-command reply degrades the dashboard to tier 1, so a new CLI against an older daemon still works (rather than a version bump that makes every mismatch fatal). This is what lights up the **WAITING** panel — *seen on disk, not yet synced* — which is **hidden, not empty, in release 1**: a box that can never fill would read as "nothing changed" when it means "your daemon cannot tell me yet". Amends `internal/control`'s "commands only" doc comment and spec §8.2.
+6. **[U6] Docs, manifest, tests — same commit** — `not started`. Surface manifest (`status` row rewritten, `--watch` removed); MANUAL §3 rows for `status` / `activity` / `info` marked human vs scriptable + a dashboard section with the key map; spec §15 (CLI surface) and §8.2 (what the daemon publishes); README layout (`internal/tui`) + the dep note; testing.md rows. **`--watch` is a user-visible removal → MANUAL in the same commit**, and the DOC1 guard fails until manifest + MANUAL + spec move together.
+7. **[U7] Deferred: throughput** — `not started`, explicitly not in this workstream. Bytes/sec, current file, per-file bars. Revisit only as its own item with its own risk review, since it instruments the transfer path.
+
+**Acceptance:** on a TTY, `synckeeper status` renders all three views live against a running daemon, updates without flicker, and drives sync/pause/resume/reload; piped, it prints today's dump byte-identically; `--json` is unchanged; every view state has a golden test that runs with no terminal; the dashboard holds no instance lock and never writes to or migrates the DB (spec §14 / R5) — pinned by a structural test that `internal/tui` cannot reach a writable `statedb.Open`; a daemon that is absent, stale, dying mid-session, or on a mismatched schema renders as a state rather than an error; `go build ./... && go vet ./... && go test ./... && make audit` green.
+
+**Open details to settle at build time** (flagged, not pre-decided): the plain-flag name (`--plain` vs `--once`); whether the Activity view's filter is modal or incremental; the exact key for the static view if `3` proves awkward next to Tab; and the ATTENTION panel's ordering when several conditions hold at once.
 
 ### W14 — The mass-delete guard becomes a *recoverability* guard — `done (2026-07-26)`
 
