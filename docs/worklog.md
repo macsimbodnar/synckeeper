@@ -517,3 +517,10 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Pinned so it cannot creep back:** testing.md U2.5 now asserts `r` is a **no-op** — no refresh, no command, no view change — and `TestResizeAndTickAreHandled` checks the refresh count did not move. The only Shift-distinguished keys left are `p`/`P`.
 - Docs same commit: decisions.md entry ("The dashboard has no manual-refresh key", incl. the rejected options so this is not re-litigated), MANUAL §10 key table row removed, testing.md U2.5 restated, help golden regenerated. No spec change (no CLI surface change).
 - Gates: build, vet, full suite, `-race` on `internal/tui`, `make audit` — green.
+
+### 2026-07-27 — U4 accepted on hardware; next steps restated
+> "I checkd the new commands and they work perfectly. What are the next steps?"
+- **Recorded as testing.md U4.7**, a new on-hardware row rather than a note on U2.9: the claim is different in kind — that the control-socket wiring actually reaches the daemon and acts, which the fakes cannot prove because they stop at the seam. Attributed to Max's own run. Re-check on Linux with W7.
+- status.md: release 1 of W15 marked **complete and accepted on hardware** (U2.9 views/data, U4.7 actions, plus the `r`-key removal).
+- **Next steps read back from plan.md/status.md:** (1) **W15-U5** — the read-only `stat` control command (precise countdown, in-flight cycle stage/elapsed/done-of-total, watcher backend name, and the WAITING panel: seen on disk, not yet synced); additive, `ProtocolVersion` stays 1, an older daemon degrades to today's view. First W15 item that touches the daemon loop. (2) **U6's remaining doc pass** (small, lands with U5). (3) **W7 Linux port** — L1 → L2 → L5 → L3 → L4 → L8 (gates) → L7 (docs), and the dashboard's Linux real-terminal re-check rides along. (4) **W6** rollout (Max's). (5) **W10** skips in `activity` — note it adds a `skip` activity kind the dashboard already renders via its default case. **W8** (Windows) still not started and owes W13 a recycle-bin backend.
+- No code change this prompt.
