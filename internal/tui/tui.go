@@ -57,6 +57,11 @@ type Model struct {
 	query     string // incremental search over path, detail and kind
 	searching bool   // the query line is accepting keystrokes
 
+	// Action state (U4).
+	actions *Actions
+	pending string // an action in flight, "" when idle
+	notice  notice // the last result line, self-expiring
+
 	refresh  func() Snapshot
 	clock    func() time.Time
 	interval time.Duration
@@ -71,6 +76,10 @@ type Options struct {
 	Color    bool
 	Width    int
 	Height   int
+
+	// Actions are the daemon commands the dashboard may ask for; nil means the
+	// keys still respond but report that there is nothing to ask.
+	Actions *Actions
 
 	// Clock is the instant a frame renders against; nil means time.Now. It is
 	// separate from the snapshot's own Now so relative times keep advancing
@@ -91,6 +100,7 @@ func New(o Options) Model {
 	m := Model{
 		snap:     o.Snapshot,
 		refresh:  o.Refresh,
+		actions:  o.Actions,
 		clock:    o.Clock,
 		interval: o.Interval,
 		color:    o.Color,
@@ -161,6 +171,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Nothing to recompute: the render reads the clock itself.
 		return m, frameAfter(FrameInterval)
 
+	case actionDoneMsg:
+		return m.applyActionResult(msg), nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -199,12 +212,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = !m.showHelp
 	case "r":
 		// A manual redraw: cheap, and it is what a user reaches for when they
-		// do not want to wait out the interval. `R` (reload config) and the
-		// other daemon actions arrive with W15-U4.
+		// do not want to wait out the interval.
 		if m.refresh != nil {
 			m.snap = m.refresh()
 			m.clampOffset()
 		}
+
+	// Daemon actions (U4) — each is the control call the matching CLI command
+	// already makes. `s` never confirms a held mass deletion: that stays an
+	// explicit `sync --confirm-deletes` on the command line.
+	case "s":
+		return m.runAction(verbSync)
+	case "p":
+		return m.runAction(verbPause)
+	case "P":
+		return m.runAction(verbResume)
+	case "R":
+		return m.runAction(verbReload)
 
 	// Scrolling — only the activity view has more rows than fit.
 	case "j", "down":
@@ -259,6 +283,25 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.offset = 0
 	}
 	return m, nil
+}
+
+// runAction dispatches one of the four daemon commands.
+func (m Model) runAction(verb string) (tea.Model, tea.Cmd) {
+	var fn func() error
+	if m.actions != nil {
+		switch verb {
+		case verbSync:
+			fn = m.actions.SyncNow
+		case verbPause:
+			fn = m.actions.Pause
+		case verbResume:
+			fn = m.actions.Resume
+		case verbReload:
+			fn = m.actions.Reload
+		}
+	}
+	next, cmd := m.run(verb, fn)
+	return next, cmd
 }
 
 func (m *Model) selectView(v int) {

@@ -10,4 +10,4 @@ max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
 ── attention ───────────────────────────────────────────────────────────────────────────────────────
  ⚠ no saved credentials — run `synckeeper login`
  · autostart not installed — `synckeeper service install`
-1 overview · 2 activity · 3 info                                                     ? help · q quit
+1 overview · 2 activity · 3 info                                s sync · p/P pause · ? help · q quit

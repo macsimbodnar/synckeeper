@@ -10,9 +10,14 @@ max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
  f           filter activity: all → local→drive → drive→local → conflict → errors
  /           search paths, details and kinds; enter keeps it, esc cancels
  c           clear the filter and the search
+ s           sync now (never confirms a held mass delete — see below)
+ p / P       pause / resume automatic syncing
+ R           reload config.toml in the daemon
  r           refresh now
  ?           toggle this help
  q / ctrl+c  quit
 
- the dashboard only reads: it holds no lock and never writes to the database
-1 overview · 2 activity · 3 info                                                     ? help · q quit
+ the dashboard only reads: it holds no lock and never writes to the database.
+ a deletion held by the mass-delete guard is released only by
+ `synckeeper sync --confirm-deletes` — never by a keystroke here.
+1 overview · 2 activity · 3 info                                s sync · p/P pause · ? help · q quit

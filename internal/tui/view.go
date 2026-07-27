@@ -36,12 +36,34 @@ func (m Model) View() string {
 	b.WriteString(m.header(t, w))
 	b.WriteByte('\n')
 	b.WriteString(m.identity(t, w))
-	b.WriteString("\n\n")
+	b.WriteByte('\n')
+	if line, ok := m.noticeLine(t, w); ok {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	b.WriteByte('\n')
 	b.WriteString(body)
 	b.WriteByte('\n')
 	b.WriteString(m.footer(t, w))
 	b.WriteByte('\n')
 	return b.String()
+}
+
+// noticeLine reports the result of the last daemon action, painted by outcome
+// and self-expiring so it can never be mistaken for live state.
+func (m Model) noticeLine(t theme, w int) (string, bool) {
+	n, ok := m.visibleNotice()
+	if !ok {
+		return "", false
+	}
+	glyph, paintFn := "·", t.muted
+	switch n.level {
+	case noticeGood:
+		glyph, paintFn = "✓", t.good
+	case noticeBad:
+		glyph, paintFn = "✗", t.bad
+	}
+	return paintFn(truncate(glyph+" "+n.text, w)), true
 }
 
 func (m Model) body(t theme, w int) string {
@@ -445,6 +467,9 @@ func (m Model) helpBody(t theme, w int) string {
 		{"f", "filter activity: all → local→drive → drive→local → conflict → errors"},
 		{"/", "search paths, details and kinds; enter keeps it, esc cancels"},
 		{"c", "clear the filter and the search"},
+		{"s", "sync now (never confirms a held mass delete — see below)"},
+		{"p / P", "pause / resume automatic syncing"},
+		{"R", "reload config.toml in the daemon"},
 		{"r", "refresh now"},
 		{"?", "toggle this help"},
 		{"q / ctrl+c", "quit"},
@@ -453,7 +478,9 @@ func (m Model) helpBody(t theme, w int) string {
 	for _, r := range rows {
 		out = append(out, indentOne(t.accent(pad(r[0], 12))+t.muted(r[1])))
 	}
-	out = append(out, "", indentOne(t.muted("the dashboard only reads: it holds no lock and never writes to the database")))
+	out = append(out, "", indentOne(t.muted("the dashboard only reads: it holds no lock and never writes to the database.")))
+	out = append(out, indentOne(t.muted("a deletion held by the mass-delete guard is released only by")))
+	out = append(out, indentOne(t.muted("`synckeeper sync --confirm-deletes` — never by a keystroke here.")))
 	return strings.Join(out, "\n")
 }
 
@@ -468,15 +495,24 @@ func (m Model) footer(t theme, w int) string {
 		}
 	}
 	left := strings.Join(tabs, t.muted(" · "))
-	right := t.muted("? help · q quit")
-	if m.view == ViewActivity && !m.showHelp {
+	right := t.muted("s sync · p/P pause · ? help · q quit")
+	switch {
+	case m.pending != "":
+		right = t.warn("… " + m.pending)
+	case m.view == ViewActivity && !m.showHelp:
 		right = t.muted("f filter · / search · j/k scroll · ? help · q quit")
 	}
 	return joinEnds(left, right, w)
 }
 
-// bodyBudget is how many lines the body may draw.
-func (m Model) bodyBudget() int { return max(3, m.height-chromeRows) }
+// bodyBudget is how many lines the body may draw. A visible notice costs one.
+func (m Model) bodyBudget() int {
+	rows := m.height - chromeRows
+	if _, ok := m.visibleNotice(); ok {
+		rows--
+	}
+	return max(3, rows)
+}
 
 // joinEnds puts left and right on one line, right-aligned, dropping the right
 // half when the width cannot hold both.

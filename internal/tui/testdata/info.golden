@@ -13,4 +13,4 @@ max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
  machine        max_mbp (id ab12cd)
  poll interval  45s
  ignore         *.tmp .DS_Store
-1 overview · 2 activity · 3 info                                                     ? help · q quit
+1 overview · 2 activity · 3 info                                s sync · p/P pause · ? help · q quit

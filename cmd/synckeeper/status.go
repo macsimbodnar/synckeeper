@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/status"
 	"github.com/macsimbodnar/synckeeper/internal/tui"
 	"github.com/macsimbodnar/synckeeper/internal/watch"
@@ -99,8 +100,36 @@ func runDashboard(cmd *cobra.Command, env *readEnv, interval time.Duration) erro
 	return tui.Run(ctx, tui.Options{
 		Interval: interval,
 		Color:    tui.ColorEnabled(),
+		Actions:  dashboardActions(),
 		Refresh: func() tui.Snapshot {
 			return tui.Snapshot{Status: gatherStatusN(env, dashboardActivityRows), Info: infoRows}
 		},
 	})
+}
+
+// dashboardActions are the four control-socket calls the dashboard can make —
+// exactly what `sync`, `pause`, `resume` and `reload` already send, so U4 adds
+// no daemon capability. Note the sync request carries no `--confirm-deletes`:
+// a deletion held by the mass-delete guard stays held until the user says so on
+// the command line (spec §8.1 — the daemon never self-confirms, and neither may
+// a keystroke).
+func dashboardActions() *tui.Actions {
+	call := func(cmd string) error {
+		resp, running, err := callDaemon(control.Request{Cmd: cmd})
+		switch {
+		case err != nil:
+			return err
+		case !running:
+			return errNoDaemon
+		case !resp.OK:
+			return errors.New(resp.Error)
+		}
+		return nil
+	}
+	return &tui.Actions{
+		SyncNow: func() error { return call(control.CmdSync) },
+		Pause:   func() error { return call(control.CmdPause) },
+		Resume:  func() error { return call(control.CmdResume) },
+		Reload:  func() error { return call(control.CmdReload) },
+	}
 }

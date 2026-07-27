@@ -162,8 +162,13 @@ Three views, switched with number keys or Tab:
 | `f` | filter activity: all → local→drive → drive→local → conflict → errors |
 | `/` | search paths, details and kinds — `Enter` keeps it, `Esc` cancels |
 | `c` | clear filter and search |
+| `s` | sync now (asks the running daemon) |
+| `p` / `P` | pause / resume automatic syncing |
+| `R` | reload `config.toml` in the daemon |
 | `r` · `?` · `q`/`Ctrl-C` | refresh now · help · quit |
 
 Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
 
-**"next poll ≈"** is an estimate, deliberately marked: the figure is recorded when a cycle ends, while the poll timer runs independently and any local change pre-empts it — so the real next sync is usually *sooner*. Sync-now and pause/resume from inside the dashboard, and a precise countdown, are not wired yet.
+`s`/`p`/`P`/`R` are the same requests `sync`, `pause`, `resume` and `reload` send; a result line appears under the header and clears itself. **`s` never confirms a held mass deletion** — a deletion the guard is holding is released only by `synckeeper sync --confirm-deletes` on the command line (§6), never by a keystroke.
+
+**"next poll ≈"** is an estimate, deliberately marked: the figure is recorded when a cycle ends, while the poll timer runs independently and any local change pre-empts it — so the real next sync is usually *sooner*. A precise countdown needs the daemon to publish its real deadline; not wired yet.
