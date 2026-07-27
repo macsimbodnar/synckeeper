@@ -19,7 +19,7 @@ Master tracking document. The spec in [spec.md](spec.md) is the contract; this f
 
 Statuses: `not started` → `in progress` → `blocked (reason)` → `done (date)`. Work strictly in order within a workstream; W1 blocks everything else (correctness first).
 
-**Current order (Max, 2026-07-26): ~~W14~~ (done) → W7 (L1–L5, L7, L8) → W6 → W10.** W13's code is done (T1–T6) and its macOS half is verified (T13.10, 2026-07-26); it stays open only on the on-hardware acceptance on the Mac. W12 is parked.
+**Current order (Max, 2026-07-26): ~~W14~~ (done) → ~~W13 close-out~~ (done 2026-07-27) → W7 (L1–L5, L7, L8) → W6 → W10.** W13 is **closed** — code, the macOS compile/run (T13.10), and the on-hardware acceptance on both platforms (T13.17). **W7 is the next agent workstream.** W12 is parked.
 
 **Execution order on the primary platform (updated 2026-07-18): W1.8 → W1.9 → W4 → W3 → W5.** W1.8, W1.9, W4, W3, and **W5 are done** (W4 closed 2026-07-23 finding R25; W3 closed 2026-07-24 — adversarial check + 2 h FSEvents soak passed; **W5 closed 2026-07-24** — init offers `service install`, `account` shows the Google email, pause kept in-memory). **Next is W6** (real multi-machine rollout, blocked on a second physical machine) or the platform ports W7/W8. W3 and W4 kept their identifiers and swapped execution order — correctness never depends on the watcher (spec §8.1), so the fuzzer earned more than FSEvents did; see decisions.md 2026-07-18 "Roadmap". W1.9 (adversarial round 3, over the code) preceded W4 for the same reason: the fuzzer simulates machines on the real, fold-happy local filesystem, and two of round 3's reproduced defects (C2, C3) would turn its oracle red from day one. W6+ follow the spec roadmap.
 
@@ -211,7 +211,7 @@ Max's call, 2026-07-26 (decisions.md "The mass-delete guard becomes a recoverabi
 
 *As built, two notes:* (a) **M3's `status` field** is the activity ring plus the cycle counters rather than a new `daemon_status` column — the ring is the durable record (500 entries) and adding a column would have meant a schema migration for a report; (b) the guard's **signature** gained `binAvailable bool`, fed from the same `Result.TrashAvailable` the collapse uses, so plan-time and execution-time can never disagree about where a deletion is going.
 
-### W13 — Remote deletions go to the OS trash (replacing the local quarantine) — `T1–T6 done + macOS verified (2026-07-26); open: the on-hardware acceptance on the Mac (Max's)`
+### W13 — Remote deletions go to the OS trash (replacing the local quarantine) — `done (2026-07-27)`
 
 Max's call, 2026-07-25 (decisions.md "Remote deletions go to the OS trash"): a private dated quarantine inside the config dir is a copy the user did not make, in a place they never look — *"it's still on my file system and not marked in any way whatsoever."* A deletion arriving from Drive must move the local file/folder to the **operating system's trash**, which the desktop already shows and can restore from. **Both currently supported platforms ship together — macOS and Linux** (Max, 2026-07-25); Windows follows with W8. **Now the active workstream** — W12 is parked (Max, 2026-07-25) after its blast radius proved nil and every reproducible path came out correct.
 
@@ -242,7 +242,7 @@ Max's call, 2026-07-25 (decisions.md "Remote deletions go to the OS trash"): a p
 
 **Acceptance:** deleting a folder in the Drive web UI removes it from every machine and leaves exactly one restorable entry in each machine's system bin; the quarantine directory stays empty in normal operation; `make test` green on both platforms, plus the `CGO_ENABLED=0` build.
 
-**Status (2026-07-26):** met on Linux — T1–T6 all landed, `go build ./... && go vet ./... && go test ./...` green, `CGO_ENABLED=0 GOOS=darwin` and `GOOS=windows` builds green. **The macOS compile/run is done (T13.10, 2026-07-26):** the darwin cgo trash path compiled clean on its first run anywhere and its three tests pass, with the full suite + `make audit` green on the Mac. **One thing left before W13 closes:** the end-to-end acceptance on real hardware (delete a folder in the Drive web UI, confirm one restorable entry in each machine's bin) — passed on Linux 2026-07-26, still owed on the Mac, which must be rebuilt first (it runs a pre-W14 binary) — Max's, alongside W6.
+**Status — CLOSED (2026-07-27).** T1–T6 landed 2026-07-25/26; the suite, `make audit`, `-race` on every touched package, and the `CGO_ENABLED=0 GOOS=darwin` / `GOOS=windows` builds are green on both machines. The macOS compile/run (T13.10) passed on the Mac 2026-07-26 — the darwin cgo path compiled clean on its first compilation anywhere. **The on-hardware acceptance is met on both platforms (T13.17):** Linux 2026-07-26 (a 1117-file folder trashed in the Drive web UI removed in one cycle, one restorable desktop-bin entry) and macOS 2026-07-27 (**Max: "I tested the linux and mac machine and can confirm that all works as expected"**). Windows owes the same acceptance with W8's recycle-bin backend.
 
 ### W12 — Field incident: a Drive-bin delete came back as a re-upload (Linux, 2026-07-25) — `parked (2026-07-25) — reopen only if it recurs`
 
