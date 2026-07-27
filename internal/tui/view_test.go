@@ -333,11 +333,18 @@ func TestResizeAndTickAreHandled(t *testing.T) {
 		t.Error("tick did not schedule the next tick")
 	}
 
-	// `r` refreshes immediately.
-	pressed, _ := tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	_ = pressed
-	if calls != 2 {
-		t.Errorf("r called refresh %d times total, want 2", calls)
+	// There is no manual-refresh key: the view re-reads itself, so a stray `r`
+	// must do nothing at all (it used to sit confusingly beside `R`, which asks
+	// the daemon to reload its config — Max, 2026-07-27).
+	pressed, cmd2 := tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if calls != 1 {
+		t.Errorf("`r` performed %d refreshes; it must be a no-op", calls-1)
+	}
+	if cmd2 != nil {
+		t.Error("`r` produced a command; it must do nothing")
+	}
+	if pressed.(Model).view != tm.view {
+		t.Error("`r` changed the view")
 	}
 
 	// A model with no refresher must not schedule ticks or panic on one.

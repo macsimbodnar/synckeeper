@@ -165,7 +165,7 @@ Three views, switched with number keys or Tab:
 | `s` | sync now (asks the running daemon) |
 | `p` / `P` | pause / resume automatic syncing |
 | `R` | reload `config.toml` in the daemon |
-| `r` · `?` · `q`/`Ctrl-C` | refresh now · help · quit |
+| `?` · `q`/`Ctrl-C` | help · quit |
 
 Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
 

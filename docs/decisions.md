@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-27 — The dashboard has no manual-refresh key
+
+**Context:** Max, reading the dashboard's help: *"it is not clear to me what the `r` command does in the status screen."* It re-read the database immediately instead of waiting for the next `--interval` tick — a purely local action — while `R` beside it asks the *daemon* to reload `config.toml`. Two unrelated things separated only by Shift, sitting next to `p`/`P`, which **are** a pair (pause/resume). At the default `--interval 1s` the refresh was also unobservable: the data was already at most a second old.
+
+**Decision (Max, 2026-07-27, agent-proposed options):** **drop `r` entirely.** The dashboard re-reads itself; a manual refresh earns nothing worth a key, and a case-only distinction between "harmless" and "acts on the daemon" is a trap. `r` is now a plain no-op (the key switch has no default, so nothing happens). Rejected: relabelling it (keeps the trap), moving it to `ctrl+r` (keeps a key nobody needs), and swapping it so `r` *is* the reload (a stray keypress would then act on the daemon).
+
+**Consequences:** one key removed from `handleKey` and from the `?` overlay; `R`'s help line now says "asks the daemon" to make the asymmetry explicit. MANUAL §10's key table drops the row; testing.md U2.5 now **asserts `r` does nothing** — no refresh, no command, no view change — so it cannot creep back in unnoticed. The only Shift-distinguished keys left are `p`/`P`, which are a genuine pair. Anyone tempted to re-add a refresh key should read this entry first: the answer is that `--interval` is the knob, not a keystroke.
+
 ## 2026-07-27 — W9 (tray/menu-bar app) parked: W15 is the UI
 
 **Context:** W15 makes `status` an interactive dashboard — Max's framing was *"like the gui application but just from command line"*. W9 planned a tray/menu-bar binary on the control socket for the same jobs (mode at a glance, sync now, pause/resume, open folder/logs).

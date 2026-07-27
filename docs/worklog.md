@@ -509,3 +509,11 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **One of my own tests was wrong again, not the code:** `TestOnlyOneActionInFlight` asserted the second call had happened without running the returned `tea.Cmd`. Running it is what performs the call.
 - Docs same commit: testing.md **U4.1–U4.6**; plan.md U4 → done with an as-built note; status.md (**release 1 of W15 is complete** — U1–U4 + U6's surface half); **MANUAL §10** gained `s`/`p`/`P`/`R` and the "never confirms a held mass deletion" line, and its "sync-now… not wired yet" caveat is gone. Spec untouched: no CLI surface change.
 - Gates: build, vet, full suite, `-race` on `internal/tui`, `make audit`, windows + linux pure-Go cross-builds — green.
+
+### 2026-07-27 — the dashboard's `r` key: explained, then dropped
+> "it is not clear to me what the \"r\" command does in the status screen."
+- **Answered first:** `r` re-read the database immediately instead of waiting for the next `--interval` tick (purely local, nothing to do with the daemon), while `R` beside it asks the daemon to reload `config.toml`. Two unrelated actions separated only by Shift, next to `p`/`P`, which **are** a pair — and at the default `--interval 1s` the refresh was unobservable anyway. The confusion was the design's fault, not the reader's.
+- **Max's call (4 options offered): drop `r` entirely.** Removed from `handleKey` and from the `?` overlay; `R`'s help line now says "asks the daemon" to make the asymmetry explicit. Rejected alternatives recorded in decisions.md (relabel / move to `ctrl+r` / swap so `r` is the reload).
+- **Pinned so it cannot creep back:** testing.md U2.5 now asserts `r` is a **no-op** — no refresh, no command, no view change — and `TestResizeAndTickAreHandled` checks the refresh count did not move. The only Shift-distinguished keys left are `p`/`P`.
+- Docs same commit: decisions.md entry ("The dashboard has no manual-refresh key", incl. the rejected options so this is not re-litigated), MANUAL §10 key table row removed, testing.md U2.5 restated, help golden regenerated. No spec change (no CLI surface change).
+- Gates: build, vet, full suite, `-race` on `internal/tui`, `make audit` — green.

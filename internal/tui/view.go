@@ -469,8 +469,7 @@ func (m Model) helpBody(t theme, w int) string {
 		{"c", "clear the filter and the search"},
 		{"s", "sync now (never confirms a held mass delete — see below)"},
 		{"p / P", "pause / resume automatic syncing"},
-		{"R", "reload config.toml in the daemon"},
-		{"r", "refresh now"},
+		{"R", "reload config.toml in the daemon (asks the daemon)"},
 		{"?", "toggle this help"},
 		{"q / ctrl+c", "quit"},
 	}

@@ -210,13 +210,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectView((m.view + numViews - 1) % numViews)
 	case "?":
 		m.showHelp = !m.showHelp
-	case "r":
-		// A manual redraw: cheap, and it is what a user reaches for when they
-		// do not want to wait out the interval.
-		if m.refresh != nil {
-			m.snap = m.refresh()
-			m.clampOffset()
-		}
+	// No manual-refresh key: the view re-reads itself, and a lowercase `r`
+	// sitting next to `R` (reload the daemon's config) read as a pair when it
+	// was nothing of the kind — Max, 2026-07-27, decisions.md.
 
 	// Daemon actions (U4) — each is the control call the matching CLI command
 	// already makes. `s` never confirms a held mass deletion: that stays an
