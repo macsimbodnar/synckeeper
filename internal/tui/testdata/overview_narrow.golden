@@ -1,0 +1,20 @@
+synckeeper  ● running · watching · pid 4242         14:45:02
+max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
+
+── cycle ───────────────────────────────────────────────────
+ next poll   ≈ in 2m
+ last sync   2m ago
+ last cycle  3 actions · 3 ok
+ duration    412 ms
+── totals ──────────────────────────────────────────────────
+ tracked     12,481
+ pending ops 0
+ quarantine  0 files
+ system bin  macOS Trash (Finder)
+
+── activity ────────────────────────────────────────────────
+ 2m ago    ↑ local→drive upload    Photos/2026/img_8841.raf
+ 2m ago    ↓ drive→local download  Notes/todo.md
+ 3m ago    ⇅ conflict    conflict  … (conflict max_mbp).xlsx
+ 4m ago    ↓ drive→local trash     Archive/old (1117 files)
+1 overview · 2 activity · 3 info             ? help · q quit

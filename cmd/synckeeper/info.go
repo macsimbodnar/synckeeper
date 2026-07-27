@@ -18,6 +18,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 	"github.com/macsimbodnar/synckeeper/internal/status"
 	"github.com/macsimbodnar/synckeeper/internal/trash"
+	"github.com/macsimbodnar/synckeeper/internal/tui"
 )
 
 func newInfoCmd() *cobra.Command {
@@ -336,4 +337,85 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
+}
+
+// infoRowsForDashboard renders the static half of the dashboard (view 3) from
+// this same gatherer, so `synckeeper info` and the dashboard cannot disagree
+// about a path, a mode, or a default: this file resolves them once and both
+// surfaces read the result. Only the wording is the dashboard's own.
+func infoRowsForDashboard() []tui.InfoRow {
+	v := gatherInfo()
+	row := func(label, value, note string) tui.InfoRow {
+		return tui.InfoRow{Label: label, Value: value, Note: note}
+	}
+	spacer := tui.InfoRow{}
+
+	rows := []tui.InfoRow{
+		row("version", "synckeeper "+v.version, ""),
+		spacer,
+		row("config dir", v.configDir, ""),
+		row("config.toml", v.configPath, noteText(!v.configLoaded, "not created — run `synckeeper init`")),
+		row("state.db", v.statePath, noteText(!v.initialized, "absent")),
+		row("token.json", v.tokenPath, tokenFileNote(v)),
+		row("credentials", v.credPath, credentialsNote(v)),
+		row("control.sock", v.socketPath, ""),
+		row("quarantine", v.quarantineDir, ""),
+		row("system bin", v.trashDest, ""),
+	}
+	if v.logPath != "" {
+		rows = append(rows, row("log", v.logPath, ""))
+	}
+
+	rows = append(rows,
+		spacer,
+		row("sync dir", v.syncDir, noteText(!v.configLoaded, "default")),
+		row("drive folder", fmt.Sprintf("%q", v.driveFolder), strings.TrimSpace(strings.Trim(idSuffix(v.rootID), " ()"))),
+		row("machine", v.machineName, strings.TrimSpace(strings.Trim(idSuffix(v.machineID), " ()"))),
+		spacer,
+		row("oauth client", orDash(v.oauthSource), oauthNote(v)),
+		row("client id", orDash(v.oauthClient), ""),
+		row("token", tokenSummary(v), ""),
+		spacer,
+		row("poll interval", fmt.Sprintf("%ds", v.pollSecs), ""),
+		row("mass-delete", fmt.Sprintf("%.2f", v.massThreshold), ""),
+		row("quarantine keep", fmt.Sprintf("%dd", v.retentionDays), ""),
+		row("ignore", strings.Join(v.ignore, " "), ""),
+	)
+	if !v.configLoaded {
+		rows = append(rows, row("", "", ""), row("config", "defaults — no config.toml written yet", "run `synckeeper init`"))
+	}
+	return rows
+}
+
+// noteText is note() without its formatting, for the row-based view.
+func noteText(cond bool, text string) string {
+	if cond {
+		return text
+	}
+	return ""
+}
+
+func tokenFileNote(v infoView) string {
+	if !v.tokenPresent {
+		return "absent"
+	}
+	return fmt.Sprintf("present, %04o", v.tokenMode)
+}
+
+func credentialsNote(v infoView) string {
+	switch {
+	case !v.credExists:
+		return "absent — required"
+	case v.credLoose:
+		return fmt.Sprintf("present, %04o — readable by others; chmod 600", v.credMode)
+	default:
+		return fmt.Sprintf("present, %04o", v.credMode)
+	}
+}
+
+func oauthNote(v infoView) string {
+	if v.oauthErr != nil {
+		return "error resolving credentials: " + v.oauthErr.Error()
+	}
+	return ""
 }

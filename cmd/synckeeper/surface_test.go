@@ -29,7 +29,7 @@ func TestCLISurfaceMatchesManifest(t *testing.T) {
 	want := map[string][]string{
 		"init":       {"adopt", "force", "no-service", "service"},
 		"login":      {},
-		"status":     {"json", "watch"},
+		"status":     {"interval", "json", "plain"},
 		"activity":   {"number"},
 		"config":     {},
 		"account":    {},

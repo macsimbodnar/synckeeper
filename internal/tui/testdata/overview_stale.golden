@@ -1,0 +1,20 @@
+synckeeper  ▲ NOT RUNNING · last seen 1m ago                                                14:45:02
+max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
+
+── cycle ────────────────────────────────────────  ── totals ───────────────────────────────────────
+ no heartbeat — the daemon looks crashed; check the tracked     12,481                              
+log                                                 pending ops 0                                   
+                                                    quarantine  0 files                             
+                                                    system bin  macOS Trash (Finder)                
+
+── attention ───────────────────────────────────────────────────────────────────────────────────────
+ ⚠ last error — refresh remote state: dial tcp: lookup www.googleapis.com: no such host
+ ⚠ the daemon stopped sending heartbeats — it may have crashed
+ · autostart not installed — `synckeeper service install`
+
+── activity ────────────────────────────────────────────────────────────────────────────────────────
+ 2m ago    ↑ local→drive upload    Photos/2026/img_8841.raf
+ 2m ago    ↓ drive→local download  Notes/todo.md
+ 3m ago    ⇅ conflict    conflict  Budget.xlsx -> Budget (conflict max_mbp).xlsx
+ 4m ago    ↓ drive→local trash     Archive/old (1117 files)
+1 overview · 2 activity · 3 info                                                     ? help · q quit

@@ -1,0 +1,471 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/macsimbodnar/synckeeper/internal/status"
+)
+
+// narrowWidth is where the two-column layout stops fitting and the panels
+// stack instead. Below it, a side-by-side layout truncates both halves into
+// uselessness, which is worse than scrolling.
+const narrowWidth = 70
+
+// chromeRows is what the frame spends on header, identity strip, spacing and
+// footer; the rest is the body's height budget.
+const chromeRows = 6
+
+// View renders one frame. Pure: same model, same string, no clock and no
+// terminal involved — which is how every state below is golden-tested.
+func (m Model) View() string {
+	t := theme{color: m.color}
+	w := m.width
+	body := m.body(t, w)
+
+	var b strings.Builder
+	b.WriteString(m.header(t, w))
+	b.WriteByte('\n')
+	b.WriteString(m.identity(t, w))
+	b.WriteString("\n\n")
+	b.WriteString(body)
+	b.WriteByte('\n')
+	b.WriteString(m.footer(t, w))
+	b.WriteByte('\n')
+	return b.String()
+}
+
+func (m Model) body(t theme, w int) string {
+	if m.showHelp {
+		return m.helpBody(t, w)
+	}
+	switch m.view {
+	case ViewActivity:
+		return m.activityBody(t, w)
+	case ViewInfo:
+		return m.infoBody(t, w)
+	default:
+		return m.overviewBody(t, w)
+	}
+}
+
+// header: the one line that must answer "is it working?" at a glance.
+func (m Model) header(t theme, w int) string {
+	s := m.snap.Status
+	ds := s.Daemon
+
+	var glyph, word string
+	var paintFn func(string) string
+	switch s.State {
+	case status.StateRunning:
+		if ds.Paused {
+			glyph, word, paintFn = "‖", "paused", t.warn
+		} else {
+			glyph, word, paintFn = "●", "running", t.good
+		}
+	case status.StateStale:
+		glyph, word, paintFn = "▲", "NOT RUNNING", t.bad
+	case status.StateStopped:
+		glyph, word, paintFn = "○", "stopped", t.muted
+	default:
+		glyph, word, paintFn = "○", "never started", t.muted
+	}
+
+	// Segments are kept in plain form so the header can be trimmed to width
+	// without ever cutting through an escape sequence: whole segments are
+	// dropped from the right, then what survives is painted.
+	type seg struct {
+		text  string
+		paint func(string) string
+	}
+	segs := []seg{{glyph + " " + word, paintFn}}
+	if s.State == status.StateRunning {
+		mode := ds.Mode
+		if ds.Paused {
+			mode = "auto-sync suspended"
+		}
+		if mode != "" {
+			segs = append(segs, seg{mode, t.muted})
+		}
+		if ds.PID > 0 {
+			segs = append(segs, seg{fmt.Sprintf("pid %d", ds.PID), t.muted})
+		}
+		if ds.StartedAt > 0 {
+			segs = append(segs, seg{"up " + status.Dur(s.Now.Sub(unix(ds.StartedAt))), t.muted})
+		}
+	} else if ds.LastHeartbeatAt > 0 {
+		segs = append(segs, seg{"last seen " + status.Ago(s.Now, ds.LastHeartbeatAt), t.muted})
+	}
+	if ds.GuardBlocked {
+		segs = append(segs, seg{"GUARD BLOCKED", t.bad})
+	}
+
+	const brand = "synckeeper"
+	clockText := s.Now.Format("15:04:05")
+	// The clock is the first thing sacrificed, then trailing segments.
+	budget := w - visibleLen(brand) - 2
+	clock := ""
+	if budget-visibleLen(clockText)-1 > 0 {
+		budget -= visibleLen(clockText) + 1
+		clock = t.muted(clockText)
+	}
+
+	var kept []string
+	used := 0
+	for i, sg := range segs {
+		add := visibleLen(sg.text)
+		if i > 0 {
+			add += 3 // " · "
+		}
+		if used+add > budget {
+			break
+		}
+		used += add
+		kept = append(kept, sg.paint(sg.text))
+	}
+	if len(kept) == 0 { // a window too narrow even for the state word
+		return truncate(t.bold(brand), w)
+	}
+
+	left := t.bold(brand) + "  " + strings.Join(kept, t.muted(" · "))
+	if clock == "" {
+		return left
+	}
+	return joinEnds(left, clock, w)
+}
+
+// identity: the static context that must never leave the screen — which machine
+// this is, and which pair of folders it keeps.
+func (m Model) identity(t theme, w int) string {
+	s := m.snap.Status
+	name := s.MachineName
+	if name == "" {
+		name = "(unnamed machine)"
+	}
+	line := name + "  ·  " + s.SyncDir + "  ⇄  " + fmt.Sprintf("%q", s.DriveFolder)
+	return t.muted(truncate(line, w))
+}
+
+func (m Model) overviewBody(t theme, w int) string {
+	s := m.snap.Status
+	cycle := m.cyclePanel(t)
+	totals := m.totalsPanel(t)
+
+	var out []string
+	if w >= narrowWidth {
+		colW := (w - 2) / 2
+		left := t.rule("cycle", colW) + "\n" + strings.Join(indent(cycle), "\n")
+		right := t.rule("totals", colW) + "\n" + strings.Join(indent(totals), "\n")
+		out = append(out, lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Width(colW+2).Render(left),
+			lipgloss.NewStyle().Width(colW).Render(right)))
+	} else {
+		out = append(out, t.rule("cycle", w))
+		out = append(out, indent(cycle)...)
+		out = append(out, t.rule("totals", w))
+		out = append(out, indent(totals)...)
+	}
+
+	if att := m.attention(t, w); len(att) > 0 {
+		out = append(out, "", t.rule("attention", w))
+		out = append(out, indent(att)...)
+	}
+
+	rows := m.bodyBudget() - countLines(out) - 2
+	if rows > 0 && len(s.Activity) > 0 {
+		out = append(out, "", t.rule("activity", w))
+		out = append(out, indent(m.activityRows(t, w-1, rows))...)
+	}
+	return strings.Join(out, "\n")
+}
+
+func (m Model) cyclePanel(t theme) []string {
+	s := m.snap.Status
+	ds := s.Daemon
+	if s.State != status.StateRunning {
+		msg := "the daemon is not running — `synckeeper watch` or `service install`"
+		if s.State == status.StateStale {
+			msg = "no heartbeat — the daemon looks crashed; check the log"
+		}
+		return []string{t.muted(msg)}
+	}
+
+	var rows []string
+	// "≈" is not decoration: NextPollAt is written at cycle end while the poll
+	// ticker runs independently and any local change pre-empts it, so the
+	// figure is an estimate. A precise countdown needs the daemon to publish
+	// its real deadline (W15-U5).
+	if ds.NextPollAt > 0 {
+		rows = append(rows, field(t, "next poll", "≈ "+status.Until(s.Now, ds.NextPollAt)))
+	} else {
+		rows = append(rows, field(t, "next poll", t.muted("unknown")))
+	}
+	if ds.LastSyncAt > 0 {
+		rows = append(rows, field(t, "last sync", status.Ago(s.Now, ds.LastSyncAt)))
+	} else {
+		rows = append(rows, field(t, "last sync", t.muted("never")))
+	}
+	if cs, ok := status.ParseCycle(ds.LastCycleJSON); ok {
+		summary := fmt.Sprintf("%d actions · %d ok", cs.Actions, cs.Executed)
+		if cs.Failed > 0 {
+			summary += t.bad(fmt.Sprintf(" · %d failed", cs.Failed))
+		}
+		rows = append(rows, field(t, "last cycle", summary))
+		rows = append(rows, field(t, "duration", fmt.Sprintf("%d ms", cs.DurationMS)))
+	} else {
+		rows = append(rows, field(t, "last cycle", t.muted("none recorded")))
+	}
+	return rows
+}
+
+func (m Model) totalsPanel(t theme) []string {
+	s := m.snap.Status
+	quarantine := fmt.Sprintf("%s files", comma(s.QFiles))
+	if s.QFiles > 0 {
+		quarantine += fmt.Sprintf(" (%s bytes)", comma(int(s.QBytes)))
+	}
+	bin := s.BinDest
+	if !s.BinAvailable {
+		bin = t.warn("UNAVAILABLE → quarantine")
+	}
+	return []string{
+		field(t, "tracked", comma(s.Items)),
+		field(t, "pending ops", comma(s.Pending)),
+		field(t, "quarantine", quarantine),
+		field(t, "system bin", bin),
+	}
+}
+
+// attention collects everything a user would want to be told without asking.
+// Empty means the panel is not drawn at all: a permanently visible "all good"
+// box trains people to ignore the space where the warnings appear.
+func (m Model) attention(t theme, w int) []string {
+	s := m.snap.Status
+	var out []string
+	if s.Daemon.GuardBlocked {
+		out = append(out, t.bad("⚠ guard BLOCKED")+" — "+truncate(s.Daemon.GuardReason, max(0, w-20)))
+		out = append(out, t.muted("  release it with `synckeeper sync --confirm-deletes` on this machine"))
+	}
+	if s.Daemon.LastError != "" {
+		out = append(out, t.bad("⚠ last error")+" — "+truncate(s.Daemon.LastError, max(0, w-18)))
+	}
+	if !s.BinAvailable {
+		out = append(out, t.warn("⚠ no system bin")+" — "+truncate(status.SystemBinLine(false, s.BinDest), max(0, w-20)))
+	}
+	if s.State == status.StateStale {
+		out = append(out, t.bad("⚠ the daemon stopped sending heartbeats")+" — it may have crashed")
+	}
+	if !s.TokenOK {
+		out = append(out, t.warn("⚠ no saved credentials")+" — run `synckeeper login`")
+	}
+	if s.AutostartErr == nil && !s.Autostart.Installed {
+		out = append(out, t.muted("· autostart not installed — `synckeeper service install`"))
+	}
+	return out
+}
+
+func (m Model) activityBody(t theme, w int) string {
+	s := m.snap.Status
+	head := t.rule(fmt.Sprintf("activity — %d entries", len(s.Activity)), w)
+	if len(s.Activity) == 0 {
+		return head + "\n" + indentOne(t.muted("nothing recorded yet"))
+	}
+	rows := m.activityRows(t, w-1, m.bodyBudget()-1)
+	return head + "\n" + strings.Join(indent(rows), "\n")
+}
+
+// activityRows renders newest-first, one line each, clipped to limit.
+func (m Model) activityRows(t theme, w, limit int) []string {
+	s := m.snap.Status
+	if limit <= 0 {
+		return nil
+	}
+	acts := s.Activity
+	if len(acts) > limit {
+		acts = acts[:limit]
+	}
+	// Columns are dropped, never squeezed past legibility: a row that cannot
+	// hold the direction label loses it (the glyph still carries the
+	// direction), and a row that cannot hold the kind loses that too. The path
+	// tail — the file name — is the last thing to go.
+	const tsW, dirW, kindW, minPathW = 9, 13, 9, 12
+	full := w - (tsW + dirW + kindW + 3)
+	compact := w - (tsW + 1 + kindW + 3)
+	layout := "minimal"
+	pathW := w - 2
+	switch {
+	case full >= minPathW:
+		layout, pathW = "full", full
+	case compact >= minPathW:
+		layout, pathW = "compact", compact
+	}
+
+	rows := make([]string, 0, len(acts))
+	for _, a := range acts {
+		glyph, paintFn := activityGlyph(t, a.Source)
+		dir := status.DirectionLabel(a.Source)
+		if dir == "" {
+			dir = "—"
+		}
+		text := a.RelPath
+		if a.Detail != "" {
+			if text == "" {
+				text = a.Detail
+			} else {
+				text += " " + a.Detail
+			}
+		}
+		switch layout {
+		case "full":
+			rows = append(rows, fmt.Sprintf("%s %s %s %s",
+				pad(status.Ago(s.Now, a.TS), tsW),
+				paintFn(pad(glyph+" "+dir, dirW)),
+				pad(a.Kind, kindW),
+				truncatePath(text, pathW)))
+		case "compact":
+			rows = append(rows, fmt.Sprintf("%s %s %s %s",
+				pad(status.Ago(s.Now, a.TS), tsW),
+				paintFn(glyph),
+				pad(truncate(a.Kind, kindW), kindW),
+				truncatePath(text, pathW)))
+		default:
+			rows = append(rows, paintFn(glyph)+" "+truncatePath(text, pathW-2))
+		}
+	}
+	return rows
+}
+
+func activityGlyph(t theme, source string) (string, func(string) string) {
+	switch source {
+	case "local":
+		return "↑", func(s string) string { return t.paint(colLocal, s) }
+	case "remote":
+		return "↓", func(s string) string { return t.paint(colRemote, s) }
+	case "conflict":
+		return "⇅", func(s string) string { return t.paint(colConflct, s) }
+	default:
+		return "!", t.bad
+	}
+}
+
+func (m Model) infoBody(t theme, w int) string {
+	rows := m.snap.Info
+	if len(rows) == 0 {
+		return t.rule("info", w) + "\n" + indentOne(t.muted("no static information available"))
+	}
+	labelW := 0
+	for _, r := range rows {
+		if n := visibleLen(r.Label); n > labelW {
+			labelW = n
+		}
+	}
+	if labelW > w/3 {
+		labelW = max(6, w/3)
+	}
+
+	out := []string{t.rule("info", w)}
+	budget := m.bodyBudget() - 1
+	for i, r := range rows {
+		if i >= budget {
+			out = append(out, indentOne(t.muted(fmt.Sprintf("… %d more (widen or lengthen the window)", len(rows)-i))))
+			break
+		}
+		if r.Label == "" && r.Value == "" { // a spacer row
+			out = append(out, "")
+			continue
+		}
+		// The note is budgeted before the value, and never takes more than half
+		// of what is left: a long "readable by others; chmod 600" must not push
+		// the path it is talking about off the screen.
+		avail := w - 1 - labelW - 2
+		note := ""
+		if r.Note != "" {
+			note = " (" + r.Note + ")"
+			if visibleLen(note) > avail/2 {
+				note = truncate(note, max(0, avail/2))
+			}
+		}
+		valueW := max(1, avail-visibleLen(note))
+		line := t.muted(pad(truncate(r.Label, labelW), labelW)) + "  " + truncatePath(r.Value, valueW)
+		if note != "" {
+			line += t.warn(note)
+		}
+		out = append(out, indentOne(line))
+	}
+	return strings.Join(out, "\n")
+}
+
+func (m Model) helpBody(t theme, w int) string {
+	rows := [][2]string{
+		{"1 / 2 / 3", "overview · activity · info"},
+		{"tab / ←→", "cycle through the views"},
+		{"r", "refresh now"},
+		{"?", "toggle this help"},
+		{"q / ctrl+c", "quit"},
+	}
+	out := []string{t.rule("keys", w)}
+	for _, r := range rows {
+		out = append(out, indentOne(t.accent(pad(r[0], 12))+t.muted(r[1])))
+	}
+	out = append(out, "", indentOne(t.muted("the dashboard only reads: it holds no lock and never writes to the database")))
+	return strings.Join(out, "\n")
+}
+
+func (m Model) footer(t theme, w int) string {
+	var tabs []string
+	for v := ViewOverview; v < numViews; v++ {
+		label := fmt.Sprintf("%d %s", v+1, ViewName(v))
+		if v == m.view && !m.showHelp {
+			tabs = append(tabs, t.bold(t.accent(label)))
+		} else {
+			tabs = append(tabs, t.muted(label))
+		}
+	}
+	left := strings.Join(tabs, t.muted(" · "))
+	right := t.muted("? help · q quit")
+	return joinEnds(left, right, w)
+}
+
+// bodyBudget is how many lines the body may draw.
+func (m Model) bodyBudget() int { return max(3, m.height-chromeRows) }
+
+// joinEnds puts left and right on one line, right-aligned, dropping the right
+// half when the width cannot hold both.
+func joinEnds(left, right string, w int) string {
+	gap := w - visibleLenANSI(left) - visibleLenANSI(right)
+	if gap < 1 {
+		return left
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// visibleLenANSI measures a string that may already carry escape codes from the
+// theme. lipgloss.Width does exactly this and is correct for wide runes too.
+func visibleLenANSI(s string) int { return lipgloss.Width(s) }
+
+func field(t theme, label, value string) string {
+	return t.muted(pad(label, 11)) + " " + value
+}
+
+func indent(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = " " + l
+	}
+	return out
+}
+
+func indentOne(line string) string { return " " + line }
+
+func countLines(blocks []string) int {
+	n := 0
+	for _, b := range blocks {
+		n += strings.Count(b, "\n") + 1
+	}
+	return n
+}
+
+func unix(sec int64) time.Time { return time.Unix(sec, 0) }

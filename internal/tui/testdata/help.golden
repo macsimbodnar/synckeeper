@@ -1,0 +1,12 @@
+synckeeper  ● running · watching · pid 4242 · up 3d4h                                       14:45:02
+max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
+
+── keys ────────────────────────────────────────────────────────────────────────────────────────────
+ 1 / 2 / 3   overview · activity · info
+ tab / ←→    cycle through the views
+ r           refresh now
+ ?           toggle this help
+ q / ctrl+c  quit
+
+ the dashboard only reads: it holds no lock and never writes to the database
+1 overview · 2 activity · 3 info                                                     ? help · q quit

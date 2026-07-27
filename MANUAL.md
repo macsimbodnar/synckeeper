@@ -47,13 +47,13 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 | `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Stop the daemon first — `login` takes the instance lock, because a running daemon holds the old token in memory. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon runs, delegated to it and awaited. `--dry-run`: print the plan, change nothing (needs daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously, foreground: local changes picked up under a second, remote within the poll interval. |
-| `status [--json] [--watch]` | Daemon state, last sync, config, guard blocks, where deletions from Drive land (system bin or quarantine), recent activity. Works daemon up or down. `--watch` refreshes until interrupted. |
-| `activity [-n N]` | Last N (default 20) synced items with direction (local→drive / drive→local / conflict). |
+| `status [--plain] [--json] [--interval D]` | **Human:** on a terminal, the live dashboard (§10). **Scriptable:** piped/redirected it prints the one-shot report — daemon state, last sync, config, guard blocks, where deletions from Drive land (system bin or quarantine), recent activity; `--plain` forces that report on a terminal, `--json` emits it for scripts. Works daemon up or down. `--interval` sets the dashboard refresh (default 1s). |
+| `activity [-n N]` | **Scriptable.** Last N (default 20) synced items with direction (local→drive / drive→local / conflict). The dashboard's activity view (§10) is the interactive equivalent. |
 | `pause` / `resume` | Suspend / resume automatic syncing in the running daemon. Explicit `sync` still works while paused. Pause doesn't survive a daemon restart. |
 | `reload` | Re-read `config.toml` in the running daemon. Hot fields apply live; identity fields reported as needing a restart (§4). |
 | `config` | Print the effective config and the file it's read from. |
 | `account` | Token status, which OAuth client is active (embedded default or your own), and the signed-in Google account (email via one `about.get`; online only, skipped offline). |
-| `info [--json]` | One-shot static snapshot: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json` — both with their permission mode, flagged when other users can read them; `control.sock`, quarantine, system bin, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; local state (tracked items, pending ops, quarantine). Read-only, offline (email → `account`), works before `init`. `--json` for scripts. |
+| `info [--json]` | **Scriptable** (and the pre-`init` dump). One-shot static snapshot: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json` — both with their permission mode, flagged when other users can read them; `control.sock`, quarantine, system bin, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; local state (tracked items, pending ops, quarantine). Read-only, offline (email → `account`), works before `init`. `--json` for scripts. |
 | `doctor [--repair]` | Cross-check state DB vs disk vs Drive; reports the system-bin destination. `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites. |
 | `service install\|uninstall\|status` | Manage the login service running `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, kept owner-only `0600` since it records synced file names). `install` then checks whether the daemon actually started and names the likely cause (e.g. missing `credentials.json`) if not. |
 | `help [command]` | Usage help for Synckeeper or a specific command (built-in). |
@@ -140,3 +140,19 @@ Confirmed and reproduced. The adversarial correctness rounds (W1.7–W1.9, all d
 - **Full-Drive access scope.** Authorizes with Google's full `drive` scope, not folder-limited — Google has no folder-scoped OAuth scope, and the only narrower option (`drive.file`) would silently stop syncing files added to the Drive folder from *outside* Synckeeper (Drive web UI, other apps). So the stored token can reach your whole Drive; kept at `token.json` `0600`, only ever sent to Google over HTTPS. May be revisited.
 - All files kept on disk (no online-only placeholders).
 - macOS primary; Linux and Windows planned (code written portably, not yet validated there).
+
+## 10. Live dashboard (`synckeeper status`)
+
+`synckeeper status` on a terminal is a live, read-only dashboard — it holds no lock, never writes the database, and does no syncing. Piped or with `--plain` you get the one-shot report instead; `--json` is unchanged for scripts.
+
+Three views, switched with number keys or Tab:
+
+| View | Shows |
+|---|---|
+| **1 overview** | next poll (an estimate — see below), last sync + cycle summary, tracked/pending/quarantine counts, where deletions from Drive land, and an **attention** block that appears only when something needs it (guard block + how to release it, last error, no system bin, dead daemon, missing credentials, autostart not installed), then recent activity |
+| **2 activity** | the recorded history (500 entries), newest first, with direction and file count |
+| **3 info** | the static picture — version, every path with permission modes, sync target + Drive folder id, machine name + id, OAuth client, token status, effective config. Same data `info` prints |
+
+Keys: `1`/`2`/`3` views · `Tab`/`←→` cycle · `r` refresh now · `?` help · `q` or `Ctrl-C` quit. Colour follows `NO_COLOR` and `TERM=dumb`.
+
+**"next poll ≈"** is an estimate, deliberately marked: the figure is recorded when a cycle ends, while the poll timer runs independently and any local change pre-empts it — so the real next sync is usually *sooner*. Sync-now, pause/resume from inside the dashboard, and a precise countdown are not wired yet.
