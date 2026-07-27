@@ -1,0 +1,19 @@
+daemon:        running (pid 4242, up 3d4h, mode paused)
+last sync:     2m ago — 3 actions, 3 ok, 0 failed, 412ms
+next poll:     in 2m
+config dir:    /home/max/.config/synckeeper
+sync dir:      /home/max/Synckeeper
+drive folder:  "Synckeeper"
+machine name:  max_mbp
+root folder:   root123
+token:         present
+autostart:     installed, starts at login, running
+tracked items: 12481
+pending ops:   0
+quarantine:    0 files, 0 bytes
+system bin:    macOS Trash (Finder)
+recent activity:
+  2m ago    local→drive upload    Photos/2026/img_8841.raf
+  2m ago    drive→local download  Notes/todo.md
+  3m ago    conflict    conflict  Budget.xlsx -> Budget (conflict max_mbp).xlsx
+  4m ago    drive→local trash     Archive/old (1117 files)

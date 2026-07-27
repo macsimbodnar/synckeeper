@@ -1,0 +1,12 @@
+daemon:        NOT RUNNING — last heartbeat 3m ago (likely crashed)
+config dir:    /home/max/.config/synckeeper
+sync dir:      /home/max/Synckeeper
+drive folder:  "Synckeeper"
+machine name:  max_mbp
+root folder:   root123
+token:         present
+autostart:     installed, starts at login, running
+tracked items: 12481
+pending ops:   0
+quarantine:    0 files, 0 bytes
+system bin:    macOS Trash (Finder)

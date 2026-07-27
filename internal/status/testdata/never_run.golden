@@ -1,0 +1,11 @@
+daemon:        not running (never started under `watch`)
+config dir:    /home/max/.config/synckeeper
+sync dir:      /home/max/Synckeeper
+drive folder:  "Synckeeper"
+machine name:  max_mbp
+token:         missing (run `synckeeper init`)
+autostart:     not installed (run `synckeeper service install`)
+tracked items: 0
+pending ops:   0
+quarantine:    0 files, 0 bytes
+system bin:    macOS Trash (Finder)

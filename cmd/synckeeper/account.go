@@ -12,6 +12,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/auth"
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
+	"github.com/macsimbodnar/synckeeper/internal/status"
 )
 
 func newAccountCmd() *cobra.Command {
@@ -44,9 +45,9 @@ func newAccountCmd() *cobra.Command {
 			case tok.Expiry.IsZero():
 				fmt.Printf("access token:  present (no expiry recorded)\n")
 			case tok.Expiry.Before(time.Now()):
-				fmt.Printf("access token:  expired %s (auto-refreshes on next use)\n", ago(tok.Expiry.Unix()))
+				fmt.Printf("access token:  expired %s (auto-refreshes on next use)\n", status.Ago(time.Now(), tok.Expiry.Unix()))
 			default:
-				fmt.Printf("access token:  valid, expires %s\n", until(tok.Expiry.Unix()))
+				fmt.Printf("access token:  valid, expires %s\n", status.Until(time.Now(), tok.Expiry.Unix()))
 			}
 
 			// One about.get to name the signed-in account. Best-effort: a

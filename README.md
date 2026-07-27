@@ -38,6 +38,7 @@ The daemon is the product; the CLI (and any future UI) are thin clients of it. O
 | `internal/statedb` | SQLite baseline/state (items, meta, pending_ops, remote_nodes, daemon_status, activity); WAL |
 | `internal/watch` | the daemon: fswatch backends (FSEvents/fsnotify), control socket, status recorder |
 | `internal/control` | control-socket protocol (line-delimited JSON; client + server) |
+| `internal/status` | read model for every read-only view: `Snapshot`/`Gather` (machine reads behind seams), the human + JSON renderers, and the display formatters `status`/`info`/`doctor`/`activity` share |
 | `internal/auth` | OAuth loopback + S256 PKCE; token at `0600`; credential resolve (requires `credentials.json`; no embedded default) |
 | `internal/config` | TOML load + validate |
 | `internal/conflicts` | conflict-copy naming |

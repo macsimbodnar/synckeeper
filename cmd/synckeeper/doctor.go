@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/macsimbodnar/synckeeper/internal/doctor"
+	"github.com/macsimbodnar/synckeeper/internal/status"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -77,7 +78,7 @@ func printReport(r *doctor.Report, repaired bool) {
 	for _, n := range r.Notes {
 		fmt.Printf("note: %s\n", n)
 	}
-	fmt.Printf("system bin:        %s\n", systemBinLine(r.SystemBinOK, r.SystemBin))
+	fmt.Printf("system bin:        %s\n", status.SystemBinLine(r.SystemBinOK, r.SystemBin))
 	if r.Healthy() {
 		fmt.Println("Everything checks out: DB, disk, and Drive agree.")
 	} else if !repaired {

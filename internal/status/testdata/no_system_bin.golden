@@ -1,0 +1,14 @@
+daemon:        running (pid 4242, up 3d4h, mode watching)
+last sync:     2m ago — 3 actions, 3 ok, 0 failed, 412ms
+next poll:     in 2m
+config dir:    /home/max/.config/synckeeper
+sync dir:      /home/max/Synckeeper
+drive folder:  "Synckeeper"
+machine name:  max_mbp
+root folder:   root123
+token:         present
+autostart:     not installed (run `synckeeper service install`)
+tracked items: 12481
+pending ops:   0
+quarantine:    3 files, 12345 bytes
+system bin:    UNAVAILABLE (no trash implementation for this platform) — deletions from Drive are rescued to the quarantine, and a mass deletion asks for --confirm-deletes

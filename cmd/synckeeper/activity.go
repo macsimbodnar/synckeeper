@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/macsimbodnar/synckeeper/internal/status"
 )
 
 func newActivityCmd() *cobra.Command {
@@ -34,7 +36,7 @@ func newActivityCmd() *cobra.Command {
 			}
 			for _, a := range acts { // newest first
 				line := fmt.Sprintf("%s  %-11s %-9s %s",
-					time.Unix(a.TS, 0).Format("2006-01-02 15:04:05"), directionLabel(a.Source), a.Kind, a.RelPath)
+					time.Unix(a.TS, 0).Format("2006-01-02 15:04:05"), status.DirectionLabel(a.Source), a.Kind, a.RelPath)
 				if a.Detail != "" {
 					line += " " + a.Detail
 				}

@@ -16,6 +16,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/service"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/status"
 	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
@@ -174,11 +175,11 @@ func gatherInfo() infoView {
 			if d, e := db.GetDaemonStatus(); e == nil {
 				ds, found = d, true
 			}
-			v.daemonState = daemonState(ds, found, daemonAlive())
+			v.daemonState = status.DaemonState(ds, found, daemonAlive(), time.Now(), stalenessWindow)
 		}()
 	}
 
-	v.qFiles, v.qBytes = quarantineUsage(v.quarantineDir)
+	v.qFiles, v.qBytes = status.QuarantineUsage(v.quarantineDir)
 	return v
 }
 
@@ -304,9 +305,9 @@ func tokenSummary(v infoView) string {
 	case v.tokenExpiry == 0:
 		s = "present (no expiry recorded)"
 	case v.tokenExpired:
-		s = fmt.Sprintf("present, expired %s (auto-refreshes on next use)", ago(v.tokenExpiry))
+		s = fmt.Sprintf("present, expired %s (auto-refreshes on next use)", status.Ago(time.Now(), v.tokenExpiry))
 	default:
-		s = fmt.Sprintf("present, expires %s", until(v.tokenExpiry))
+		s = fmt.Sprintf("present, expires %s", status.Until(time.Now(), v.tokenExpiry))
 	}
 	if v.refreshToken {
 		s += "; refresh token present"

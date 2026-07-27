@@ -13,6 +13,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/status"
 )
 
 func newSyncCmd() *cobra.Command {
@@ -114,7 +115,7 @@ func delegateSync(confirmDeletes bool) error {
 			return nil
 		}
 		if ds.LastSyncAt > beforeSync || ds.LastCycleJSON != beforeCycle {
-			fmt.Println("Done." + cycleSuffix(ds.LastCycleJSON))
+			fmt.Println("Done." + status.CycleSuffix(ds.LastCycleJSON))
 			return nil
 		}
 		if ds.LastError != "" {
