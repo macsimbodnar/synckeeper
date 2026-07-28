@@ -33,6 +33,11 @@ type Live struct {
 	CycleStartedAt time.Time
 	CycleElapsed   time.Duration
 	CycleNumber    int
+
+	// Stage is which part of the running cycle is executing, and StageActions
+	// the size of the plan once it is known.
+	Stage        string
+	StageActions int
 }
 
 // backendLabel names the watch mode for humans. Empty when unknown, so the

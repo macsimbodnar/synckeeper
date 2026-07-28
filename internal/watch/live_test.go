@@ -189,3 +189,38 @@ func TestStatWithoutLiveStateDegrades(t *testing.T) {
 		t.Error("a refusal must say why")
 	}
 }
+
+// TestStatCarriesTheCycleStage: the reporter the loop hands each cycle is the
+// one `stat` reads, so a running cycle's stage reaches a client.
+func TestStatCarriesTheCycleStage(t *testing.T) {
+	l := newLiveState(time.Second, time.Millisecond)
+	rep := l.stageReporter()
+	if rep == nil {
+		t.Fatal("no stage reporter was created")
+	}
+
+	// Idle: no stage, because no cycle is running.
+	if s := l.snapshot(time.Now()); s.Stage != "" {
+		t.Errorf("an idle daemon reported stage %q", s.Stage)
+	}
+
+	// A cycle in flight, mid-transfer.
+	now := time.Unix(1_800_000_000, 0)
+	l.cycleBegin(now, 3)
+	rep.SetForTest(engine.StageTransferring, 1145)
+	s := l.snapshot(now.Add(2 * time.Second))
+	if s.Stage != engine.StageTransferring {
+		t.Errorf("Stage = %q, want %q", s.Stage, engine.StageTransferring)
+	}
+	if s.StageActions != 1145 {
+		t.Errorf("StageActions = %d, want 1145", s.StageActions)
+	}
+
+	// The engine resets the reporter when the cycle ends; the snapshot must then
+	// report no stage even if cycleEnd has not been called yet.
+	rep.Reset()
+	l.cycleEnd()
+	if s := l.snapshot(now.Add(3 * time.Second)); s.Stage != "" || s.StageActions != 0 {
+		t.Errorf("a finished cycle still reports %q/%d", s.Stage, s.StageActions)
+	}
+}

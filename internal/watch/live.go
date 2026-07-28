@@ -3,6 +3,8 @@ package watch
 import (
 	"sync"
 	"time"
+
+	"github.com/macsimbodnar/synckeeper/internal/engine"
 )
 
 // liveState is what the daemon knows and the state DB does not: whether a cycle
@@ -37,6 +39,11 @@ type liveState struct {
 	cycleRunning   bool
 	cycleStartedAt time.Time
 	cycleNumber    int
+
+	// stage is the running cycle's own reporter, owned by the engine package.
+	// Read straight through: it has its own lock, and copying the string here
+	// per cycle would only add a way for the two to disagree.
+	stage *engine.StageReporter
 }
 
 // LiveSnapshot is the wire shape of `stat`. Exported because the client decodes
@@ -71,10 +78,27 @@ type LiveSnapshot struct {
 	CycleStartedAt int64 `json:"cycle_started_at"`
 	CycleElapsedMS int64 `json:"cycle_elapsed_ms"`
 	CycleNumber    int   `json:"cycle_number"`
+
+	// Stage is which part of the cycle is running ("checking Drive",
+	// "scanning files", …) and StageActions the size of the plan being
+	// executed once that is known — the total is free from the plan; there is
+	// deliberately no done-of-total counter (decisions.md 2026-07-28).
+	Stage        string `json:"stage"`
+	StageActions int    `json:"stage_actions"`
 }
 
 func newLiveState(poll, debounce time.Duration) *liveState {
-	return &liveState{poll: poll, debounce: debounce, backend: "polling", pollingOnly: true}
+	return &liveState{
+		poll: poll, debounce: debounce, backend: "polling", pollingOnly: true,
+		stage: engine.NewStageReporter(),
+	}
+}
+
+// stageReporter is handed to every cycle through engine.Options.
+func (l *liveState) stageReporter() *engine.StageReporter {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.stage
 }
 
 func (l *liveState) setBackend(name string, pollingOnly bool) {
@@ -148,6 +172,7 @@ func (l *liveState) snapshot(now time.Time) LiveSnapshot {
 	if l.cycleRunning && !l.cycleStartedAt.IsZero() {
 		s.CycleStartedAt = l.cycleStartedAt.Unix()
 		s.CycleElapsedMS = now.Sub(l.cycleStartedAt).Milliseconds()
+		s.Stage, s.StageActions = l.stage.Read()
 	}
 	return s
 }

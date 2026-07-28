@@ -152,6 +152,8 @@ func frames(ref time.Time) map[string]Model {
 		CycleStartedAt: ref.Add(-65 * time.Second),
 		CycleElapsed:   65 * time.Second,
 		CycleNumber:    412,
+		Stage:          "transferring",
+		StageActions:   1145,
 	}
 	liveOpts.Snapshot = ls
 

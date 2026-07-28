@@ -2,7 +2,7 @@ synckeeper  ● running · watching (FSEvents) · pid 4242 · up 3d4h           
 max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
 
 ── cycle ────────────────────────────────────────  ── totals ───────────────────────────────────────
- syncing     now · 1m                               tracked     12,481                              
+ syncing     transferring · 1,145 actions · 1m      tracked     12,481                              
  next poll   in 2m                                  pending ops 0                                   
  last sync   2m ago                                 quarantine  0 files                             
  last cycle  3 actions · 3 ok                       system bin  macOS Trash (Finder)                

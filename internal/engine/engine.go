@@ -88,6 +88,11 @@ type Options struct {
 	// The interactive one-shot leaves this false so the guard aborts the cycle
 	// with the --confirm-deletes hint (spec §6).
 	DeferMassDelete bool
+
+	// Stage, when set, is told which stage this cycle is in — reporting only,
+	// read by the daemon's `stat` answer (W15-U5). Nil is valid and costs
+	// nothing; the engine's behaviour is identical either way.
+	Stage *StageReporter
 }
 
 // Result is what one run did (or, dry-run, would do).
@@ -119,6 +124,8 @@ type Result struct {
 
 // Sync runs one full cycle.
 func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
+	opts.Stage.set(StageStarting)
+	defer opts.Stage.Reset() // a finished cycle must not look like a running one
 	baseItems, err := e.DB.AllItems()
 	if err != nil {
 		return nil, err
@@ -130,6 +137,9 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		return nil, err
 	}
 
+	// The network stage: the one that can hang for a long time and the reason a
+	// stage indicator is worth having at all.
+	opts.Stage.set(StageCheckingDriv)
 	if err := remotedelta.Refresh(ctx, e.Client, e.DB, e.RootID); err != nil {
 		return nil, fmt.Errorf("refresh remote state: %w", err)
 	}
@@ -145,6 +155,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 			MtimeNS: it.LocalMtimeNS, DriveMD5: it.DriveMD5, DriveVersion: it.DriveVersion,
 		}
 	}
+	opts.Stage.set(StageScanning)
 	local, localSkips, err := scanner.Scan(e.SyncDir, base, e.Cfg.Engine.Ignore)
 	if err != nil {
 		return nil, fmt.Errorf("scan local dir: %w", err)
@@ -152,6 +163,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 
 	// Ids collapsed out of the snapshot by a duplicate or fold collision are
 	// alive on Drive; reconcile holds their baseline rows harmless (R19).
+	opts.Stage.set(StagePlanning)
 	shadowed := expandShadowed(baseItems, remoteSkips)
 	plan, planSkips := reconcile.Plan(reconcile.Input{
 		Base:           base,
@@ -212,6 +224,11 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		QuarantineDir: e.QuarantineDir, RootID: e.RootID,
 		Ignore: e.Cfg.Engine.Ignore, Trash: e.trasher(),
 	}
+	// The plan's size is known here, so the total comes free; only a done-of-
+	// total counter would need the executor, which is deliberately not
+	// instrumented for a display (decisions.md 2026-07-28).
+	opts.Stage.set(StageTransferring)
+	opts.Stage.setActions(len(plan))
 	sum, err := x.Apply(ctx, plan)
 	if err != nil {
 		return res, err
@@ -220,6 +237,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	res.QuarantineFell = sum.QuarantineFallbacks
 	e.reportDeletions(res, plan, trackedFiles)
 
+	opts.Stage.set(StageFinishing)
 	if skipJSON, err := json.Marshal(res.Skips); err == nil {
 		e.DB.SetMeta(MetaLastSkipped, string(skipJSON))
 	}

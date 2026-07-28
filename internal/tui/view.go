@@ -235,7 +235,16 @@ func (m Model) cyclePanel(t theme, colW int) []string {
 	// A cycle in flight is the most interesting thing on the screen, so it
 	// takes the top line — and it is only knowable from the daemon's memory.
 	if live.Have && live.CycleRunning {
-		rows = append(rows, field(t, "syncing", "now · "+status.Dur(live.CycleElapsed), colW, t.good))
+		// The stage names what is being waited on, which is the useful part of a
+		// long cycle: "checking Drive · 45s" points at the network, not at us.
+		what := live.Stage
+		if what == "" {
+			what = "now"
+		}
+		if live.StageActions > 0 {
+			what += fmt.Sprintf(" · %s actions", comma(live.StageActions))
+		}
+		rows = append(rows, field(t, "syncing", what+" · "+status.Dur(live.CycleElapsed), colW, t.good))
 	}
 
 	switch {

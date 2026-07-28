@@ -216,3 +216,47 @@ func TestPendingChangeCountIsReportedWhenItAddsSomething(t *testing.T) {
 		}
 	}
 }
+
+// TestRunningCycleNamesItsStage: the point of the stage is that a long cycle
+// says what it is waiting on — "checking Drive" points at the network rather
+// than leaving the user to guess.
+func TestRunningCycleNamesItsStage(t *testing.T) {
+	network := liveModel(func(s *Snapshot) {
+		s.Live = Live{Have: true, Backend: "fsevents", CycleRunning: true,
+			CycleElapsed: 65 * time.Second, Stage: "checking Drive"}
+	}).View()
+	if !strings.Contains(network, "checking Drive · 1m") {
+		t.Errorf("the stage and elapsed time are not reported together:\n%s", firstLines(network, 8))
+	}
+
+	// Once the plan exists its size comes along, free, from the plan itself.
+	transfer := liveModel(func(s *Snapshot) {
+		s.Live = Live{Have: true, Backend: "fsevents", CycleRunning: true,
+			CycleElapsed: 8 * time.Second, Stage: "transferring", StageActions: 1145}
+	}).View()
+	if !strings.Contains(transfer, "1,145 actions") {
+		t.Errorf("the planned action count is missing:\n%s", firstLines(transfer, 8))
+	}
+
+	// A daemon that reports a running cycle but no stage (an older one, or the
+	// instant before the first set) must still render.
+	bare := liveModel(func(s *Snapshot) {
+		s.Live = Live{Have: true, Backend: "fsevents", CycleRunning: true, CycleElapsed: 2 * time.Second}
+	}).View()
+	if !strings.Contains(bare, "syncing") || !strings.Contains(bare, "now · 2s") {
+		t.Errorf("a stageless running cycle does not render:\n%s", firstLines(bare, 8))
+	}
+
+	// And the longest plausible stage line still respects narrow columns.
+	for _, w := range []int{40, 60, 80, 100} {
+		s := testSnapshot(testRef())
+		s.Live = Live{Have: true, Backend: "fsevents", CycleRunning: true,
+			CycleElapsed: 3671 * time.Second, Stage: "transferring", StageActions: 148_921}
+		m := New(Options{Snapshot: s, Width: w, Height: 24, Clock: testRef})
+		for _, line := range strings.Split(m.View(), "\n") {
+			if got := len([]rune(strings.TrimRight(line, " "))); got > w {
+				t.Errorf("at width %d a line of %d runes: %q", w, got, line)
+			}
+		}
+	}
+}
