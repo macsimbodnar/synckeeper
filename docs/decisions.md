@@ -33,6 +33,14 @@ Format:
 
 **Consequences:** the fswatch interface is **unchanged** — no per-event work added, both backends untouched. `LiveSnapshot.pending_changes` joins the additive `stat` payload (still `ProtocolVersion` 1). The honesty caveat is documented where it renders: one save can fire several events and the scanner may find nothing to do for some of them, so the number is a **bound** on what is about to sync, not a file count — which is also why a count is a better fit than a list that would imply precision it does not have. plan.md's U5 "WAITING panel" item is closed by this narrowing; **per-stage progress** (scan → refresh → plan → transfer, done/total) remains genuinely unbuilt and still needs an `engine.Sync` callback. If the paths version is ever wanted, this entry has the cost analysis — the answer is that it is cheap at runtime and moderate in review surface, not that it is impossible.
 
+## 2026-07-27 — W15's item boundaries moved: U2 absorbed U6's surface half and U3's refresh tick
+
+**Context:** W15 was planned as U1 (read model) → U2 (views/layout) → U3 (live loop) → U4 (actions) → U6 (docs, manifest, tests) → U5 (the `stat` command). U2 could not be built to that boundary: the moment `status` gained `--plain`/`--interval` and lost `--watch`, the **DOC1 surface guard fails the build** until the manifest, MANUAL §3 and spec §15 move in the same commit. And a dashboard that never refreshes is not a coherent thing to ship for a reviewer to run, so the 1 Hz data tick came along too.
+
+**Decision (agent, recorded rather than silently deviated):** land U2 as views + layout + degradation **plus** the flag change with its full doc set (U6's "surface half") **plus** the basic refresh tick (U3's first half). U3 then kept what actually needed its own thought — the interpolated countdown and the activity scroll/filter/search. U6 keeps a final reconcile pass over the finished surface.
+
+**Consequences:** plan.md carries this in U2's as-built note and U3/U6's status lines, so the item list matches what happened rather than what was planned. No scope was added or dropped — only the seam between three items moved. The precedent it follows: when the plan meets the code and the code is right, that is a decisions.md entry, not a silent deviation (W1.6, W1.8.8, W4-R25).
+
 ## 2026-07-27 — The dashboard has no manual-refresh key
 
 **Context:** Max, reading the dashboard's help: *"it is not clear to me what the `r` command does in the status screen."* It re-read the database immediately instead of waiting for the next `--interval` tick — a purely local action — while `R` beside it asks the *daemon* to reload `config.toml`. Two unrelated things separated only by Shift, sitting next to `p`/`P`, which **are** a pair (pause/resume). At the default `--interval 1s` the refresh was also unobservable: the data was already at most a second old.

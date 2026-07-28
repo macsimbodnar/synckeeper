@@ -4,7 +4,7 @@ How to *use* Synckeeper. (Build / dev / design docs → [README.md](README.md).)
 
 Keeps **one local folder** ↔ **one Google Drive folder** identical, both directions. Many machines sync against the same Drive folder (the hub + durable copy). Runs as a background daemon; **never silently loses or corrupts a file**: deletes → Drive bin + your system bin (never permanent); conflicting edits → conflict copy (never last-writer-wins); edit always beats delete.
 
-**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-07-27.
+**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-07-28.
 
 ---
 
@@ -166,6 +166,8 @@ Three views, switched with number keys or Tab:
 | `p` / `P` | pause / resume automatic syncing |
 | `R` | reload `config.toml` in the daemon |
 | `?` · `q`/`Ctrl-C` | help · quit |
+
+Aliases: `Shift-Tab` cycles views backwards, `Ctrl-F`/`Ctrl-B` page, `Home`/`End` jump to newest/oldest, and `Esc` quits (except while a search line is open, where it cancels the search).
 
 Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
 

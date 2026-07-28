@@ -559,3 +559,24 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Value stated honestly in the docs:** a typical cycle here is ~300 ms, so in normal operation this is invisible; it earns its place on first sync/adopt, bulk changes, and network stalls.
 - Docs same commit: decisions.md "Per-stage progress: a reporter the engine owns" (with the cost analysis, so the executor counter can be revisited on evidence); testing.md **U5.9–U5.11**; plan.md **U5 → done**; status.md (**W15 has no code items left**); MANUAL §10. `LiveSnapshot` gained `stage`/`stage_actions` — `ProtocolVersion` still 1.
 - Gates: build, vet, full suite, `-race` on engine/watch/tui, `make audit`, windows + linux pure-Go cross-builds — green.
+
+### 2026-07-28 — retroactive: the `SYNCKEEPER_TRASH_TEST=1` explanation (2026-07-26)
+> "what does this mean: Add SYNCKEEPER_TRASH_TEST=1 for the real-Trash check? is this one shot test that i need to run or is this something that i need to specify before running the agent? It's not clear to me. Explain but really short and really precise"
+- **Missed at the time; appended here rather than inserted, per the append-only rule.** Found by the 2026-07-28 audit ("check that all work done in this session is tracked").
+- Answered from the code, not memory: `TestMoveToTrashDarwin` (`internal/trash/trash_darwin_test.go:18`) calls `t.Skip` unless the env var is set, because it trashes a real file into `~/.Trash`. So it is a shell prefix on a one-shot `go test`, nothing to configure in advance: `go test ./internal/trash/…` compiles the cgo path and skips that test; `SYNCKEEPER_TRASH_TEST=1 go test ./internal/trash/` also runs it. Noted that fish takes the same prefix form, and that the run leaves `synckeeper-trash-test.txt` in the Trash.
+- No code or doc change from that prompt.
+
+### 2026-07-28 — session audit against the project guidelines
+> "check that all work done in this session is tracked, documented, commited as per guideleines"
+- **Audited mechanically, not asserted.** Working tree clean; **12 commits** this session (`2ccdef8` → `c5eb1fc`), each with its doc updates in the same commit. testing.md carries **37 W15 rows** (U1.1–U5.11, no gaps) plus T13.10/T13.17. decisions.md has **6** entries for the session. Nothing unpushed is expected — Max pushes.
+- **Seven drifts found and fixed** (the "doc claims are claims about code" rule catching real staleness again):
+  1. **status.md still said per-stage progress was "genuinely unbuilt"** — false since `c5eb1fc`. The worst of the seven: a status claim contradicted by shipped code.
+  2. **status.md's In-progress section had been *appended* to** across seven increments into an unreadable wall, against status.md's own rule ("sections replaced in place"). Rewritten as a table.
+  3. **status.md header** still dated 2026-07-27 and described W15 as "newly planned".
+  4. **plan.md W15 heading** still read `in progress (2026-07-27) · U1 done`.
+  5. **plan.md current-order line** still called W15 "next" rather than in progress with no code items left.
+  6. **plan.md U6** still described its remainder as "the U3/U4 additions"; restated as one closing reconcile pass.
+  7. **MANUAL.md** stamp said 2026-07-27 though §10 was edited today; **and its key table omitted `Esc` (which also quits), `Shift-Tab`, `Ctrl-F`/`Ctrl-B`, `Home`/`End`** — verified by diffing the documented keys against `handleKey`'s actual cases. Added as an aliases line.
+- **One missing decisions.md entry written:** "W15's item boundaries moved" — U2 absorbed U6's surface half and U3's refresh tick, because the DOC1 guard fails the build the moment a flag moves. It was recorded in plan.md's as-built notes and the worklog but not in the decision log, where the guidelines put scope deviations.
+- **One missing worklog entry written** (above): the 2026-07-26 `SYNCKEEPER_TRASH_TEST` explanation prompt had none. Every other prompt this session has one.
+- Re-verified after the fixes: `go build ./... && go vet ./... && go test ./...` green, `make audit` green.
