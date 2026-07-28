@@ -178,3 +178,41 @@ func TestBackendLabel(t *testing.T) {
 		t.Errorf("with Have false the label must be empty, got %q", got)
 	}
 }
+
+// TestPendingChangeCountIsReportedWhenItAddsSomething: one change needs no
+// number, several do — "3 local changes — syncing" tells you roughly how much is
+// about to move, which is the whole point of the counter (Max chose it over a
+// file list precisely to avoid touching the watcher).
+func TestPendingChangeCountIsReportedWhenItAddsSomething(t *testing.T) {
+	one := liveModel(func(s *Snapshot) {
+		s.Live = Live{Have: true, Backend: "fsevents", WakePending: true, PendingChanges: 1,
+			WakeDueAt: testRef().Add(400 * time.Millisecond)}
+	}).View()
+	if !strings.Contains(one, "local change — syncing") {
+		t.Errorf("a single change should read in the singular:\n%s", firstLines(one, 8))
+	}
+	if strings.Contains(one, "1 local change") {
+		t.Error("a count of one adds nothing and should be omitted")
+	}
+
+	many := liveModel(func(s *Snapshot) {
+		s.Live = Live{Have: true, Backend: "fsevents", WakePending: true, PendingChanges: 3,
+			WakeDueAt: testRef().Add(400 * time.Millisecond)}
+	}).View()
+	if !strings.Contains(many, "3 local changes — syncing") {
+		t.Errorf("the pending count is not reported:\n%s", firstLines(many, 8))
+	}
+
+	// A big storm must not break the column.
+	for _, w := range []int{40, 60, 80, 100} {
+		s := testSnapshot(testRef())
+		s.Live = Live{Have: true, Backend: "fsevents", WakePending: true, PendingChanges: 148_921,
+			WakeDueAt: testRef().Add(time.Second)}
+		m := New(Options{Snapshot: s, Width: w, Height: 24, Clock: testRef})
+		for _, line := range strings.Split(m.View(), "\n") {
+			if got := len([]rune(strings.TrimRight(line, " "))); got > w {
+				t.Errorf("at width %d a line of %d runes: %q", w, got, line)
+			}
+		}
+	}
+}

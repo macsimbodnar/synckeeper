@@ -26,6 +26,13 @@ type liveState struct {
 	lastTickAt  time.Time // last time the poll ticker actually fired
 	wakeAt      time.Time // last watcher wake-up (the debounce window opened)
 	wakePending bool      // a wake is armed and no cycle has consumed it yet
+	// pendingChanges counts wake-ups since the cycle that will consume them. A
+	// count, not the paths: the paths would mean changing the fsWatcher
+	// interface and both backends, and this answers the question a user
+	// actually asks ("is something about to sync, and roughly how much?") for
+	// no per-event work at all — the increment rides inside the mutex noteWake
+	// already takes (Max, 2026-07-28, decisions.md).
+	pendingChanges int
 
 	cycleRunning   bool
 	cycleStartedAt time.Time
@@ -52,9 +59,13 @@ type LiveSnapshot struct {
 	TickDue    bool  `json:"tick_due"`
 
 	// WakePending means a local change is inside the debounce window: the next
-	// cycle is milliseconds away, not a poll interval away.
-	WakePending bool  `json:"wake_pending"`
-	WakeDueAt   int64 `json:"wake_due_at"`
+	// cycle is milliseconds away, not a poll interval away. PendingChanges is
+	// how many wake-ups have arrived since the last cycle began — the honest
+	// bound, since one save can fire several events and the scanner may find
+	// nothing to do for some of them.
+	WakePending    bool  `json:"wake_pending"`
+	WakeDueAt      int64 `json:"wake_due_at"`
+	PendingChanges int   `json:"pending_changes"`
 
 	CycleRunning   bool  `json:"cycle_running"`
 	CycleStartedAt int64 `json:"cycle_started_at"`
@@ -92,13 +103,17 @@ func (l *liveState) noteWake(at time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.wakeAt, l.wakePending = at, true
+	l.pendingChanges++
 }
 
 func (l *liveState) cycleBegin(at time.Time, number int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.cycleRunning, l.cycleStartedAt, l.cycleNumber = true, at, number
-	l.wakePending = false // this cycle is the wake being consumed
+	// This cycle is the wake being consumed, so the count starts over: it means
+	// "changes seen since the running cycle began", which is what makes it a
+	// pending count rather than a running total.
+	l.wakePending, l.pendingChanges = false, 0
 }
 
 func (l *liveState) cycleEnd() {
@@ -113,13 +128,14 @@ func (l *liveState) snapshot(now time.Time) LiveSnapshot {
 	defer l.mu.Unlock()
 
 	s := LiveSnapshot{
-		Backend:      l.backend,
-		PollingOnly:  l.pollingOnly,
-		PollMS:       l.poll.Milliseconds(),
-		DebounceMS:   l.debounce.Milliseconds(),
-		WakePending:  l.wakePending,
-		CycleRunning: l.cycleRunning,
-		CycleNumber:  l.cycleNumber,
+		Backend:        l.backend,
+		PollingOnly:    l.pollingOnly,
+		PollMS:         l.poll.Milliseconds(),
+		DebounceMS:     l.debounce.Milliseconds(),
+		WakePending:    l.wakePending,
+		PendingChanges: l.pendingChanges,
+		CycleRunning:   l.cycleRunning,
+		CycleNumber:    l.cycleNumber,
 	}
 	if !l.lastTickAt.IsZero() && l.poll > 0 {
 		next := l.lastTickAt.Add(l.poll)

@@ -25,6 +25,9 @@ type Live struct {
 	// cycle is milliseconds away rather than a poll interval away.
 	WakePending bool
 	WakeDueAt   time.Time
+	// PendingChanges is how many watcher wake-ups have arrived since the last
+	// cycle began — a bound on what is about to sync, not a file list.
+	PendingChanges int
 
 	CycleRunning   bool
 	CycleStartedAt time.Time

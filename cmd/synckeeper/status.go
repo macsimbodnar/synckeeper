@@ -167,16 +167,17 @@ func fetchLive() (live tui.Live, haveLive, running bool) {
 		return tui.Live{}, false, true
 	}
 	live = tui.Live{
-		Have:         true,
-		Backend:      s.Backend,
-		PollingOnly:  s.PollingOnly,
-		Poll:         time.Duration(s.PollMS) * time.Millisecond,
-		Debounce:     time.Duration(s.DebounceMS) * time.Millisecond,
-		TickDue:      s.TickDue,
-		WakePending:  s.WakePending,
-		CycleRunning: s.CycleRunning,
-		CycleElapsed: time.Duration(s.CycleElapsedMS) * time.Millisecond,
-		CycleNumber:  s.CycleNumber,
+		Have:           true,
+		Backend:        s.Backend,
+		PollingOnly:    s.PollingOnly,
+		Poll:           time.Duration(s.PollMS) * time.Millisecond,
+		Debounce:       time.Duration(s.DebounceMS) * time.Millisecond,
+		TickDue:        s.TickDue,
+		WakePending:    s.WakePending,
+		PendingChanges: s.PendingChanges,
+		CycleRunning:   s.CycleRunning,
+		CycleElapsed:   time.Duration(s.CycleElapsedMS) * time.Millisecond,
+		CycleNumber:    s.CycleNumber,
 	}
 	if s.NextTickAt > 0 {
 		live.NextTickAt = time.Unix(s.NextTickAt, 0)

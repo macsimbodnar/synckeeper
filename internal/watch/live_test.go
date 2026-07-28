@@ -46,11 +46,20 @@ func TestLiveStateTracksTheLoop(t *testing.T) {
 		t.Error("an elapsed deadline must report TickDue")
 	}
 
-	// A wake opens the debounce window.
+	// A wake opens the debounce window and counts.
 	l.noteWake(now.Add(30 * time.Second))
 	s = l.snapshot(now.Add(30100 * time.Millisecond))
 	if !s.WakePending {
 		t.Error("a wake was not reported as pending")
+	}
+	if s.PendingChanges != 1 {
+		t.Errorf("PendingChanges = %d after one wake, want 1", s.PendingChanges)
+	}
+	// Several events (one save can fire more than one) accumulate.
+	l.noteWake(now.Add(30200 * time.Millisecond))
+	l.noteWake(now.Add(30300 * time.Millisecond))
+	if s := l.snapshot(now.Add(30400 * time.Millisecond)); s.PendingChanges != 3 {
+		t.Errorf("PendingChanges = %d after three wakes, want 3", s.PendingChanges)
 	}
 	if want := now.Add(30*time.Second + 500*time.Millisecond).Unix(); s.WakeDueAt != want {
 		t.Errorf("WakeDueAt = %d, want %d (wake + debounce)", s.WakeDueAt, want)
@@ -64,6 +73,16 @@ func TestLiveStateTracksTheLoop(t *testing.T) {
 	}
 	if !s.CycleRunning || s.CycleNumber != 7 {
 		t.Errorf("running cycle not reported: %+v", s)
+	}
+	// The count is "since the running cycle began", so the cycle resets it —
+	// otherwise it would be a running total and mean nothing.
+	if s.PendingChanges != 0 {
+		t.Errorf("PendingChanges = %d after the cycle consumed the wake, want 0", s.PendingChanges)
+	}
+	// Changes arriving *during* a cycle are pending for the next one.
+	l.noteWake(now.Add(32 * time.Second))
+	if s := l.snapshot(now.Add(33 * time.Second)); s.PendingChanges != 1 || !s.WakePending {
+		t.Errorf("a change during a cycle must be pending for the next: %+v", s)
 	}
 	if s.CycleElapsedMS != 2000 {
 		t.Errorf("CycleElapsedMS = %d, want 2000", s.CycleElapsedMS)

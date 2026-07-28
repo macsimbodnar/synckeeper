@@ -242,7 +242,11 @@ func (m Model) cyclePanel(t theme, colW int) []string {
 	case live.Have && live.WakePending:
 		// A local change is in the debounce window: the poll deadline is
 		// irrelevant, the next cycle is milliseconds away.
-		rows = append(rows, field(t, "next sync", "local change — syncing", colW, t.good))
+		wake := "local change — syncing"
+		if n := live.PendingChanges; n > 1 {
+			wake = fmt.Sprintf("%d local changes — syncing", n)
+		}
+		rows = append(rows, field(t, "next sync", wake, colW, t.good))
 	case live.Have && live.TickDue:
 		rows = append(rows, field(t, "next poll", "due now", colW, nil))
 	case live.Have && !live.NextTickAt.IsZero():
