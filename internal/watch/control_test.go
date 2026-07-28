@@ -154,7 +154,7 @@ func TestApplyReload(t *testing.T) {
 	writeConfig(t, dir, "b", 20, 0.5) // machine_name cold; poll+threshold hot
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
-	res := w.applyReload(ticker)
+	res := w.applyReload(ticker, newLiveState(w.Poll, w.Debounce))
 
 	if res.Error != "" {
 		t.Fatalf("reload error: %s", res.Error)

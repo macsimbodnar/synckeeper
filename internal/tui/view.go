@@ -114,6 +114,10 @@ func (m Model) header(t theme, w int) string {
 		mode := ds.Mode
 		if ds.Paused {
 			mode = "auto-sync suspended"
+		} else if b := m.snap.Live.backendLabel(); b != "" {
+			// The daemon's own answer, so this cannot claim "watching" while the
+			// loop is polling (W3-adv-3's honesty bug, kept out of the dashboard).
+			mode += " (" + b + ")"
 		}
 		if mode != "" {
 			segs = append(segs, seg{mode, t.muted})
@@ -179,18 +183,20 @@ func (m Model) identity(t theme, w int) string {
 
 func (m Model) overviewBody(t theme, w int) string {
 	s := m.snap.Status
-	cycle := m.cyclePanel(t)
-	totals := m.totalsPanel(t)
 
 	var out []string
 	if w >= narrowWidth {
 		colW := (w - 2) / 2
+		cycle := m.cyclePanel(t, colW)
+		totals := m.totalsPanel(t, colW)
 		left := t.rule("cycle", colW) + "\n" + strings.Join(indent(cycle), "\n")
 		right := t.rule("totals", colW) + "\n" + strings.Join(indent(totals), "\n")
 		out = append(out, lipgloss.JoinHorizontal(lipgloss.Top,
 			lipgloss.NewStyle().Width(colW+2).Render(left),
 			lipgloss.NewStyle().Width(colW).Render(right)))
 	} else {
+		cycle := m.cyclePanel(t, w)
+		totals := m.totalsPanel(t, w)
 		out = append(out, t.rule("cycle", w))
 		out = append(out, indent(cycle)...)
 		out = append(out, t.rule("totals", w))
@@ -210,60 +216,81 @@ func (m Model) overviewBody(t theme, w int) string {
 	return strings.Join(out, "\n")
 }
 
-func (m Model) cyclePanel(t theme) []string {
+func (m Model) cyclePanel(t theme, colW int) []string {
 	s := m.snap.Status
 	ds := s.Daemon
 	if s.State != status.StateRunning {
-		msg := "the daemon is not running — `synckeeper watch` or `service install`"
+		// One column wide, so this stays a label; the actionable hint lives in
+		// the full-width attention panel below.
+		msg := "not running"
 		if s.State == status.StateStale {
-			msg = "no heartbeat — the daemon looks crashed; check the log"
+			msg = "no heartbeat — looks crashed"
 		}
-		return []string{t.muted(msg)}
+		return []string{t.muted(truncate(msg, max(1, colW-1)))}
 	}
 
+	live := m.snap.Live
 	var rows []string
-	// "≈" is not decoration: NextPollAt is written at cycle end while the poll
-	// ticker runs independently and any local change pre-empts it, so the
-	// figure is an estimate. A precise countdown needs the daemon to publish
-	// its real deadline (W15-U5).
-	if ds.NextPollAt > 0 {
-		rows = append(rows, field(t, "next poll", "≈ "+status.Until(s.Now, ds.NextPollAt)))
-	} else {
-		rows = append(rows, field(t, "next poll", t.muted("unknown")))
+
+	// A cycle in flight is the most interesting thing on the screen, so it
+	// takes the top line — and it is only knowable from the daemon's memory.
+	if live.Have && live.CycleRunning {
+		rows = append(rows, field(t, "syncing", "now · "+status.Dur(live.CycleElapsed), colW, t.good))
+	}
+
+	switch {
+	case live.Have && live.WakePending:
+		// A local change is in the debounce window: the poll deadline is
+		// irrelevant, the next cycle is milliseconds away.
+		rows = append(rows, field(t, "next sync", "local change — syncing", colW, t.good))
+	case live.Have && live.TickDue:
+		rows = append(rows, field(t, "next poll", "due now", colW, nil))
+	case live.Have && !live.NextTickAt.IsZero():
+		// No "≈": this is the poll timer's real deadline, from the daemon.
+		rows = append(rows, field(t, "next poll", status.Until(s.Now, live.NextTickAt.Unix()), colW, nil))
+	case ds.NextPollAt > 0:
+		// DB-only fallback. "≈" is not decoration: NextPollAt is written at
+		// cycle end while the poll ticker runs independently and any local
+		// change pre-empts it, so the figure is an estimate.
+		rows = append(rows, field(t, "next poll", "≈ "+status.Until(s.Now, ds.NextPollAt), colW, nil))
+	default:
+		rows = append(rows, field(t, "next poll", "unknown", colW, t.muted))
 	}
 	if ds.LastSyncAt > 0 {
-		rows = append(rows, field(t, "last sync", status.Ago(s.Now, ds.LastSyncAt)))
+		rows = append(rows, field(t, "last sync", status.Ago(s.Now, ds.LastSyncAt), colW, nil))
 	} else {
-		rows = append(rows, field(t, "last sync", t.muted("never")))
+		rows = append(rows, field(t, "last sync", "never", colW, t.muted))
 	}
 	if cs, ok := status.ParseCycle(ds.LastCycleJSON); ok {
 		summary := fmt.Sprintf("%d actions · %d ok", cs.Actions, cs.Executed)
+		paint := func(s string) string { return s }
 		if cs.Failed > 0 {
-			summary += t.bad(fmt.Sprintf(" · %d failed", cs.Failed))
+			summary += fmt.Sprintf(" · %d failed", cs.Failed)
+			paint = t.bad // a failure colours the whole line rather than a fragment
 		}
-		rows = append(rows, field(t, "last cycle", summary))
-		rows = append(rows, field(t, "duration", fmt.Sprintf("%d ms", cs.DurationMS)))
+		rows = append(rows, field(t, "last cycle", summary, colW, paint))
+		rows = append(rows, field(t, "duration", fmt.Sprintf("%d ms", cs.DurationMS), colW, nil))
 	} else {
-		rows = append(rows, field(t, "last cycle", t.muted("none recorded")))
+		rows = append(rows, field(t, "last cycle", "none recorded", colW, t.muted))
 	}
 	return rows
 }
 
-func (m Model) totalsPanel(t theme) []string {
+func (m Model) totalsPanel(t theme, colW int) []string {
 	s := m.snap.Status
 	quarantine := fmt.Sprintf("%s files", comma(s.QFiles))
 	if s.QFiles > 0 {
 		quarantine += fmt.Sprintf(" (%s bytes)", comma(int(s.QBytes)))
 	}
-	bin := s.BinDest
+	bin, binPaint := s.BinDest, func(s string) string { return s }
 	if !s.BinAvailable {
-		bin = t.warn("UNAVAILABLE → quarantine")
+		bin, binPaint = "UNAVAILABLE → quarantine", t.warn
 	}
 	return []string{
-		field(t, "tracked", comma(s.Items)),
-		field(t, "pending ops", comma(s.Pending)),
-		field(t, "quarantine", quarantine),
-		field(t, "system bin", bin),
+		field(t, "tracked", comma(s.Items), colW, nil),
+		field(t, "pending ops", comma(s.Pending), colW, nil),
+		field(t, "quarantine", quarantine, colW, nil),
+		field(t, "system bin", bin, colW, binPaint),
 	}
 }
 
@@ -283,8 +310,11 @@ func (m Model) attention(t theme, w int) []string {
 	if !s.BinAvailable {
 		out = append(out, t.warn("⚠ no system bin")+" — "+truncate(status.SystemBinLine(false, s.BinDest), max(0, w-20)))
 	}
-	if s.State == status.StateStale {
-		out = append(out, t.bad("⚠ the daemon stopped sending heartbeats")+" — it may have crashed")
+	switch s.State {
+	case status.StateStale:
+		out = append(out, t.bad("⚠ the daemon stopped sending heartbeats")+" — it may have crashed; check the log")
+	case status.StateStopped, status.StateNeverRun:
+		out = append(out, t.warn("⚠ nothing is syncing")+" — run `synckeeper watch`, or `service install` to sync in the background")
 	}
 	if !s.TokenOK {
 		out = append(out, t.warn("⚠ no saved credentials")+" — run `synckeeper login`")
@@ -527,8 +557,17 @@ func joinEnds(left, right string, w int) string {
 // theme. lipgloss.Width does exactly this and is correct for wide runes too.
 func visibleLenANSI(s string) int { return lipgloss.Width(s) }
 
-func field(t theme, label, value string) string {
-	return t.muted(pad(label, 11)) + " " + value
+// field renders one `label  value` line. The value arrives **plain** and is
+// truncated before it is painted: paint-then-cut would slice through an escape
+// sequence, the trap the header already avoids by composing plain segments.
+// budget is the column width the line must fit.
+func field(t theme, label, value string, budget int, paint func(string) string) string {
+	const labelW = 11
+	if paint == nil {
+		paint = func(s string) string { return s }
+	}
+	room := budget - labelW - 2 // label, a space, and the one-column indent
+	return t.muted(pad(label, labelW)) + " " + paint(truncate(value, max(1, room)))
 }
 
 func indent(lines []string) []string {

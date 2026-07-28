@@ -38,6 +38,10 @@ type InfoRow struct {
 type Snapshot struct {
 	Status status.Snapshot
 	Info   []InfoRow
+
+	// Live is the daemon's in-memory detail; the zero value means "not
+	// available", which every panel handles by falling back to the DB (U5).
+	Live Live
 }
 
 // Model is the dashboard state. Everything that reads the world is behind

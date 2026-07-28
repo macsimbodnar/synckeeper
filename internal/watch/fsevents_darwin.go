@@ -181,6 +181,8 @@ func (b *fseventsBackend) refresh(root string) int {
 // (W3.4).
 func (b *fseventsBackend) needsRebuild() bool { return false }
 
+func (b *fseventsBackend) name() string { return "fsevents" }
+
 func (b *fseventsBackend) close() error {
 	// Stop first (Invalidate blocks until in-flight callbacks finish and
 	// guarantees no further ones), then drop the handle — so a callback can

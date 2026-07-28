@@ -28,6 +28,10 @@ const (
 	CmdPause  = "pause"
 	CmdResume = "resume"
 	CmdReload = "reload"
+	// CmdStat is additive: ProtocolVersion stays 1, and a daemon too old to
+	// know it answers OK=false ("unknown command"), which a client treats as
+	// "no live detail available" and degrades rather than failing (W15-U5).
+	CmdStat = "stat"
 )
 
 // Request is one command sent to the daemon.

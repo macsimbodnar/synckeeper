@@ -90,6 +90,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 	debounce := time.AfterFunc(time.Hour, kick)
 	debounce.Stop()
 
+	// live is read-only reporting for the dashboard (`stat`, W15-U5). Nothing in
+	// the sync path reads it.
+	live := newLiveState(w.Poll, w.Debounce)
+
 	// Control socket: sync-now and reload hand work to this loop via channels
 	// so the loop stays the sole owner of the engine, ticker, and config.
 	syncNow := make(chan engine.Options, 1)
@@ -101,7 +105,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			slog.Warn("control socket unavailable; sync/pause/resume/reload won't reach this daemon", "err", err)
 		} else {
 			defer func() { ln.Close(); os.Remove(w.ControlSocket) }()
-			go control.Serve(ctx, ln, w.controlHandler(syncNow, reloadCh, rec))
+			go control.Serve(ctx, ln, w.controlHandler(syncNow, reloadCh, rec, live))
 			slog.Debug("control socket listening", "path", w.ControlSocket)
 		}
 	}
@@ -120,7 +124,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 	var latch failureLatch
 	pollingOnly := false
-	fw, failed, err := w.startNotifier(ctx, debounce)
+	fw, failed, err := w.startNotifier(ctx, debounce, live)
 	if err != nil {
 		// Spec §10: watching is best-effort and the daemon falls back to
 		// pure polling — including at launch (fd pressure, or a platform
@@ -157,11 +161,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-trigger:
-		case <-ticker.C:
+		case now := <-ticker.C:
+			live.noteTick(now)
 		case opts = <-syncNow: // control `sync`: run now, honor its options
 			forced = true
 		case respCh := <-reloadCh: // control `reload`: hot-swap config, no cycle
-			respCh <- w.applyReload(ticker)
+			respCh <- w.applyReload(ticker, live)
 			continue
 		}
 		// While paused, automatic triggers are skipped; only an explicit
@@ -208,7 +213,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				if cycle%cadence != 0 {
 					break // stay on polling; retry only at rebuild cadence
 				}
-				nfw, failed, err := w.startNotifier(ctx, debounce)
+				nfw, failed, err := w.startNotifier(ctx, debounce, live)
 				if err != nil || failed > 0 {
 					if nfw != nil {
 						nfw.close()
@@ -216,24 +221,28 @@ func (w *Watcher) Run(ctx context.Context) error {
 					break
 				}
 				fw, pollingOnly, latch = nfw, false, failureLatch{}
+				noteBackend(live, fw, pollingOnly)
 				slog.Info("file watching restored; back to event-driven sync")
 			case cycle%cadence == 0 && fw.needsRebuild():
 				fw.close() // pump goroutine exits with the channel
-				if fw, failed, err = w.startNotifier(ctx, debounce); err != nil {
+				if fw, failed, err = w.startNotifier(ctx, debounce, live); err != nil {
 					// Same degradation as the pollingOnly branch above on
 					// the identical error (spec §8.1 "without exiting",
 					// §10's polling fallback): the watcher is a wake-up
 					// optimization, never a dependency, and the rebuild
 					// cadence retries creation.
 					fw, pollingOnly, latch = nil, true, failureLatch{}
+					noteBackend(live, fw, pollingOnly)
 					slog.Warn("watcher rebuild failed; relying on polling and retrying periodically",
 						"err", err, "poll_interval", w.Poll)
 					break
 				}
 				slog.Debug("rebuilt fsnotify watcher", "cycle", cycle)
 				pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
+				noteBackend(live, fw, pollingOnly)
 			default:
 				pollingOnly = w.latchIfNeeded(&latch, fw.refresh(w.Eng.SyncDir), &fw)
+				noteBackend(live, fw, pollingOnly)
 			}
 			mode := ModeWatching
 			if pollingOnly {
@@ -275,8 +284,13 @@ func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw *fsWatcher) 
 // closes. It also returns how many directories could not be watched. The
 // backend is chosen behind the fsWatcher interface (W3), so the loop below is
 // unchanged when an FSEvents backend replaces fsnotify.
-func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer) (fsWatcher, int, error) {
-	wake := func() { debounce.Reset(w.Debounce) }
+func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer, live *liveState) (fsWatcher, int, error) {
+	wake := func() {
+		if live != nil {
+			live.noteWake(time.Now())
+		}
+		debounce.Reset(w.Debounce)
+	}
 	return newBackend(ctx, w.Eng.SyncDir, w.ignoreGlobs, wake)
 }
 
@@ -301,4 +315,19 @@ func (l *failureLatch) note(failed int) bool {
 	}
 	l.consecutive++
 	return l.consecutive >= watchFailureLatch
+}
+
+// noteBackend keeps the reported watch mode in step with the live one. Called
+// wherever the loop creates, rebuilds, or gives up on a backend, so `stat`
+// cannot claim "watching" while the loop is polling (the honesty bug W3-adv-3
+// fixed for `status`, kept from returning here).
+func noteBackend(live *liveState, fw fsWatcher, pollingOnly bool) {
+	if live == nil {
+		return
+	}
+	if fw == nil || pollingOnly {
+		live.setBackend("polling", true)
+		return
+	}
+	live.setBackend(fw.name(), false)
 }

@@ -24,6 +24,7 @@ type countingBackend struct {
 func (c *countingBackend) refresh(string) int { c.refreshes.Add(1); return 0 }
 func (c *countingBackend) close() error       { c.closed.Add(1); return nil }
 func (c *countingBackend) needsRebuild() bool { return c.rebuild }
+func (c *countingBackend) name() string       { return "fake" }
 
 func TestRebuildIsPerBackend(t *testing.T) {
 	for _, tc := range []struct {

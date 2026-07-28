@@ -37,7 +37,7 @@ func listenControl(path string) (net.Listener, error) {
 // controlHandler dispatches control commands. Mutating commands hand work to
 // the single-threaded sync loop via channels (syncNow, reloadCh) so the loop
 // stays the sole owner of the engine, ticker, and config.
-func (w *Watcher) controlHandler(syncNow chan<- engine.Options, reloadCh chan chan reloadResult, rec *recorder) control.Handler {
+func (w *Watcher) controlHandler(syncNow chan<- engine.Options, reloadCh chan chan reloadResult, rec *recorder, live *liveState) control.Handler {
 	return func(ctx context.Context, req control.Request) control.Response {
 		switch req.Cmd {
 		case control.CmdPing:
@@ -70,6 +70,17 @@ func (w *Watcher) controlHandler(syncNow chan<- engine.Options, reloadCh chan ch
 			default:
 			}
 			return okData(map[string]any{"paused": false})
+
+		case control.CmdStat:
+			// Read-only, and answered off the sync loop on purpose: a cycle in
+			// flight is exactly when this is most worth asking, so it must not
+			// queue behind one.
+			if live == nil {
+				return control.Response{OK: false, Error: "live detail unavailable"}
+			}
+			s := live.snapshot(time.Now())
+			s.Protocol = control.ProtocolVersion
+			return okData(s)
 
 		case control.CmdReload:
 			respCh := make(chan reloadResult, 1)
@@ -105,7 +116,7 @@ func okData(v any) control.Response {
 // the fsnotify event pump is not the loop and reads the ignore globs per
 // event, so those are handed over via publishIgnore, never written in
 // place (spec §8.3, R14).
-func (w *Watcher) applyReload(ticker *time.Ticker) reloadResult {
+func (w *Watcher) applyReload(ticker *time.Ticker, live *liveState) reloadResult {
 	cfg, err := config.Load(w.ConfigDir)
 	if err != nil {
 		return reloadResult{Error: err.Error()}
@@ -132,6 +143,9 @@ func (w *Watcher) applyReload(ticker *time.Ticker) reloadResult {
 	if cfg.Engine.PollIntervalSecs != old.Engine.PollIntervalSecs {
 		w.Poll = time.Duration(cfg.Engine.PollIntervalSecs) * time.Second
 		ticker.Reset(w.Poll)
+		if live != nil {
+			live.setPoll(w.Poll)
+		}
 	}
 	return reloadResult{NeedsRestart: needsRestart}
 }

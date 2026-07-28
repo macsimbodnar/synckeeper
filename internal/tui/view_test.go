@@ -140,19 +140,45 @@ func frames(ref time.Time) map[string]Model {
 	searching.searching = true
 	searching.query = "note"
 
+	// The live tier (U5): what the frame looks like once the daemon publishes
+	// its in-memory detail — precise deadline, running cycle, backend name.
+	liveOpts := base
+	ls := testSnapshot(ref)
+	ls.Live = Live{
+		Have: true, Backend: "fsevents",
+		Poll:           45 * time.Second,
+		NextTickAt:     ref.Add(125 * time.Second),
+		CycleRunning:   true,
+		CycleStartedAt: ref.Add(-65 * time.Second),
+		CycleElapsed:   65 * time.Second,
+		CycleNumber:    412,
+	}
+	liveOpts.Snapshot = ls
+
+	wakeOpts := base
+	ws := testSnapshot(ref)
+	ws.Live = Live{
+		Have: true, Backend: "fsnotify",
+		WakePending: true, WakeDueAt: ref.Add(500 * time.Millisecond),
+		NextTickAt: ref.Add(40 * time.Second),
+	}
+	wakeOpts.Snapshot = ws
+
 	return map[string]Model{
-		"activity_scrolled": scrolled,
-		"activity_filtered": filtered,
-		"activity_search":   searching,
-		"overview":          overview,
-		"activity":          activity,
-		"info":              info,
-		"help":              help,
-		"overview_narrow":   New(narrow),
-		"overview_guard":    New(guardOpts),
-		"overview_stale":    New(stale),
-		"overview_neverrun": New(never),
-		"overview_paused":   New(paused),
+		"overview_live":      New(liveOpts),
+		"overview_live_wake": New(wakeOpts),
+		"activity_scrolled":  scrolled,
+		"activity_filtered":  filtered,
+		"activity_search":    searching,
+		"overview":           overview,
+		"activity":           activity,
+		"info":               info,
+		"help":               help,
+		"overview_narrow":    New(narrow),
+		"overview_guard":     New(guardOpts),
+		"overview_stale":     New(stale),
+		"overview_neverrun":  New(never),
+		"overview_paused":    New(paused),
 	}
 }
 

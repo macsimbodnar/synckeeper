@@ -2,12 +2,13 @@ synckeeper  ○ never started                                                   
 max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
 
 ── cycle ────────────────────────────────────────  ── totals ───────────────────────────────────────
- the daemon is not running — `synckeeper watch` or  tracked     0                                   
-`service install`                                   pending ops 0                                   
+ not running                                        tracked     0                                   
+                                                    pending ops 0                                   
                                                     quarantine  0 files                             
                                                     system bin  macOS Trash (Finder)                
 
 ── attention ───────────────────────────────────────────────────────────────────────────────────────
+ ⚠ nothing is syncing — run `synckeeper watch`, or `service install` to sync in the background
  ⚠ no saved credentials — run `synckeeper login`
  · autostart not installed — `synckeeper service install`
 1 overview · 2 activity · 3 info                                s sync · p/P pause · ? help · q quit

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -102,7 +103,21 @@ func runDashboard(cmd *cobra.Command, env *readEnv, interval time.Duration) erro
 		Color:    tui.ColorEnabled(),
 		Actions:  dashboardActions(),
 		Refresh: func() tui.Snapshot {
-			return tui.Snapshot{Status: gatherStatusN(env, dashboardActivityRows), Info: infoRows}
+			live, haveLive, running := fetchLive()
+			snap := status.Gather(status.Input{
+				DB:              env.db,
+				ConfigDir:       env.configDir,
+				SyncDir:         env.syncDir,
+				DriveFolder:     env.cfg.Drive.FolderName,
+				MachineName:     env.cfg.Engine.MachineName,
+				StalenessWindow: stalenessWindow,
+				ActivityLimit:   dashboardActivityRows,
+				DaemonAlive:     func() bool { return running },
+			})
+			if !haveLive {
+				live = tui.Live{}
+			}
+			return tui.Snapshot{Status: snap, Info: infoRows, Live: live}
 		},
 	})
 }
@@ -132,4 +147,45 @@ func dashboardActions() *tui.Actions {
 		Resume:  func() error { return call(control.CmdResume) },
 		Reload:  func() error { return call(control.CmdReload) },
 	}
+}
+
+// fetchLive asks the daemon for the in-memory detail the state DB cannot hold
+// (W15-U5). It returns the live snapshot, whether it was available, and whether
+// a daemon answered at all — the last of which doubles as the aliveness check,
+// so one refresh costs one socket round trip rather than two.
+//
+// A daemon too old to know `stat` replies OK=false ("unknown command"), which
+// is still proof it is running: haveLive false, running true, and every panel
+// falls back to the database. That is the whole degradation contract.
+func fetchLive() (live tui.Live, haveLive, running bool) {
+	resp, running, err := callDaemon(control.Request{Cmd: control.CmdStat})
+	if err != nil || !running || !resp.OK {
+		return tui.Live{}, false, running
+	}
+	var s watch.LiveSnapshot
+	if err := json.Unmarshal(resp.Data, &s); err != nil {
+		return tui.Live{}, false, true
+	}
+	live = tui.Live{
+		Have:         true,
+		Backend:      s.Backend,
+		PollingOnly:  s.PollingOnly,
+		Poll:         time.Duration(s.PollMS) * time.Millisecond,
+		Debounce:     time.Duration(s.DebounceMS) * time.Millisecond,
+		TickDue:      s.TickDue,
+		WakePending:  s.WakePending,
+		CycleRunning: s.CycleRunning,
+		CycleElapsed: time.Duration(s.CycleElapsedMS) * time.Millisecond,
+		CycleNumber:  s.CycleNumber,
+	}
+	if s.NextTickAt > 0 {
+		live.NextTickAt = time.Unix(s.NextTickAt, 0)
+	}
+	if s.WakeDueAt > 0 {
+		live.WakeDueAt = time.Unix(s.WakeDueAt, 0)
+	}
+	if s.CycleStartedAt > 0 {
+		live.CycleStartedAt = time.Unix(s.CycleStartedAt, 0)
+	}
+	return live, true, true
 }

@@ -35,6 +35,10 @@ type fsWatcher interface {
 	// processed, so it does; FSEvents holds no per-file descriptors and is left
 	// running.
 	needsRebuild() bool
+
+	// name identifies the backend for reporting ("fsnotify", "fsevents"). It is
+	// display-only: nothing in the loop branches on it (W15-U5).
+	name() string
 }
 
 // newNotifyWatcher creates the raw fsnotify watcher — a test seam so R15 can
@@ -75,6 +79,8 @@ func (b *fsnotifyBackend) close() error { return b.fw.Close() }
 // needsRebuild is true: kqueue can leak a descriptor per watched file, so the
 // loop periodically closes and recreates the watcher to release them.
 func (b *fsnotifyBackend) needsRebuild() bool { return true }
+
+func (b *fsnotifyBackend) name() string { return "fsnotify" }
 
 // refresh makes the fsnotify watch set match the current directory tree and
 // returns how many directories could not be watched. fsnotify drops watches
