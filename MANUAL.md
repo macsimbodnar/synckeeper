@@ -124,7 +124,9 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 ## 8. Known bugs
 
-Confirmed and reproduced. The adversarial correctness rounds (W1.7–W1.9, all done) retired every other entry; what remains is the deferred "directory arm" of the local-write gate — case-only names and renames for *directories and existing files*, a recorded follow-up in [docs/decisions.md](docs/decisions.md). Two facets:
+Confirmed and reproduced. Three groups: the deferred **"directory arm"** of the local-write gate (two facets, below), a **duplicate-on-Drive** case after a killed upload, and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+
+The directory arm — case-only names and renames for *directories and existing files*, a recorded follow-up:
 
 - **Same-name folder in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *New* files with such names resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine. *Workaround: avoid folder names differing only in case/accents.*
 - **Renaming an existing file to differ only in case/accents (`a.txt` → `A.txt`) makes your *other* machines retry that rename every cycle** — `status` shows a repeated failure; the file stays safe on both sides, its name just doesn't update elsewhere. Same deferred root cause (the case-only-rename arm of the gate). *Workaround: also edit the file's contents when you change its case — it then converges after a transient retry instead of looping.*
