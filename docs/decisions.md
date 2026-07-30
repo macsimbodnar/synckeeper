@@ -13,6 +13,22 @@ Format:
 
 ---
 
+## 2026-07-30 — A just-uploaded file is trashed as "deleted on Drive" (field-found; W16)
+
+**Context:** Max synced a 190 MB video from the Mac and reported the `activity` sequence `upload DSCF1816.MOV` → `trash DSCF1816.MOV` (drive→local) → `download DSCF1816.MOV`, plus a day of network errors. Diagnosed from his own daemon log and state DB rather than from theory.
+
+**Timeline (his log):** 12:26:03 `upload … context canceled` (daemon stopped mid-upload — he was restarting it for the new build) · 12:26:26 restart, 1 stale pending op discarded, replan · **12:27:53.770 cycle: upload succeeds** (Drive id `1k__QUj…`) · **12:27:54.440 cycle, 0.67 s later: the local file is moved to the macOS Trash** · no cycles 12:28→13:27 (Mac asleep) · 13:27:27 refresh fails (connection reset) · 13:29:05 the file is downloaded back.
+
+**Root cause, verified by enumerating every writer of the table:** `remote_nodes` — the Drive mirror `reconcile` plans against — is written **only** by `internal/remotedelta`, from `changes.list` and the full walk. `executor.commitUpload` writes the **baseline row only**. Between the upload's commit and the change feed reporting it, the baseline says *tracked, id X* while the mirror says *no X*, and `plan.go:317` reads that as remote-deleted → `QuarantineLocal` → (since W13) the system bin. The 45 s poll normally hides the window; a watcher wake queued during the 90 s upload fired a second cycle 0.67 s later, inside it.
+
+**What the evidence rules out:** not a duplicate upload (the DB holds exactly **one** node named `DSCF1816.MOV`, and it is the tracked id — so the cancelled upload never created a Drive file), not corruption (local md5 `4ae86241…` equals Drive's), not the network errors (a failed `Refresh` aborts the cycle *before* planning, so nothing was decided on bad data), and not a watcher fault (the second cycle was right to run).
+
+**Decision (Max, 2026-07-30): fix it, scheduled as W16 ahead of W15's remaining doc pass and W7.** Severity is **churn, not loss** — three copies existed throughout — but it is a wrong conclusion in reconcile's *inputs*, the class this project puts first, and it scales with batch size.
+
+**Approach decided:** the executor's remote-side commits **upsert the mirror in the same transaction** as the baseline row (`commitUpload` already holds Drive's returned `File`; a tx-scoped `UpsertRemoteNodeTx` is needed because the current writer is not transactional — both rows must land together or a crash recreates the same disagreement, invariant 6). **Rejected:** a grace period ("ignore a baseline row younger than N seconds"), which is a magic constant that also delays genuine deletions and leaves the mirror knowingly wrong.
+
+**Consequences:** plan.md W16 (E1–E6) with E1 as a **red-first reproduction that requires `driveclient.Fake` to be able to withhold changes** — the bug is currently untestable because the fake makes an upload instantly visible, which is itself the gap that let this ship. `mkdirRemote`/`moveRemote`/`trashRemote` are the same family and are **suspected, not observed** (a stale mirror after a remote rename could plan a local move back); E3 must reproduce each before touching it. E4 adds the general invariant (every baseline id present in the mirror at rest) so a future write path cannot reintroduce the class; E5 puts it in W4's fuzzer. MANUAL §8 carries a user-facing entry until E2 lands, then loses it in that commit. Spec §12 currently reads as if the mirror were feed-only and is amended by E6.
+
 ## 2026-07-28 — Per-stage progress: a reporter the engine owns, and no counter in the executor
 
 **Context:** the last W15 code item. Max asked for a recommendation. Two facts settled the shape. First, **`engine.Sync` has no per-stage logging at all** — not even at `-v`; the only cycle line is the watcher's summary *after* it finishes — so a stage indicator is a new capability, not a prettier version of something already in the log. Second, the item bundles two things with very different risk: the **stage** (6 call sites in `Sync`) and a **done-of-total counter** (inside `executor.Apply`'s 4-worker transfer stage — the local-write gate, journal and checkpoint path). The **total is free** either way, since it is `len(plan)`, known before `Apply` is called; only the *done* half needs the executor.
