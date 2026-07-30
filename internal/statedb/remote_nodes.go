@@ -3,6 +3,7 @@ package statedb
 import (
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // RemoteNode is the cached metadata of one Drive file, maintained by
@@ -20,17 +21,34 @@ type RemoteNode struct {
 	Trashed  bool
 }
 
+// upsertRemoteNodeSQL is shared by the DB-level and tx-scoped writers so the
+// change feed and our own commits produce byte-identical rows.
+const upsertRemoteNodeSQL = `insert into remote_nodes
+	(file_id, parent_id, name, mime_type, md5, size, version, trashed)
+	values (?, ?, ?, ?, ?, ?, ?, ?)
+	on conflict(file_id) do update set parent_id = excluded.parent_id,
+		name = excluded.name, mime_type = excluded.mime_type, md5 = excluded.md5,
+		size = excluded.size, version = excluded.version, trashed = excluded.trashed`
+
+func upsertRemoteNodeArgs(n RemoteNode) []any {
+	return []any{n.FileID, n.ParentID, n.Name, n.MimeType, n.MD5, n.Size, n.Version, boolToInt(n.Trashed)}
+}
+
 // UpsertRemoteNode inserts or replaces a cached node.
 func (d *DB) UpsertRemoteNode(n RemoteNode) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	_, err := d.sql.Exec(`insert into remote_nodes
-		(file_id, parent_id, name, mime_type, md5, size, version, trashed)
-		values (?, ?, ?, ?, ?, ?, ?, ?)
-		on conflict(file_id) do update set parent_id = excluded.parent_id,
-			name = excluded.name, mime_type = excluded.mime_type, md5 = excluded.md5,
-			size = excluded.size, version = excluded.version, trashed = excluded.trashed`,
-		n.FileID, n.ParentID, n.Name, n.MimeType, n.MD5, n.Size, n.Version, boolToInt(n.Trashed))
+	_, err := d.sql.Exec(upsertRemoteNodeSQL, upsertRemoteNodeArgs(n)...)
+	return err
+}
+
+// UpsertRemoteNodeTx writes a cached node inside tx — the executor's own
+// remote-side commits (W16), which must land the mirror row and the baseline
+// row together or not at all: a crash between them leaves the baseline
+// naming a Drive id the mirror does not know, which reconcile reads as
+// "deleted on Drive" (invariant 6).
+func UpsertRemoteNodeTx(tx *sql.Tx, n RemoteNode) error {
+	_, err := tx.Exec(upsertRemoteNodeSQL, upsertRemoteNodeArgs(n)...)
 	return err
 }
 
@@ -40,6 +58,26 @@ func (d *DB) DeleteRemoteNode(fileID string) error {
 	defer d.mu.Unlock()
 	_, err := d.sql.Exec(`delete from remote_nodes where file_id = ?`, fileID)
 	return err
+}
+
+// DeleteRemoteNodesTx drops cached nodes inside tx — the mirror half of a
+// remote trash (W16), committed with the baseline rows it retires. Batched
+// like DeleteItemsByID so a collapsed subtree's statement count stays bounded.
+func DeleteRemoteNodesTx(tx *sql.Tx, fileIDs []string) error {
+	const batch = 400
+	for len(fileIDs) > 0 {
+		n := min(batch, len(fileIDs))
+		args := make([]any, n)
+		for i, id := range fileIDs[:n] {
+			args[i] = id
+		}
+		q := `delete from remote_nodes where file_id in (?` + strings.Repeat(",?", n-1) + `)`
+		if _, err := tx.Exec(q, args...); err != nil {
+			return err
+		}
+		fileIDs = fileIDs[n:]
+	}
+	return nil
 }
 
 // ClearRemoteNodes empties the cache (before a forced full walk).

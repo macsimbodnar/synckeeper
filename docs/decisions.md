@@ -13,6 +13,36 @@ Format:
 
 ---
 
+## 2026-07-30 — A crashed upload plus a lagging feed mints a duplicate on Drive (found building W16; scheduled as W17, **open**)
+
+**Context:** W16's new `Fake.HoldChanges` made Drive's eventual consistency expressible for the first time, and widening the fuzzer to 40 seeds immediately failed two of them (23, 33) on the *convergence* oracle — machine trees agreeing with each other but not with Drive. Crash-dependent (`SYNCKEEPER_FUZZ_CRASH=0` → both pass). Minimized to a deterministic 40-line reproduction before anything was concluded.
+
+**The defect:** a crash between Drive storing an upload and the DB commit rolls **both** rows back — correct by design (invariant 6: mirror row and baseline row land together or not at all). The replan therefore has no record of the upload; and while the change feed has not reported it either, it uploads a **second copy under the same name**. Drive allows same-name siblings, so both survive. §5's "first by id wins" then keeps the **older** node and shadows the newer — in seed 33 that reverted every machine to `content-2` while the newest `content-21` sat on the shadowed node, reachable only in the Drive web UI.
+
+**This is the same family as W16 but not the same bug, and not in its scope.** W16 is about writes that **did** commit; the mirror now follows them. This one is about a write that committed on Drive and *deliberately* left no local trace. Closing it changes the §4.6 **crash-resume contract** — the discarded pending-op journal would have to be consulted (a stale in-progress `upload` op means "Drive may already have this; look before uploading"), or every upload would have to list its parent first (an API call per upload). Both are design decisions, not implementation details, so they are **Max's call**, and W16 was not silently widened to include them.
+
+**Why it was invisible until now:** the fake made every upload instantly visible in its change feed, so the replan always found the orphan and adopted it. That is the same gap that hid W16 — one fake shortcut concealed two defects.
+
+**Field relevance:** exactly the shape of Max's own 2026-07-30 timeline (daemon killed mid-upload → restart → 1 stale pending op discarded → replan). It did **not** duplicate for him — the cancel landed before Drive stored the bytes, and the DB held exactly one node. A cancel a moment later would have.
+
+**Consequences:** plan.md **W17** (open, with the two candidate approaches costed); MANUAL §8 gains a Known-bugs entry, since it ships unfixed; testing.md W17.1 carries the reproduction; the in-tree test `TestW17CrashedUploadWithheldFeedMintsDuplicate` is **skipped**, not deleted, so the reproduction is not re-derived — unskip it with the fix and it is the red test. **The default suite is unaffected** (seeds 1–8 green); a widened `SYNCKEEPER_FUZZ_RUNS=40` run fails seeds 23 and 33 on this defect, which is recorded so it is not misread as a W16 regression.
+
+## 2026-07-30 — W16 built: the mirror follows our own writes, and the convergence oracle cannot see the class
+
+**Context:** implementing the W16 plan (E1–E6) decided the same day.
+
+**As built, matching the plan:** `statedb.UpsertRemoteNodeTx` / `DeleteRemoteNodesTx` (tx-scoped), and all four remote-side commits now write the mirror in the baseline row's own transaction — `commitUpload` (both `Upload` and `UpdateRemote`), `mkdirRemote`, `moveRemote`, `trashRemote`. `driveclient.Fake` gained `HoldChanges(bool)`, which freezes the feed at its current log offset while mutations queue behind it; `StartPageToken` returns the *visible* horizon so a token handed out during a hold cannot skip the withheld changes.
+
+**One conversion, not two (agent call).** `remotedelta.toNode` is exported as `NodeFromFile` and the executor calls it, rather than the executor building its own `RemoteNode`. The whole point is that our row must be what the feed would later write; two constructors would be two things that can drift, and the drift would be invisible until it produced exactly this bug again.
+
+**E3 was suspected in the plan; it came out observed.** With the fix disabled, each arm reproduced with a distinct symptom: `MkdirRemote` → the entire new folder to the bin (worse than the leaf — mirror rows are kept only while reachable from the root, so an upload into a folder the feed has not reported is pruned away); `MoveRemote` → **the rename is undone**, the file reappearing at its old name because the plan paired the id at its stale remote path; `TrashRemote` → **the deleted file is downloaded back**; `UpdateRemote` → a download of the *stale* content, refused by the md5 guard, i.e. a failed action every cycle until the feed caught up. None needed a blanket fix without evidence.
+
+**The negative result, recorded so it is not re-derived: the fuzzer's convergence oracle cannot see W16.** Measured, not assumed — with the fix disabled *and* the E4 assertion removed, 8 seeds × 70 steps including the new withheld-feed op passed clean. The reason is the severity finding itself: a machine that trashes its own upload downloads it back next cycle and converges perfectly. So E5's value is not the convergence oracle but the **invariant** it runs against, which is why `syncWithheldFeed` asserts `assertMirrorCoversBaseline` after a clean pair rather than relying on the fixed point alone. This is the same lesson as W4's "the originally specced oracle would have passed A1 clean" — a churn-class defect needs a state invariant, not an outcome check.
+
+**E4 placed in the harness, not per test (agent call).** The invariant is asserted inside the engine harness's `sync()` helper, so every scenario, regression, adopt and fold test in the package is a witness (57 of them fail with the fix disabled). It is *not* asserted mid-fuzz unconditionally: a crashed cycle legitimately leaves a baseline row whose remote-side half is still owed, so the fuzzer checks it after clean cycles and at the fixed point. The W16 tests use a `syncRaw` variant so their behavioural assertions are not shadowed by the invariant they are also proving.
+
+**Consequences:** spec §4.1 (the mirror has two writers), §4.2 (a note that "absent from the mirror" is not by itself "deleted on Drive") and §12 (both writers normative, plus the at-rest invariant) amended; MANUAL §8 loses the entry in this commit, as the rule requires; testing.md E1.1–E5.2. No user-visible surface change — no command, flag, config key or default moves, so the DOC1 guard is untouched and README is unaffected (no package or build change).
+
 ## 2026-07-30 — A just-uploaded file is trashed as "deleted on Drive" (field-found; W16)
 
 **Context:** Max synced a 190 MB video from the Mac and reported the `activity` sequence `upload DSCF1816.MOV` → `trash DSCF1816.MOV` (drive→local) → `download DSCF1816.MOV`, plus a day of network errors. Diagnosed from his own daemon log and state DB rather than from theory.

@@ -202,6 +202,14 @@ func foldCollisionReason(name, first string, caseFold, normFold bool) string {
 	}
 }
 
+// NodeFromFile converts Drive metadata into a mirror row. Exported because
+// the executor's own remote-side commits write the mirror too (W16), and
+// their row must be identical to the one the change feed later writes for
+// the same file — one conversion, not two that can drift.
+func NodeFromFile(f driveclient.File, parentID string) statedb.RemoteNode {
+	return toNode(f, parentID)
+}
+
 func toNode(f driveclient.File, parent string) statedb.RemoteNode {
 	return statedb.RemoteNode{
 		FileID:   f.ID,

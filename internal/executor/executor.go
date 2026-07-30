@@ -25,6 +25,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
+	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
@@ -335,9 +336,15 @@ func (x *Executor) mkdirRemote(ctx context.Context, opID int64, a reconcile.Acti
 	}
 	x.setPathID(a.RelPath, f.ID)
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
-		return statedb.UpsertItem(tx, statedb.Item{
+		if err := statedb.UpsertItem(tx, statedb.Item{
 			DriveFileID: f.ID, RelPath: a.RelPath, IsDir: true, DriveVersion: f.Version,
-		})
+		}); err != nil {
+			return err
+		}
+		// The folder must reach the mirror with its children: mirror rows are
+		// kept only while they are reachable from the root, so an upload into
+		// a folder the feed has not reported yet would be pruned away.
+		return x.mirror(tx, f, parent)
 	})
 }
 
@@ -400,7 +407,13 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 		if err := statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath); err != nil {
 			return err
 		}
-		return statedb.UpdateItemDrive(tx, a.FileID, f.MD5, f.Version)
+		if err := statedb.UpdateItemDrive(tx, a.FileID, f.MD5, f.Version); err != nil {
+			return err
+		}
+		// The mirror follows the move too (W16). Descendants need no rewrite:
+		// mirror rows hold a parent id, not a path, so a reparented folder
+		// carries its subtree by construction.
+		return x.mirror(tx, f, parent)
 	})
 }
 
@@ -441,7 +454,7 @@ func (x *Executor) upload(ctx context.Context, opID int64, a reconcile.Action) e
 	if err != nil {
 		return err
 	}
-	return x.commitUpload(opID, a.RelPath, abs, hash, pre, remote)
+	return x.commitUpload(opID, a.RelPath, abs, hash, pre, remote, parent)
 }
 
 func (x *Executor) updateRemote(ctx context.Context, opID int64, a reconcile.Action) error {
@@ -459,17 +472,23 @@ func (x *Executor) updateRemote(ctx context.Context, opID int64, a reconcile.Act
 		return err
 	}
 	defer f.Close()
+	// The file did not move, so its remote parent is the folder at its own
+	// directory — the same lookup the upload path uses.
+	parent, err := x.parentID(a.RelPath)
+	if err != nil {
+		return err
+	}
 	remote, err := x.Client.Update(ctx, a.FileID, f, pre.Size())
 	if err != nil {
 		return err
 	}
-	return x.commitUpload(opID, a.RelPath, abs, hash, pre, remote)
+	return x.commitUpload(opID, a.RelPath, abs, hash, pre, remote, parent)
 }
 
 // commitUpload verifies Drive stored what we hashed and commits the row.
 // If the file changed mid-upload we commit the pre-upload stat so the next
 // scan sees it dirty and re-uploads.
-func (x *Executor) commitUpload(opID int64, rel, abs, hash string, pre os.FileInfo, remote driveclient.File) error {
+func (x *Executor) commitUpload(opID int64, rel, abs, hash string, pre os.FileInfo, remote driveclient.File, parentID string) error {
 	if err := checkpoint(CPUploadBeforeCommit); err != nil {
 		return err
 	}
@@ -478,11 +497,25 @@ func (x *Executor) commitUpload(opID int64, rel, abs, hash string, pre os.FileIn
 	}
 	x.setPathID(rel, remote.ID)
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
-		return statedb.UpsertItem(tx, statedb.Item{
+		if err := statedb.UpsertItem(tx, statedb.Item{
 			DriveFileID: remote.ID, RelPath: rel, Size: pre.Size(), ContentMD5: hash,
 			LocalMtimeNS: pre.ModTime().UnixNano(), DriveMD5: remote.MD5, DriveVersion: remote.Version,
-		})
+		}); err != nil {
+			return err
+		}
+		return x.mirror(tx, remote, parentID)
 	})
+}
+
+// mirror records on the Drive side of the state DB what we just did to Drive,
+// in the same transaction as the baseline row (W16). Without it the mirror
+// only learns about our own writes when the change feed reports them, which
+// can be a minute later — and until then the baseline names a Drive id the
+// mirror does not know, which reconcile reads as "deleted on Drive" and the
+// executor acts on. Feed and executor share one conversion (NodeFromFile) so
+// the feed's later report simply restates this row.
+func (x *Executor) mirror(tx *sql.Tx, f driveclient.File, parentID string) error {
+	return statedb.UpsertRemoteNodeTx(tx, remotedelta.NodeFromFile(f, parentID))
 }
 
 func (x *Executor) download(ctx context.Context, opID int64, a reconcile.Action) error {
@@ -589,7 +622,13 @@ func (x *Executor) trashRemote(ctx context.Context, opID int64, a reconcile.Acti
 		if err := statedb.DeleteItemByID(tx, a.FileID); err != nil {
 			return err
 		}
-		return statedb.DeleteItemsByID(tx, subtreeIDs(a))
+		if err := statedb.DeleteItemsByID(tx, subtreeIDs(a)); err != nil {
+			return err
+		}
+		// The mirror loses what Drive lost, in the same transaction (W16):
+		// otherwise the next cycle still sees the trashed item on the remote
+		// side and downloads the content back.
+		return statedb.DeleteRemoteNodesTx(tx, append([]string{a.FileID}, subtreeIDs(a)...))
 	})
 }
 

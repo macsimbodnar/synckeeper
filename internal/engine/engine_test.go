@@ -90,6 +90,20 @@ func (m *machine) binRead(t *testing.T, entry, sub string) string {
 
 func (m *machine) sync(t *testing.T) *Result {
 	t.Helper()
+	res := m.syncRaw(t)
+	// W16-E4: a clean cycle leaves the two sides of the state DB agreeing.
+	// Checked here rather than per test so every scenario in the package is
+	// a witness — the defect's general form is "a write path that updates
+	// the baseline without the mirror", and any of them could grow one.
+	assertMirrorCoversBaseline(t, m)
+	return res
+}
+
+// syncRaw is one clean cycle without the E4 invariant check — for the W16
+// tests, which assert the invariant where they mean to and would otherwise
+// have their behavioural assertions shadowed by it.
+func (m *machine) syncRaw(t *testing.T) *Result {
+	t.Helper()
 	res, err := m.eng.Sync(context.Background(), Options{})
 	if err != nil {
 		t.Fatalf("[%s] sync: %v", m.name, err)

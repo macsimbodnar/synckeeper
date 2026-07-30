@@ -22,6 +22,8 @@ type Fake struct {
 	nextID     int
 	files      map[string]*fakeFile
 	log        []Change
+	holding    bool  // the changes feed is withheld past holdAt (W16-E1)
+	holdAt     int   // change-log offset the feed stops reporting at
 	trashCalls int   // API calls, so a test can prove a folder went in ONE
 	AboutInfo  About // returned by About; tests set it to simulate an account
 }
@@ -100,10 +102,38 @@ func (f *Fake) Get(_ context.Context, fileID string) (File, error) {
 	return file.File, nil
 }
 
+// HoldChanges withholds everything the changes feed has not reported yet:
+// while held, Changes stops at the log offset the hold was taken at, and
+// mutations keep appending behind it. Releasing makes them visible again.
+//
+// This models Drive's eventual consistency, which the fake otherwise lacks —
+// an upload used to be instantly visible in the feed, so the window between
+// our own write and the feed reporting it did not exist in tests. That gap is
+// exactly what let W16 ship (decisions.md 2026-07-30).
+func (f *Fake) HoldChanges(hold bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if hold && !f.holding {
+		f.holdAt = len(f.log)
+	}
+	f.holding = hold
+}
+
+// visibleLog is the part of the change log the feed currently reports.
+// Callers must hold f.mu.
+func (f *Fake) visibleLog() int {
+	if f.holding {
+		return f.holdAt
+	}
+	return len(f.log)
+}
+
 func (f *Fake) StartPageToken(_ context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return strconv.Itoa(len(f.log)), nil
+	// The visible horizon, not len(log): a token handed out past withheld
+	// changes would skip them for good once the hold lifts.
+	return strconv.Itoa(f.visibleLog()), nil
 }
 
 func (f *Fake) Changes(_ context.Context, pageToken string) (ChangePage, error) {
@@ -113,8 +143,12 @@ func (f *Fake) Changes(_ context.Context, pageToken string) (ChangePage, error) 
 	if err != nil || offset < 0 || offset > len(f.log) {
 		return ChangePage{}, fmt.Errorf("fake drive: bad page token %q", pageToken)
 	}
-	page := ChangePage{NewStartToken: strconv.Itoa(len(f.log))}
-	for _, c := range f.log[offset:] {
+	end := f.visibleLog()
+	if offset > end { // a token from before the hold was taken
+		end = offset
+	}
+	page := ChangePage{NewStartToken: strconv.Itoa(end)}
+	for _, c := range f.log[offset:end] {
 		snapshot := *c.File
 		page.Changes = append(page.Changes, Change{FileID: c.FileID, Removed: c.Removed, File: &snapshot})
 	}

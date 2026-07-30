@@ -178,6 +178,11 @@ func runFuzz(t *testing.T, seed int64, p fuzzParams) {
 		fz.now = fz.now.Add(time.Minute)
 		m := fz.ms[fz.rng.Intn(len(fz.ms))]
 		fz.applyOp(m)
+		// Sometimes replay W16's shape: a cycle writes to Drive and a second
+		// one runs before the change feed has reported it.
+		if fz.rng.Float64() < 0.15 {
+			fz.syncWithheldFeed(m)
+		}
 		// Interleave: sync a random subset in random order.
 		for _, sm := range fz.shuffledMachines() {
 			if fz.rng.Float64() < 0.55 {
@@ -381,7 +386,7 @@ func (fz *fuzzer) shuffledMachines() []*machine {
 // syncMaybeCrash runs one op-phase cycle, sometimes injecting a one-shot crash
 // at a random checkpoint. A crash is a soft failure (recorded, not returned);
 // a hard error here would be a real finding.
-func (fz *fuzzer) syncMaybeCrash(m *machine) {
+func (fz *fuzzer) syncMaybeCrash(m *machine) *Result {
 	if fz.rng.Float64() < fz.crashProb {
 		cp := crashCheckpoints[fz.rng.Intn(len(crashCheckpoints))]
 		// The transfer stage calls the hook from several workers at once, so
@@ -402,6 +407,31 @@ func (fz *fuzzer) syncMaybeCrash(m *machine) {
 		fz.dumpAndFail("op-phase sync [%s] hard-errored: %v%s", m.name, err, fz.machineDump(m, res))
 	}
 	fz.checkPlan(m, res)
+	return res
+}
+
+// syncWithheldFeed runs two back-to-back cycles with Drive's change feed
+// withheld — the shape that produced W16 in the field, where a watcher wake
+// fired a cycle 0.67 s after the one that had just uploaded a 190 MB video
+// and the mirror had not heard about it yet. Every remote-side commit must
+// leave the mirror correct by itself; the feed cannot be relied on to repair
+// it in time. Always released, so quiesce still converges.
+//
+// The oracle here is the E4 invariant, not convergence: W16 is *churn*, and a
+// machine that trashes its own upload downloads it back next cycle and
+// converges perfectly — measured, with the fix disabled, on this very fuzzer
+// (decisions.md 2026-07-30 "the convergence oracle cannot see W16").
+func (fz *fuzzer) syncWithheldFeed(m *machine) {
+	fz.fake.HoldChanges(true)
+	defer fz.fake.HoldChanges(false)
+	res := fz.syncMaybeCrash(m) // the cycle that writes to Drive
+	clean := res.Failed == 0
+	res = fz.syncMaybeCrash(m) // the one that used to trash what the first uploaded
+	if clean && res.Failed == 0 {
+		// Only after two clean cycles: an injected crash legitimately leaves
+		// a baseline row whose remote-side half is still owed.
+		assertMirrorCoversBaseline(fz.t, m)
+	}
 }
 
 // checkPlan asserts the §4.5 structural invariant on a returned plan. The
@@ -534,6 +564,11 @@ func (fz *fuzzer) assertConverged() {
 	}
 	driveFiles, driveDirs := fz.driveTree()
 	fz.assertTreeEqual(fmt.Sprintf("machine %s vs Drive", ref.name), refFiles, driveFiles, refDirs, driveDirs)
+	// W16-E4: at the fixed point the state DB's two sides agree on every
+	// machine. Asserted here rather than per cycle because mid-fuzz a failed
+	// (crashed) delete legitimately leaves a baseline row whose remote is
+	// already gone; at rest nothing failed and nothing is pending.
+	assertMirrorCoversBaseline(fz.t, fz.ms...)
 }
 
 func (fz *fuzzer) assertTreeEqual(what string, aFiles, bFiles map[string]string, aDirs, bDirs map[string]bool) {
