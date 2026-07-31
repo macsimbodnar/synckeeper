@@ -13,6 +13,28 @@ Format:
 
 ---
 
+## 2026-07-31 — W18 items D and E settled: the simplest answer was the one already built
+
+**Context:** two W18 items were flagged as worth re-opening before implementation — E's schema migration, and D's treatment of an empty sync dir. Discussing them surfaced facts neither of us had when the first decisions were made.
+
+**E — kept, and the cost was overstated.** I had priced it as permanent plumbing for a one-shot event. Two corrections: (a) Max is pre-production, so no legacy data needs preserving; (b) more usefully, the migration is **one `alter table remote_nodes add column modified_time` line with no backfill needed**, because E fires only at `init`, and `init` force-walks the mirror fresh — the column is populated by the very command that reads it. Also corrected an analysis error of my own: I first argued E was near-vacuous because Drive's `modifiedTime` records *when content reached Drive*, not when the user edited it. It is not vacuous — a file merely downloaded and never edited has matching content and never reaches the conflict branch, so the comparison is sound in the case it is for ("Drive holds a stale copy, my local work is fresher"). The honest residual caveat is machine-vs-Google clock skew: the wrong file gets the plain name, never lost bytes. **E stays as planned.**
+
+**D — the empty-sync-dir arm is deleted, not rewritten.** Max's two answers pointed opposite ways (he picked "empty stays an error", then wrote that emptying the folder "must propagate… this is a legitimate deletion"), which is the same code path: `CheckSyncDir`'s empty-check *is* what blocks that deletion. Resolved to:
+
+- **Sync dir missing** → recreate + `ResetBaseline` + re-download. Never a deletion.
+- **Sync dir present, contents deleted** → ordinary §4.2 (`present | deleted | unchanged → trash remote`). The guard's empty arm goes away.
+- `not a directory` / `unreadable` → hard error, unchanged.
+
+**Decision (Max):** *"It depends on the DB status. If the files are on the DB and they are gone in local then deletion propagates. If the files are not in the DB and are not in the folder but are on the drive we download them. Let's do what Dropbox is doing."* That is spec §4.2 verbatim — already built, already tested — **and it is what Dropbox does**: their merge-base model detects deletions by diffing the last-synced tree, never by observing events, which the spec's own appendix already cites (§4.1 "identical to Nucleus"). So the answer to the whole question was the existing design.
+
+**Three mechanisms explored and dropped**, recorded so they are not re-derived: a `.synckeeper-root` marker file distinguishing an emptied folder from an unmounted volume; a recorded device id for the same (rejected on a checked fact — `st_dev` is not stable across reboots on either OS, so it would false-error after every restart); and a "did we detect the deletion" gate keyed either on watcher events (would have made spec §8.1's *"change hints never carry truth"* false and broken one-shot `sync`, which has no watcher) or on a previous-cycle scan count. All unnecessary once the rule was §4.2.
+
+**The unmount case is unsupported by decision (Max):** *"we are chasing a really weird situation… just put a warning in the documentation that we don't support that configuration."* Mounting only the sync folder from a separate volume presents an unmounted mountpoint as an empty directory, indistinguishable from a folder the user emptied — so after W18 those deletions propagate to Drive's bin (recoverable ~30 days, and W14-M3 already reports a large deletion loudly). MANUAL §9 will say so, with the code, not before it.
+
+**One divergence from Dropbox, stated and accepted:** Dropbox does **not** auto-recreate a missing folder — it stops and prompts, offering to locate it or re-download. Max was asked directly with that on the table and kept auto-recreate: self-healing, no human needed. Consequence: a machine that lost its volume pulls the whole tree onto whatever filesystem the mountpoint now lives on, unattended, on the daemon's first cycle.
+
+**Consequences:** W18 item D **shrinks** (delete the empty arm rather than rewrite it) and now amends spec §3 invariant 4 **twice** — the missing-dir sentence changes and the empty-dir sentence is removed — plus spec §6's sync-dir bullet. Item E unchanged. plan.md W18 items D/E and the not-in-scope list updated.
+
 ## 2026-07-31 — W18: root identity is the Drive **id**, `init` is idempotent, and a missing root is never a deletion
 
 **Context:** the adversarial review below reproduced F1 — `doctor --repair` and `init --force` resolve the Drive root **by name** through `FindOrCreateFolder`, which *creates* the folder when absent. A folder renamed in the Drive web UI therefore repoints `root_folder_id` at a new empty folder, leaves every baseline row, and the next ordinary cycle reads the whole baseline as "deleted on Drive" (measured: 3 files → 0, `guardBlocked=false`, because W14 turned the mass-delete guard off wherever a system bin exists). Rather than patch that path, Max specified the behaviour he wants end to end.
