@@ -22,6 +22,12 @@ const (
 	MetaPageToken     = "page_token"
 	MetaRootFolderID  = "root_folder_id"
 	MetaMachineID     = "machine_id"
+	// MetaRootFolderName is the Drive folder's name as last observed (W18).
+	// The ID is authoritative; this is what the read-only views display, so a
+	// folder renamed in the Drive web UI reads truthfully without config.toml
+	// ever being rewritten (rewriting it would strip the user's comments).
+	// drive.folder_name keeps one job: naming the folder when we must create it.
+	MetaRootFolderName = "root_folder_name"
 )
 
 // ErrNotFound is returned by Get-style accessors when no row matches.

@@ -34,6 +34,7 @@ The daemon is the product; the CLI (and any future UI) are thin clients of it. O
 | `internal/executor` | runs the plan; the local-write gate — the single local-mutation choke point (spec §7) |
 | `internal/scanner` | local tree scan (md5 only on size/mtime drift) |
 | `internal/remotedelta` | Drive metadata mirror from `changes.list`; case/normalization fold |
+| `internal/root` | identity of the Drive sync folder: id-first resolve, rename recorded, recreate + baseline reset when it is gone (never a deletion) |
 | `internal/driveclient` | Drive API client + in-memory fake (offline tests) |
 | `internal/statedb` | SQLite baseline/state (items, meta, pending_ops, remote_nodes, daemon_status, activity); WAL |
 | `internal/watch` | the daemon: fswatch backends (FSEvents/fsnotify), control socket, status recorder |

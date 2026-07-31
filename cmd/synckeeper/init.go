@@ -19,6 +19,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/guards"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
+	"github.com/macsimbodnar/synckeeper/internal/root"
 	"github.com/macsimbodnar/synckeeper/internal/service"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
@@ -180,48 +181,58 @@ func refuseReinit(db *statedb.DB, force bool) error {
 }
 
 // initialize performs the Drive-side setup through the client interface so
-// it can be tested against the fake: find or create the sync folder, fetch
-// the changes start token, and record both plus a stable machine id. It
-// returns the folder id.
+// it can be tested against the fake: resolve the sync folder, fetch the
+// changes start token, and record both plus a stable machine id. It returns
+// the folder id.
 //
 // If the folder already holds files and adopt is false it refuses, so a user
 // can't silently join an existing Drive folder — joining is an explicit
 // `--adopt`. Nothing is persisted on that refusal, so re-running with
 // --adopt works cleanly.
 func initialize(ctx context.Context, client driveclient.Client, db *statedb.DB, cfg config.Config, adopt bool) (string, error) {
-	folder, err := driveclient.FindOrCreateFolder(ctx, client, "root", cfg.Drive.FolderName)
+	// Id-first (W18-A): a stored root id wins whatever the folder is called
+	// now, so a rename in the Drive web UI is recorded rather than acted on.
+	// Only a genuinely absent folder is created — and then the baseline is
+	// reset in the same transaction, so nothing can read as deleted.
+	res, err := root.Resolve(ctx, client, db, cfg.Drive.FolderName)
 	if err != nil {
-		return "", fmt.Errorf("find or create Drive folder %q: %w", cfg.Drive.FolderName, err)
+		return "", err
 	}
-	children, err := client.List(ctx, folder.ID)
+	if res.Created {
+		// A folder we just made is empty: nothing to refuse over, and
+		// Resolve already walked the mirror.
+		return res.ID, ensureMachineID(db)
+	}
+	children, err := client.List(ctx, res.ID)
 	if err != nil {
 		return "", err
 	}
 	if len(children) > 0 && !adopt {
 		return "", fmt.Errorf("Drive folder %q already contains %d item(s); re-run `synckeeper init --adopt` to join it by merging both sides (union; nothing is deleted)",
-			cfg.Drive.FolderName, len(children))
+			res.Name, len(children))
 	}
-	if err := db.SetMeta(statedb.MetaRootFolderID, folder.ID); err != nil {
-		return "", err
-	}
-	// Build — on --force: REBUILD — the remote mirror together with a fresh
-	// page token. Resetting only the token would silently skip every remote
-	// change since the last consumed batch and leave a stale mirror that
-	// hides remote edits (spec §12). On a fresh DB this pre-warms the mirror
-	// the first sync would otherwise build.
-	if err := remotedelta.ForceFullWalk(ctx, client, db, folder.ID); err != nil {
+	// Rebuild the remote mirror together with a fresh page token. Resetting
+	// only the token would silently skip every remote change since the last
+	// consumed batch and leave a stale mirror that hides remote edits (spec
+	// §12). On a fresh DB this pre-warms the mirror the first sync would
+	// otherwise build.
+	if err := remotedelta.ForceFullWalk(ctx, client, db, res.ID); err != nil {
 		return "", fmt.Errorf("build remote mirror: %w", err)
 	}
+	return res.ID, ensureMachineID(db)
+}
+
+// ensureMachineID mints this machine's stable identity once. It survives every
+// re-init, because conflict copies already sitting on other machines name it.
+func ensureMachineID(db *statedb.DB) error {
 	if _, err := db.GetMeta(statedb.MetaMachineID); errors.Is(err, statedb.ErrNotFound) {
 		id := make([]byte, 8)
 		if _, err := rand.Read(id); err != nil {
-			return "", err
+			return err
 		}
-		if err := db.SetMeta(statedb.MetaMachineID, hex.EncodeToString(id)); err != nil {
-			return "", err
-		}
+		return db.SetMeta(statedb.MetaMachineID, hex.EncodeToString(id))
 	} else if err != nil {
-		return "", err
+		return err
 	}
-	return folder.ID, nil
+	return nil
 }

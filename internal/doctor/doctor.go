@@ -23,6 +23,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/remotedelta"
+	"github.com/macsimbodnar/synckeeper/internal/root"
 	"github.com/macsimbodnar/synckeeper/internal/scanner"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 	"github.com/macsimbodnar/synckeeper/internal/trash"
@@ -182,13 +183,18 @@ func (d *Doctor) Check(ctx context.Context) (*Report, error) {
 // unmatched local files become uploads and unmatched remote files become
 // downloads on the next sync — deletions cannot be produced by adoption.
 func (d *Doctor) Repair(ctx context.Context) (*Report, error) {
-	folder, err := driveclient.FindOrCreateFolder(ctx, d.Client, "root", d.Cfg.Drive.FolderName)
+	// Id-first (W18-A). This call site was one of the two carriers of F1: it
+	// resolved the folder by NAME through FindOrCreateFolder, so a folder
+	// renamed in the Drive web UI made "repair" create a new empty one, repoint
+	// at it, and leave every baseline row — after which the next ordinary sync
+	// moved the user's whole tree to the system bin. root.Resolve keeps the
+	// stored id whatever the folder is now called, and resets the baseline in
+	// the same transaction on the one path that really does change identity.
+	res, err := root.Resolve(ctx, d.Client, d.DB, d.Cfg.Drive.FolderName)
 	if err != nil {
-		return nil, fmt.Errorf("find or create Drive folder %q: %w", d.Cfg.Drive.FolderName, err)
-	}
-	if err := d.DB.SetMeta(statedb.MetaRootFolderID, folder.ID); err != nil {
 		return nil, err
 	}
+	folder := driveclient.File{ID: res.ID, Name: res.Name}
 	if _, err := d.DB.GetMeta(statedb.MetaMachineID); errors.Is(err, statedb.ErrNotFound) {
 		id := make([]byte, 8)
 		if _, err := rand.Read(id); err != nil {

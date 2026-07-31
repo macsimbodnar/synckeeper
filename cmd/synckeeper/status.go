@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/macsimbodnar/synckeeper/internal/control"
+	"github.com/macsimbodnar/synckeeper/internal/root"
 	"github.com/macsimbodnar/synckeeper/internal/status"
 	"github.com/macsimbodnar/synckeeper/internal/tui"
 	"github.com/macsimbodnar/synckeeper/internal/watch"
@@ -79,7 +80,7 @@ func gatherStatusN(env *readEnv, activityRows int) status.Snapshot {
 		DB:              env.db,
 		ConfigDir:       env.configDir,
 		SyncDir:         env.syncDir,
-		DriveFolder:     env.cfg.Drive.FolderName,
+		DriveFolder:     root.Name(env.db, env.cfg.Drive.FolderName),
 		MachineName:     env.cfg.Engine.MachineName,
 		StalenessWindow: stalenessWindow,
 		ActivityLimit:   activityRows,
@@ -108,7 +109,7 @@ func runDashboard(cmd *cobra.Command, env *readEnv, interval time.Duration) erro
 				DB:              env.db,
 				ConfigDir:       env.configDir,
 				SyncDir:         env.syncDir,
-				DriveFolder:     env.cfg.Drive.FolderName,
+				DriveFolder:     root.Name(env.db, env.cfg.Drive.FolderName),
 				MachineName:     env.cfg.Engine.MachineName,
 				StalenessWindow: stalenessWindow,
 				ActivityLimit:   dashboardActivityRows,

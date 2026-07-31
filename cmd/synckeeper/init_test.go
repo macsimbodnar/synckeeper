@@ -116,8 +116,18 @@ func TestInitializeRefusesNonEmptyWithoutAdopt(t *testing.T) {
 	if _, err := initialize(ctx, fake, db, config.Default(), false); err == nil {
 		t.Fatal("want error joining a non-empty folder without --adopt")
 	}
-	if _, err := db.GetMeta(statedb.MetaRootFolderID); !errors.Is(err, statedb.ErrNotFound) {
-		t.Error("root_folder_id was persisted despite the refusal")
+	// The property this ever cared about is that the --adopt retry is clean,
+	// not that nothing was written. Since W18-A the refusal DOES leave the
+	// resolved root id behind, and that is correct: resolution is id-first, so
+	// the retry finds the same folder instead of racing to name it again. The
+	// assertion moved to the property (same folder, no baseline invented),
+	// which is what a user would notice and is strictly harder to satisfy by
+	// accident than "the key is absent". (decisions.md 2026-07-31 W18-A.)
+	if id, _ := db.GetMeta(statedb.MetaRootFolderID); id != folder.ID {
+		t.Errorf("after the refusal root_folder_id = %q, want the existing folder %s — a retry must not resolve somewhere else", id, folder.ID)
+	}
+	if n, err := db.ItemCount(); err != nil || n != 0 {
+		t.Errorf("refusal left %d baseline rows (%v); it must invent none", n, err)
 	}
 
 	// --adopt proceeds.

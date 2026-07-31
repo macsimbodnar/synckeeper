@@ -135,6 +135,15 @@ func SetMetaTx(tx *sql.Tx, key, value string) error {
 	return err
 }
 
+// DeleteMetaTx removes a meta key inside tx. Used to retract
+// remotedelta.MetaWalkDone when the root identity changes, so that a crash
+// between committing the new root and rebuilding the mirror still leaves a
+// state the next cycle repairs: the missing marker forces a fresh full walk.
+func DeleteMetaTx(tx *sql.Tx, key string) error {
+	_, err := tx.Exec(`delete from meta where key = ?`, key)
+	return err
+}
+
 // RenameItemPath moves a row (and, for directories, every descendant row)
 // from oldPath to newPath inside tx.
 func RenameItemPath(tx *sql.Tx, oldPath, newPath string) error {

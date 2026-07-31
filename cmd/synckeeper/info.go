@@ -14,6 +14,7 @@ import (
 
 	"github.com/macsimbodnar/synckeeper/internal/auth"
 	"github.com/macsimbodnar/synckeeper/internal/config"
+	"github.com/macsimbodnar/synckeeper/internal/root"
 	"github.com/macsimbodnar/synckeeper/internal/service"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 	"github.com/macsimbodnar/synckeeper/internal/status"
@@ -164,6 +165,11 @@ func gatherInfo() infoView {
 			}
 			defer db.Close()
 			v.initialized = true
+			// The Drive folder's name as last observed wins over config: the
+			// id is the identity, so a folder renamed in the web UI must read
+			// truthfully here rather than showing the name we would create
+			// with (W18-A).
+			v.driveFolder = root.Name(db, v.driveFolder)
 			if rid, e := db.GetMeta(statedb.MetaRootFolderID); e == nil {
 				v.rootID = rid
 			}

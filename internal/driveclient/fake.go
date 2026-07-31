@@ -58,9 +58,21 @@ func (f *Fake) newID() string {
 func (f *Fake) get(id string) (*fakeFile, error) {
 	file, ok := f.files[id]
 	if !ok {
-		return nil, fmt.Errorf("fake drive: no file %s", id)
+		// A sentinel, not a string: callers branch on "gone" versus "something
+		// went wrong", and the real client maps Drive's 404 onto the same one.
+		return nil, notFoundf("file", id)
 	}
 	return file, nil
+}
+
+// Forget removes a file from the fake entirely, as if it had been purged from
+// Drive — every call naming it then answers ErrNotFound. Tests use it for the
+// states a trash cannot model: a root folder that is gone rather than binned,
+// and a parent a crashed run's journal still names.
+func (f *Fake) Forget(fileID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.files, fileID)
 }
 
 // logChange appends the file's current state to the changes feed.

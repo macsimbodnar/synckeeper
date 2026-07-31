@@ -17,19 +17,23 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
-// metaWalkDone marks that the initial full walk has been performed.
-const metaWalkDone = "initial_walk_done"
+// MetaWalkDone marks that the initial full walk has been performed. Exported
+// because root.Resolve retracts it when the Drive root changes identity (W18):
+// a crash between committing the new root and rebuilding the mirror then still
+// leaves a state the next cycle repairs, since the missing marker forces a
+// fresh full walk from the new root.
+const MetaWalkDone = "initial_walk_done"
 
 // Refresh brings the remote_nodes cache up to date: a full walk on the
 // first sync, then incremental changes, then a prune of unreachable rows.
 // The page token is persisted only after its batch is fully applied
 // (re-applying a batch is idempotent).
 func Refresh(ctx context.Context, client driveclient.Client, db *statedb.DB, rootID string) error {
-	if _, err := db.GetMeta(metaWalkDone); errors.Is(err, statedb.ErrNotFound) {
+	if _, err := db.GetMeta(MetaWalkDone); errors.Is(err, statedb.ErrNotFound) {
 		if err := fullWalk(ctx, client, db, rootID); err != nil {
 			return err
 		}
-		if err := db.SetMeta(metaWalkDone, "1"); err != nil {
+		if err := db.SetMeta(MetaWalkDone, "1"); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -59,7 +63,7 @@ func ForceFullWalk(ctx context.Context, client driveclient.Client, db *statedb.D
 	if err := db.SetMeta(statedb.MetaPageToken, token); err != nil {
 		return err
 	}
-	return db.SetMeta(metaWalkDone, "1")
+	return db.SetMeta(MetaWalkDone, "1")
 }
 
 func fullWalk(ctx context.Context, client driveclient.Client, db *statedb.DB, rootID string) error {
