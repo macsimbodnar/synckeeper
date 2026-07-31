@@ -130,8 +130,21 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := guards.CheckSyncDir(e.SyncDir, len(baseItems)); err != nil {
+	// A missing sync folder is recreated, never read as a deletion (W18-D).
+	// The baseline reset is what makes that safe rather than catastrophic:
+	// without it the cycle sees every tracked file gone locally while Drive
+	// still holds it, and plans TrashRemote for the lot — emptying the user's
+	// Drive folder. With an empty baseline §11 makes a delete structurally
+	// impossible and the tree simply downloads again.
+	recreated, err := guards.EnsureSyncDir(e.SyncDir, len(baseItems))
+	if err != nil {
 		return nil, err
+	}
+	if recreated && len(baseItems) > 0 {
+		if err := e.DB.Tx(statedb.ResetBaseline); err != nil {
+			return nil, fmt.Errorf("reset baseline after recreating the sync dir: %w", err)
+		}
+		baseItems = nil
 	}
 	if err := executor.CleanStaleState(ctx, e.DB, e.Client, e.RootID, e.SyncDir); err != nil {
 		return nil, err

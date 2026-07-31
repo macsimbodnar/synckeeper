@@ -18,6 +18,7 @@ import (
 
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/executor"
+	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 )
 
 func arm(t *testing.T, checkpointName string) {
@@ -198,24 +199,51 @@ func TestF3CrashBetweenRenameAndCommit(t *testing.T) {
 	}
 }
 
-// --- F5: sync dir unmounted -> hard error, remote untouched --------------
+// --- F5: sync dir gone -> recreated and re-downloaded, NEVER propagated ---
+//
+// Re-targeted 2026-07-31 by W18-D, not deleted. Until then a missing sync dir
+// was a hard error that waited for a human. Max's rule is that a missing root
+// is never a deletion, so the cycle now recreates the folder and pulls the
+// content back. **The safety assertion is unchanged and is the whole point:
+// the remote must not be touched.** Without the baseline reset this exact
+// scenario plans TrashRemote for every tracked file and empties the user's
+// Drive folder, which is why the reset and the recreate share a cycle.
+// (decisions.md 2026-07-31; spec §3 invariant 4.)
 
-func TestF5SyncDirUnmounted(t *testing.T) {
+func TestF5SyncDirVanishedIsRecreatedNotPropagated(t *testing.T) {
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 
 	a.write(t, "precious.txt", "do not lose")
+	a.write(t, "docs/nested.txt", "also precious")
 	a.sync(t)
 
-	// "Unmount": the sync dir vanishes entirely.
+	// "Unmount", or a user deleting the folder: the sync dir vanishes.
 	if err := os.RemoveAll(a.dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.eng.Sync(context.Background(), Options{}); err == nil {
-		t.Fatal("sync on a missing dir must hard-error")
+
+	res, err := a.eng.Sync(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("a missing sync dir must be recreated, not error: %v", err)
+	}
+	for _, act := range res.Plan {
+		if act.Type == reconcile.TrashRemote || act.Type == reconcile.QuarantineLocal {
+			t.Errorf("plan contains a delete-class action for a vanished sync dir: %s %s", act.Type, act.RelPath)
+		}
 	}
 	if n := countByName(t, fake, root, "precious.txt"); n != 1 {
-		t.Error("remote was touched despite the missing sync dir")
+		t.Fatal("remote was touched despite the missing sync dir — the baseline reset is not doing its job")
+	}
+	if got := a.read(t, "precious.txt"); got != "do not lose" {
+		t.Errorf("precious.txt = %q, want it downloaded back", got)
+	}
+	if got := a.read(t, "docs/nested.txt"); got != "also precious" {
+		t.Errorf("docs/nested.txt = %q, want the whole tree back", got)
+	}
+	// And the machine is genuinely synced again, not merely undamaged.
+	if res := a.sync(t); len(res.Plan) != 0 {
+		t.Errorf("second cycle planned %d actions, want steady state", len(res.Plan))
 	}
 }
 
@@ -302,26 +330,49 @@ func TestG3DaemonDefersMassDeleteButSyncsRest(t *testing.T) {
 	}
 }
 
-// --- G2: empty dir with populated DB -> hard error ------------------------
+// --- G2: an EMPTIED sync dir is a legitimate deletion and propagates ------
+//
+// Re-targeted 2026-07-31 by W18-D. This assertion is now the opposite of what
+// it was, deliberately: the guard used to refuse an existing-but-empty sync
+// dir with a populated baseline on the theory that it meant "unmounted". Max's
+// rule is that deleting the contents of your sync folder must reach Drive —
+// *"this is a legitimate deletion"* — and that guard arm was the only thing
+// blocking it. The distinction that survives is between the folder ITSELF
+// being gone (F5 above: recreated, never propagated) and its CONTENTS being
+// gone (here: an ordinary §4.2 deletion).
+//
+// The accepted cost, recorded rather than defended: an unmounted volume whose
+// mountpoint survives as an empty directory is indistinguishable from this, so
+// mounting only the sync folder from a separate volume is unsupported
+// (MANUAL §9, decisions.md 2026-07-31).
 
-func TestG2EmptyDirBlocked(t *testing.T) {
+func TestG2EmptiedSyncDirPropagatesTheDeletion(t *testing.T) {
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 
 	a.write(t, "data.txt", "tracked")
 	a.sync(t)
 
+	// The contents go; the folder stays. `rm -rf ~/Synckeeper/*`.
 	if err := os.RemoveAll(a.dir); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(a.dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.eng.Sync(context.Background(), Options{}); err == nil {
-		t.Fatal("empty dir with populated DB must hard-error")
+
+	res, err := a.eng.Sync(context.Background(), Options{})
+	if err != nil {
+		t.Fatalf("emptying the sync dir is a legitimate deletion, not an error: %v", err)
 	}
-	if n := countByName(t, fake, root, "data.txt"); n != 1 {
-		t.Error("remote file was trashed despite the guard")
+	if res.Failed > 0 {
+		t.Fatalf("failed actions: %v", res.Errors)
+	}
+	if n := countByName(t, fake, root, "data.txt"); n != 0 {
+		t.Errorf("data.txt is still live on Drive (%d); the deletion must propagate", n)
+	}
+	if n, err := a.db.ItemCount(); err != nil || n != 0 {
+		t.Errorf("baseline = %d rows (%v), want the row retired with the file", n, err)
 	}
 }
 

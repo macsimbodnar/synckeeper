@@ -8,23 +8,47 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 )
 
-func TestCheckSyncDir(t *testing.T) {
+// W18-D: the guard's two arms diverged. A MISSING sync folder is recreated
+// (never a deletion); an EMPTIED one is a legitimate deletion and passes
+// straight through to §4.2. The old G2 assertion — "empty dir with populated
+// DB must hard-error" — is deliberately gone, not relaxed: Max's rule is that
+// deleting the contents of the sync folder must reach Drive, and that arm was
+// the only thing blocking it (decisions.md 2026-07-31).
+func TestEnsureSyncDir(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := CheckSyncDir(dir, 0); err != nil {
-		t.Errorf("empty dir with empty DB should pass: %v", err)
+	if recreated, err := EnsureSyncDir(dir, 0); err != nil || recreated {
+		t.Errorf("empty dir with empty DB: recreated=%v err=%v; want false, nil", recreated, err)
 	}
-	if err := CheckSyncDir(dir, 5); err == nil {
-		t.Error("empty dir with populated DB must hard-error (G2)")
+	if recreated, err := EnsureSyncDir(dir, 5); err != nil || recreated {
+		t.Errorf("EMPTIED dir with a populated DB must pass through as an ordinary deletion: recreated=%v err=%v", recreated, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckSyncDir(dir, 5); err != nil {
-		t.Errorf("non-empty dir should pass: %v", err)
+	if recreated, err := EnsureSyncDir(dir, 5); err != nil || recreated {
+		t.Errorf("non-empty dir: recreated=%v err=%v; want false, nil", recreated, err)
 	}
-	if err := CheckSyncDir(filepath.Join(dir, "missing"), 0); err == nil {
-		t.Error("missing dir must hard-error even with empty DB")
+
+	// Missing: recreated, and said so, so the caller knows to reset.
+	gone := filepath.Join(dir, "missing")
+	recreated, err := EnsureSyncDir(gone, 5)
+	if err != nil || !recreated {
+		t.Fatalf("missing dir: recreated=%v err=%v; want true, nil", recreated, err)
+	}
+	if info, err := os.Stat(gone); err != nil || !info.IsDir() {
+		t.Errorf("missing dir was not recreated: %v", err)
+	}
+	// Second call finds it there and reports no recreation, so a cycle cannot
+	// reset the baseline twice.
+	if recreated, err := EnsureSyncDir(gone, 5); err != nil || recreated {
+		t.Errorf("second call: recreated=%v err=%v; want false, nil", recreated, err)
+	}
+
+	// Not a directory stays a hard error — never papered over by creating one.
+	file := filepath.Join(dir, "f.txt")
+	if _, err := EnsureSyncDir(file, 0); err == nil {
+		t.Error("a sync dir that is a file must hard-error")
 	}
 }
 

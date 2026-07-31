@@ -3,6 +3,7 @@ package guards
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
@@ -13,25 +14,48 @@ import (
 // surface the actionable "--confirm-deletes" hint.
 var ErrMassDelete = errors.New("mass-delete threshold exceeded")
 
-// CheckSyncDir hard-errors when the sync dir is missing, unreadable, or
-// empty while the baseline tracks items — those states mean "the disk went
-// away", never "the user deleted everything".
-func CheckSyncDir(dir string, trackedItems int) error {
+// EnsureSyncDir prepares the sync dir for a cycle, and reports whether it had
+// to be recreated (W18-D).
+//
+// **A missing sync folder is never a deletion.** It is recreated and its
+// content comes back from Drive; the caller resets the baseline so §11 makes a
+// delete structurally impossible on the cycle that follows. This replaces the
+// old hard error, which refused the cycle and waited for a human.
+//
+// **An emptied sync folder IS a deletion, and propagates.** The old guard also
+// refused when the directory existed but was empty while the baseline tracked
+// items, on the theory that it meant "unmounted". That arm is gone: deleting
+// everything inside your sync folder is a legitimate deletion and reaches
+// Drive's bin through §4.2's ordinary `present | deleted | unchanged` row.
+//
+// The cost is recorded and accepted (decisions.md 2026-07-31): an unmounted
+// volume whose mountpoint survives as an empty directory is indistinguishable
+// from a folder the user emptied, so mounting *only* the sync folder from a
+// separate volume is an unsupported configuration (MANUAL §9).
+//
+// Unreadable, or not a directory at all, stay hard errors: neither is a
+// deletion, and neither is something to paper over by creating a directory.
+func EnsureSyncDir(dir string, trackedItems int) (recreated bool, err error) {
 	info, err := os.Stat(dir)
-	if err != nil {
-		return fmt.Errorf("sync dir %s is missing or unreadable (refusing to treat this as a mass delete): %w", dir, err)
+	switch {
+	case err == nil && info.IsDir():
+		if _, err := os.ReadDir(dir); err != nil {
+			return false, fmt.Errorf("sync dir %s is unreadable: %w", dir, err)
+		}
+		return false, nil
+	case err == nil:
+		return false, fmt.Errorf("sync dir %s is not a directory", dir)
+	case !os.IsNotExist(err):
+		return false, fmt.Errorf("sync dir %s is unreadable: %w", dir, err)
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("sync dir %s is not a directory", dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, fmt.Errorf("recreate sync dir %s: %w", dir, err)
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("sync dir %s is unreadable: %w", dir, err)
+	if trackedItems > 0 {
+		slog.Warn("the sync folder was gone; recreated it and the content will be downloaded again (nothing is deleted)",
+			"sync_dir", dir, "tracked", trackedItems)
 	}
-	if len(entries) == 0 && trackedItems > 0 {
-		return fmt.Errorf("sync dir %s is empty but the state DB tracks %d items — looks unmounted or wiped; refusing to propagate deletions (restore the dir or re-init)", dir, trackedItems)
-	}
-	return nil
+	return true, nil
 }
 
 // CheckMassDelete refuses a plan whose deletions would land somewhere the
@@ -52,8 +76,9 @@ func CheckSyncDir(dir string, trackedItems int) error {
 // (spec §6, R10) — an empty folder disappearing is not the loss the guard
 // exists to catch, and counting containers made an ordinary folder
 // reorganisation abort the one-shot and wedge the daemon in a standing block
-// (A2). CheckSyncDir is a different guard and is not affected by any of this:
-// a missing, unreadable, or empty sync dir is never a deletion.
+// (A2). EnsureSyncDir is a different guard and is not affected by any of this:
+// a missing sync dir is recreated rather than counted, and an unreadable one
+// is a hard error — neither is ever a deletion (W18-D).
 func CheckMassDelete(plan []reconcile.Action, trackedFiles int, threshold float64, confirmed, binAvailable bool) error {
 	if confirmed || trackedFiles == 0 || binAvailable {
 		return nil
