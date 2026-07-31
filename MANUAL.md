@@ -54,7 +54,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 | `config` | Print the effective config and the file it's read from. |
 | `account` | Token status, which OAuth client is active (your `credentials.json`, or one compiled in by a private `-ldflags` build — nothing is bundled, §5) with its client **id** only, and the signed-in Google account (email via one `about.get`; online only, skipped offline). |
 | `info [--json]` | **Scriptable** (and the pre-`init` dump). One-shot static snapshot: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json` — both with their permission mode, flagged when other users can read them; `control.sock`, quarantine, system bin, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; local state (tracked items, pending ops, quarantine). Read-only, offline (email → `account`), works before `init`. `--json` for scripts. |
-| `doctor [--repair]` | Cross-check state DB vs disk vs Drive; reports the system-bin destination, and names any Drive folder holding **the same name twice** (Drive allows it, a filesystem doesn't — only the first is synced; fix it in the Drive web UI). `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites, so it leaves both copies of a duplicated name alone. |
+| `doctor [--repair]` | Cross-check state DB vs disk vs Drive; reports the system-bin destination, and names any Drive folder holding **the same name twice** (Drive allows it, a filesystem doesn't — only the first is synced; fix it in the Drive web UI). Takes the instance lock — stop the login service first (§7). `--repair` rebuilds lost metadata and re-adopts matching files; it writes no deletion itself, **but can leave a state the next `sync` acts on destructively — §8.** |
 | `service install\|uninstall\|status` | Manage the login service running `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, kept owner-only `0600` since it records synced file names). `install` then checks whether the daemon actually started and names the likely cause (e.g. missing `credentials.json`) if not. |
 | `help [command]` | Usage help for Synckeeper or a specific command (built-in). |
 | `completion <bash\|zsh\|fish\|powershell>` | Print a shell autocompletion script (built-in); `synckeeper completion <shell> --help` shows how to install it. |
@@ -117,14 +117,21 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 | Daemon logs auth failures / token expired or revoked | Stop the daemon → `synckeeper login` → restart it. |
 | `login`/`init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run the `login`/`init`, then reinstall the service. |
 | Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). The service runs `watch`, which can't sign in by itself: if you've never signed in, `synckeeper service uninstall` → `synckeeper init` → reinstall. |
-| State DB lost or corrupted | `synckeeper doctor --repair` — rebuilds metadata and re-adopts matching files; next `sync` re-uploads/downloads the rest. Never deletes. |
+| State DB lost or corrupted | **Check the Drive folder is still named `Synckeeper` first — §8.** Then stop the daemon and run `synckeeper doctor --repair` — rebuilds metadata, re-adopts matching files; next `sync` re-uploads/downloads the rest. |
 | Need a deleted file back | Check your system bin (a folder comes back whole), then Drive's bin. On a platform with no system bin, the quarantine folder (`<config dir>/quarantine/<date>/…`). Bins are not forever — Drive's empties after ~30 days, and your desktop's may too. |
 | Deleted a lot and want to see what went | `synckeeper activity` — a large deletion leaves a `deleted` line with the count and the destination. |
-| Something looks off | `synckeeper status -v`, then `synckeeper doctor` for a full cross-check. |
+| Something looks off | `synckeeper status -v`, then stop the daemon and run `synckeeper doctor` (read-only cross-check; it takes the instance lock). |
 
 ## 8. Known bugs
 
-Confirmed and reproduced. Two groups: the deferred **"directory arm"** of the local-write gate (two facets, below) and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+Confirmed and reproduced. Three groups: **found by the 2026-07-31 review** (four, fixes planned), the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+
+Found by the 2026-07-31 adversarial review, all reproduced; fixes planned as [plan.md](docs/plan.md) W18:
+
+- **`doctor --repair` / `init --force` after the Drive folder is renamed empties your sync folder.** Both look the folder up by *name*, not by id — so a folder renamed in the Drive web UI (or a changed `folder_name`) makes them create a new empty one and repoint at it. Nothing is destroyed: Drive still holds the renamed folder, the local copies go to your system bin. But the sync folder empties, and the mass-delete guard stays silent (it only fires on a machine with no bin). *Workaround: don't rename the Drive folder; if you already did, rename it back before running either command.*
+- **A crash can leave the daemon syncing nothing, silently.** If a journalled create's Drive parent folder is later unreadable, every cycle fails in crash recovery and the journal never drains — the daemon backs off and logs, but nothing syncs, indefinitely. *Workaround: `doctor --repair` clears the journal (mind the entry above).*
+- **One unreadable folder inside the sync dir stops all syncing.** A directory this process can't read fails the whole scan, every cycle, visible only in the log. *Workaround: make it readable, or move it out of the sync folder.*
+- **An edit landing mid-upload leaves a conflict copy** instead of simply re-uploading: the interrupted upload keeps the canonical name and your newer content becomes the conflict copy beside it. Nothing lost; tidy it by hand.
 
 The directory arm — case-only names and renames for *directories and existing files*, a recorded follow-up:
 
@@ -140,6 +147,7 @@ The directory arm — case-only names and renames for *directories and existing 
 - Remote changes arrive within the poll interval (default 45 s); local changes sync under a second while the daemon runs. If file watching is unavailable (e.g. out of file descriptors), the daemon runs polling-only — everything still syncs, local changes just wait for the next poll — and restores watching automatically; `status` shows the mode.
 - Requires your own Google OAuth client (§5) — no credentials are bundled. Your client's consent screen: use **Production** (Testing expires refresh tokens in 7 days); an unpublished client shows a one-time "unverified app" warning.
 - **Full-Drive access scope.** Authorizes with Google's full `drive` scope, not folder-limited — Google has no folder-scoped OAuth scope, and the only narrower option (`drive.file`) would silently stop syncing files added to the Drive folder from *outside* Synckeeper (Drive web UI, other apps). So the stored token can reach your whole Drive; kept at `token.json` `0600`, only ever sent to Google over HTTPS. May be revisited.
+- **`sync_dir` is not checked against the config dir.** Point it at a folder that contains the config dir (e.g. `sync_dir = "~"` on Linux) and `token.json` / `credentials.json` upload to Drive like any other file. Keep the two separate (§4).
 - All files kept on disk (no online-only placeholders).
 - macOS primary; Linux and Windows planned (code written portably, not yet validated there).
 
