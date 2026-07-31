@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-07-31 — W15-U6: a test was strengthened rather than relaxed to ship a rendering fix
+
+**Context:** U6's closing doc pass found that a daemon fallen back to polling rendered `polling-only (polling only)` — `ds.Mode` and `backendLabel()` naming the same thing twice, in exactly the state a user most needs to read cleanly. The obvious fix (make `backendLabel` empty for the polling backend) broke `TestPollingOnlyIsNamedHonestly`, which asserted the view contains the string `polling only`.
+
+**Decision (agent, recorded because overriding a test's pinned expectation is not a free call):** change the behaviour and **strengthen** the test, rather than either leaving the redundancy or weakening the assertion. The test's *intent* — dating from W3-adv-3, where `status` overstated "watching" while the loop polled — is that the header must never claim watching while polling. That intent is untouched by the fix; only its assertion was tied to the redundant string, which happened to satisfy it. The assertion now requires the header to name polling **exactly once** and never say "watching", which is strictly stronger than what it checked before and would still have caught the original W3-adv-3 bug.
+
+**Consequences:** `backendLabel`'s documented contract changes (`polling` → empty, and empty whenever `PollingOnly`), and the header appends a backend name only to a non-empty mode word so an empty mode can never render as a bare ` (FSEvents)`. `TestBackendLabel` updated with the reason; new `overview_polling` golden. testing.md U6.1. The general lesson, worth keeping: a test that pins a *symptom string* rather than the *property* can be satisfied by a bug — when a fix turns one red, read its intent before touching either side.
+
 ## 2026-07-30 — W17 as built: seed the mirror and let the decision table decide
 
 **Context:** the W17 finding (below) went back to Max as three questions rather than one. Every answer here is his.

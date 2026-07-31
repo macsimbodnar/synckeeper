@@ -176,7 +176,7 @@ Skipped files (Google-native docs, symlinks, non-regular files, invalid names, D
 - **Priority:** self-contained, needs no hardware — doable on the primary platform anytime; below the platform ports (W7/W8) in importance.
 - **Acceptance:** a daemon cycle with a skipped Google-native file (or symlink) records a `skip` entry visible in `status` and `activity`; recurring identical skips don't flood the capped ring (per the settled dedupe rule). testing.md row lands with the code.
 
-### W17 — A crashed create plus a lagging feed mints a duplicate on Drive — `done (2026-07-30)`
+### W17 — A crashed create plus a lagging feed mints a duplicate on Drive — `done (2026-07-31)` · found 2026-07-30
 
 Found by W16's own new capability: with `Fake.HoldChanges` modelling Drive's eventual consistency, a 40-seed fuzzer sweep failed seeds 23 and 33 on the **convergence** oracle. Minimized to a deterministic reproduction before anything was concluded. decisions.md "A crashed upload plus a lagging feed mints a duplicate on Drive" (the finding) and "W17 as built" (the decisions).
 
