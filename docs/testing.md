@@ -302,6 +302,13 @@ Found by the widened W16 fuzzer, minimized to deterministic reproductions before
 | W12-F1 | A Drive-bin delete is never answered with a re-upload of the deleted tree, including after an `init --adopt` that was interrupted mid-download (the incident's suspected trigger) | **open (2026-07-25)** — reproduction not yet written; MANUAL §8 carries the user-facing entry meanwhile |
 | W12-F2 | A daemon cycle whose plan removes most of the tracked files **to an unrecoverable destination** trips the mass-delete guard: the block is recorded with a reason, nothing executes, local files stay. *(Written 2026-07-25 as "both directions"; re-targeted 2026-07-26 by W14-M1 — with a bin present neither direction is held, and the subtest `with a system bin` pins that.)* | passing (2026-07-25) — `TestMassDeleteGuardBlocksWholeTreeDeletion` (60 of 61 tracked, daemon `DeferMassDelete` semantics). **Resolves F2 as "not a defect"**: the guard is correct, so the incident's cycles held no delete-class actions — and as `Record`/`Forget` are the only kinds `activityKind` leaves unrecorded, the 890+890 executed actions with zero activity rows were `Forget`s. Nothing was re-uploaded to Drive |
 
+## W18 — root identity, idempotent `init`, no deletion from a missing root (2026-07-31)
+
+| ID | Case | Status |
+|---|---|---|
+| W18.1 | `statedb.ResetBaseline` empties the baseline (`items`) and the journal (`pending_ops`), leaves the remote mirror and the rest of `meta` untouched, and commits **atomically with the identity change that motivates it** — a failure after the reset rolls both halves back, so a crash can never leave the old baseline pointing at a new root (invariant 6, and the F1 catastrophe itself) | passing (2026-07-31) — `TestResetBaselineClearsBaselineAndJournalOnly`, `TestResetBaselineRollsBackWithItsIdentityChange` (`internal/statedb/reset_test.go`) |
+| W18.2 | **An empty baseline structurally cannot produce a delete** (spec §11) — the property every "a missing root is never a deletion" rule is built on, pinned in the pure planner. Both directions: a vanished *local* tree plans downloads + mkdirs, a vanished *remote* tree plans uploads + mkdirs, and **zero** delete-class actions either way | passing (2026-07-31) — `TestEmptyBaselineTurnsAVanishedLocalTreeIntoDownloads`, `TestEmptyBaselineTurnsAVanishedRemoteTreeIntoUploads` (`internal/reconcile/emptybaseline_test.go`). **Not vacuous by construction:** each case first asserts that with the baseline *intact* the same inputs plan deletes (4 each — the Drive-emptying case, and F1 itself), and fails the test if they don't |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

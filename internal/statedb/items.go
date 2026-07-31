@@ -103,6 +103,38 @@ func DeleteItemsByID(tx *sql.Tx, driveFileIDs []string) error {
 	return nil
 }
 
+// ResetBaseline empties the baseline inside tx: every `items` row and every
+// journal row. It is how W18 keeps its promise that a missing root — the Drive
+// folder or the local sync dir — is never read as a deletion.
+//
+// The mechanism is spec §11's, not a new one: delete-class actions require a
+// baseline row that is missing on one side, so an EMPTY baseline structurally
+// cannot produce a delete. Every surviving local file becomes a plain upload
+// and every remote file a plain download, which is exactly the adopt path.
+//
+// It must run in the SAME transaction as the identity change that motivates it
+// (the new root id, or the recreated sync dir). A crash between the two would
+// leave the old baseline pointing at the new world — which is precisely the
+// F1 catastrophe this exists to prevent, so the two must commit together
+// (invariant 6). The remote MIRROR is deliberately not touched here: a
+// repointed Drive root rebuilds it via remotedelta.ForceFullWalk, while a
+// recreated local dir has a perfectly good mirror already.
+func ResetBaseline(tx *sql.Tx) error {
+	if _, err := tx.Exec(`delete from items`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`delete from pending_ops`)
+	return err
+}
+
+// SetMetaTx writes a meta key inside tx, so an identity change (root folder id)
+// and the ResetBaseline that must accompany it commit atomically.
+func SetMetaTx(tx *sql.Tx, key, value string) error {
+	_, err := tx.Exec(`insert into meta (key, value) values (?, ?)
+		on conflict(key) do update set value = excluded.value`, key, value)
+	return err
+}
+
 // RenameItemPath moves a row (and, for directories, every descendant row)
 // from oldPath to newPath inside tx.
 func RenameItemPath(tx *sql.Tx, oldPath, newPath string) error {

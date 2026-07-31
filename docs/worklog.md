@@ -689,3 +689,11 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **One divergence from Dropbox stated and accepted:** Dropbox stops and prompts on a missing folder rather than auto-recreating. Max was asked with that on the table and kept auto-recreate; the unattended-re-download consequence is recorded.
 - **Unmount case unsupported by decision** — MANUAL §9 will say so **with the code**, not before it (doc claims are claims about code).
 - Docs updated and committed as the rule now requires for a plan change: plan.md W18 items D/E + not-in-scope list, decisions.md entry, status.md.
+
+### 2026-07-31 — W18 item C: ResetBaseline, the mechanism the workstream rests on
+> "let's go"
+- **`statedb.ResetBaseline(tx)`** empties `items` + `pending_ops`. Deliberately **not** the remote mirror: a repointed Drive root rebuilds it via `ForceFullWalk`, a recreated local sync dir already has a good one. Scoped to a `*sql.Tx` on purpose — it must commit in the **same transaction** as the identity change that motivates it, because a crash between the two leaves the old baseline pointing at the new root, which *is* the F1 catastrophe. Added `SetMetaTx` so the root-id write can join that transaction (`SetMeta` takes its own lock and cannot).
+- **Two statedb tests (W18.1):** the reset clears the right two tables and preserves the mirror + `machine_id`; and an injected failure after the reset rolls **both** halves back, leaving the old baseline with the old root id.
+- **Two reconcile tests (W18.2)** pin the property everything else is built on — §11's "an empty baseline structurally cannot produce a delete" — in the pure planner, both directions: a vanished local tree becomes downloads + mkdirs, a vanished remote tree becomes uploads + mkdirs, zero delete-class actions either way.
+- **Made non-vacuous by construction:** each case first asserts that with the baseline *intact* the same inputs plan deletes, and `t.Fatal`s if they don't. Both report 4 — the Drive-emptying case and F1 itself. A future change that stopped the baseline-intact path from planning deletes would fail the test rather than silently make it prove nothing.
+- Gates: `go build ./... && go vet ./... && go test ./...` green, `-race` on statedb + reconcile green, `make audit` green.
