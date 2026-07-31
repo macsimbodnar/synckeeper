@@ -114,7 +114,7 @@ func (m Model) header(t theme, w int) string {
 		mode := ds.Mode
 		if ds.Paused {
 			mode = "auto-sync suspended"
-		} else if b := m.snap.Live.backendLabel(); b != "" {
+		} else if b := m.snap.Live.backendLabel(); b != "" && mode != "" {
 			// The daemon's own answer, so this cannot claim "watching" while the
 			// loop is polling (W3-adv-3's honesty bug, kept out of the dashboard).
 			mode += " (" + b + ")"

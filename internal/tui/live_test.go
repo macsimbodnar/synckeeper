@@ -132,15 +132,23 @@ func TestRunningCycleIsTheTopLine(t *testing.T) {
 
 // TestPollingOnlyIsNamedHonestly: the header must not say "watching" when the
 // loop has fallen back to polling — the exact overstatement W3-adv-3 fixed for
-// `status`, which the dashboard must not reintroduce.
+// `status`, which the dashboard must not reintroduce. It must also say it
+// exactly once: the mode word already reads "polling-only", so appending the
+// backend label produced `polling-only (polling only)` (W15-U6).
 func TestPollingOnlyIsNamedHonestly(t *testing.T) {
 	m := liveModel(func(s *Snapshot) {
 		s.Status.Daemon.Mode = "polling-only"
 		s.Live = Live{Have: true, Backend: "polling", PollingOnly: true, NextTickAt: testRef().Add(125 * time.Second)}
 	})
-	got := m.View()
-	if !strings.Contains(got, "polling only") {
-		t.Errorf("a polling-only daemon is not named as such:\n%s", firstLines(got, 3))
+	header := firstLines(m.View(), 1)
+	if !strings.Contains(header, "polling") {
+		t.Errorf("a polling-only daemon is not named as such:\n%s", header)
+	}
+	if strings.Contains(header, "watching") {
+		t.Errorf("the header claims watching while the loop is polling:\n%s", header)
+	}
+	if n := strings.Count(header, "polling"); n != 1 {
+		t.Errorf("polling is named %d times in the header, want once:\n%s", n, header)
 	}
 }
 
@@ -167,7 +175,7 @@ func TestBackendLabel(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"fsevents", "FSEvents"},
 		{"fsnotify", "inotify/kqueue"},
-		{"polling", "polling only"},
+		{"polling", ""}, // the header's mode word already says polling-only
 		{"something-new", "something-new"},
 	} {
 		if got := (Live{Have: true, Backend: c.in}).backendLabel(); got != c.want {
@@ -176,6 +184,9 @@ func TestBackendLabel(t *testing.T) {
 	}
 	if got := (Live{Backend: "fsevents"}).backendLabel(); got != "" {
 		t.Errorf("with Have false the label must be empty, got %q", got)
+	}
+	if got := (Live{Have: true, Backend: "fsnotify", PollingOnly: true}).backendLabel(); got != "" {
+		t.Errorf("a polling-only daemon has no backend to name, got %q", got)
 	}
 }
 

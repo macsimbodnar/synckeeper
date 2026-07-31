@@ -40,10 +40,14 @@ type Live struct {
 	StageActions int
 }
 
-// backendLabel names the watch mode for humans. Empty when unknown, so the
-// header can simply omit it.
+// backendLabel names the watch backend for humans. Empty when there is none to
+// name — the daemon has not answered, or it is polling — so the header can
+// simply omit it. The header appends this to the daemon's own mode word, and
+// the mode already says "polling-only"; naming it twice produced the reading
+// `polling-only (polling only)`, in exactly the degraded state a user most
+// needs to read cleanly (W15-U6).
 func (l Live) backendLabel() string {
-	if !l.Have {
+	if !l.Have || l.PollingOnly {
 		return ""
 	}
 	switch l.Backend {
@@ -52,7 +56,7 @@ func (l Live) backendLabel() string {
 	case "fsnotify":
 		return "inotify/kqueue"
 	case "polling":
-		return "polling only"
+		return ""
 	default:
 		return l.Backend
 	}

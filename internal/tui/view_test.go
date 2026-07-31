@@ -121,6 +121,14 @@ func frames(ref time.Time) map[string]Model {
 	ns.Status.Activity = nil
 	never.Snapshot = ns
 
+	// The degraded watch state: the daemon's mode word already says
+	// polling-only, so the header must not name a backend as well (W15-U6).
+	polling := base
+	pos := testSnapshot(ref)
+	pos.Status.Daemon.Mode = "polling-only"
+	pos.Live = Live{Have: true, Backend: "polling", PollingOnly: true, Poll: 45 * time.Second}
+	polling.Snapshot = pos
+
 	paused := base
 	ps := testSnapshot(ref)
 	ps.Status.Daemon.Paused = true
@@ -181,6 +189,7 @@ func frames(ref time.Time) map[string]Model {
 		"overview_stale":     New(stale),
 		"overview_neverrun":  New(never),
 		"overview_paused":    New(paused),
+		"overview_polling":   New(polling),
 	}
 }
 
