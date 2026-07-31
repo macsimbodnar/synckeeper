@@ -30,7 +30,7 @@ func TestInitializeCreatesFolderAndMeta(t *testing.T) {
 	db := openTestDB(t)
 	cfg := config.Default()
 
-	if _, err := initialize(ctx, fake, db, cfg, false); err != nil {
+	if _, err := initialize(ctx, fake, db, cfg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -64,7 +64,7 @@ func TestInitializeAdoptsExistingFolder(t *testing.T) {
 
 	// An existing but EMPTY folder is reused without --adopt (no content to
 	// merge, so no risk of joining someone else's data unknowingly).
-	if _, err := initialize(ctx, fake, db, config.Default(), false); err != nil {
+	if _, err := initialize(ctx, fake, db, config.Default()); err != nil {
 		t.Fatal(err)
 	}
 	rootID, _ := db.GetMeta(statedb.MetaRootFolderID)
@@ -86,11 +86,11 @@ func TestInitializeAdoptsExistingFolder(t *testing.T) {
 func TestInitializeKeepsMachineID(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	if _, err := initialize(ctx, driveclient.NewFake(), db, config.Default(), false); err != nil {
+	if _, err := initialize(ctx, driveclient.NewFake(), db, config.Default()); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := db.GetMeta(statedb.MetaMachineID)
-	if _, err := initialize(ctx, driveclient.NewFake(), db, config.Default(), false); err != nil {
+	if _, err := initialize(ctx, driveclient.NewFake(), db, config.Default()); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := db.GetMeta(statedb.MetaMachineID)
@@ -99,9 +99,13 @@ func TestInitializeKeepsMachineID(t *testing.T) {
 	}
 }
 
-// A Drive folder that already holds files is refused without --adopt, and
-// nothing is persisted so an --adopt retry works. With --adopt it proceeds.
-func TestInitializeRefusesNonEmptyWithoutAdopt(t *testing.T) {
+// W18-B: `init` no longer refuses a non-empty Drive folder — joining one is a
+// union merge that cannot delete (spec §11), so making the user assert the
+// intention with --adopt only ever taught them to pass a flag unread. The
+// replacement property is stronger and is what a user would notice: joining
+// succeeds, resolves the EXISTING folder rather than minting one, and is
+// idempotent across repeated runs.
+func TestInitializeJoinsNonEmptyFolderIdempotently(t *testing.T) {
 	ctx := context.Background()
 	fake := driveclient.NewFake()
 	folder, err := fake.Mkdir(ctx, driveclient.FakeRootID, "Synckeeper")
@@ -113,33 +117,38 @@ func TestInitializeRefusesNonEmptyWithoutAdopt(t *testing.T) {
 	}
 
 	db := openTestDB(t)
-	if _, err := initialize(ctx, fake, db, config.Default(), false); err == nil {
-		t.Fatal("want error joining a non-empty folder without --adopt")
+	got, err := initialize(ctx, fake, db, config.Default())
+	if err != nil {
+		t.Fatalf("init must join a non-empty folder, not refuse: %v", err)
 	}
-	// The property this ever cared about is that the --adopt retry is clean,
-	// not that nothing was written. Since W18-A the refusal DOES leave the
-	// resolved root id behind, and that is correct: resolution is id-first, so
-	// the retry finds the same folder instead of racing to name it again. The
-	// assertion moved to the property (same folder, no baseline invented),
-	// which is what a user would notice and is strictly harder to satisfy by
-	// accident than "the key is absent". (decisions.md 2026-07-31 W18-A.)
-	if id, _ := db.GetMeta(statedb.MetaRootFolderID); id != folder.ID {
-		t.Errorf("after the refusal root_folder_id = %q, want the existing folder %s — a retry must not resolve somewhere else", id, folder.ID)
-	}
-	if n, err := db.ItemCount(); err != nil || n != 0 {
-		t.Errorf("refusal left %d baseline rows (%v); it must invent none", n, err)
+	if got != folder.ID {
+		t.Errorf("resolved %s, want the existing folder %s", got, folder.ID)
 	}
 
-	// --adopt proceeds.
-	if _, err := initialize(ctx, fake, db, config.Default(), true); err != nil {
-		t.Fatalf("--adopt should join a non-empty folder: %v", err)
+	// Re-running changes nothing: same folder, no second folder on Drive.
+	again, err := initialize(ctx, fake, db, config.Default())
+	if err != nil {
+		t.Fatalf("re-running init must be a no-op, not an error: %v", err)
 	}
-	if id, _ := db.GetMeta(statedb.MetaRootFolderID); id != folder.ID {
-		t.Errorf("root folder id = %s, want %s", id, folder.ID)
+	if again != folder.ID {
+		t.Errorf("second run resolved %s, want %s", again, folder.ID)
+	}
+	children, err := fake.List(ctx, driveclient.FakeRootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folders := 0
+	for _, c := range children {
+		if c.IsDir() && c.Name == "Synckeeper" {
+			folders++
+		}
+	}
+	if folders != 1 {
+		t.Errorf("%d folders named Synckeeper on Drive, want 1 — re-init must not mint another", folders)
 	}
 }
 
-// R3 regression (2026-07-17, testing.md): `init --force` must rebuild the
+// R3 regression (2026-07-17, testing.md): a re-run of `init` must rebuild the
 // remote mirror. Resetting only the page token silently skipped every remote
 // change made since the last consumed batch: the stale mirror said "remote
 // unchanged", the newer revision was never downloaded, and a later local
@@ -150,7 +159,7 @@ func TestR3ForceReinitSeesPriorRemoteChanges(t *testing.T) {
 	db := openTestDB(t)
 	cfg := config.Default()
 
-	rootID, err := initialize(ctx, fake, db, cfg, false)
+	rootID, err := initialize(ctx, fake, db, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,9 +184,9 @@ func TestR3ForceReinitSeesPriorRemoteChanges(t *testing.T) {
 	if _, err := fake.Update(ctx, remote.ID, strings.NewReader("v2-remote"), 9); err != nil {
 		t.Fatal(err)
 	}
-	// …then the user re-inits (`init --force --adopt`: force passes the
-	// reinit gate, adopt passes the non-empty-folder gate) and syncs.
-	if _, err := initialize(ctx, fake, db, cfg, true); err != nil {
+	// …then the user re-inits and syncs. Since W18-B that needs no flags:
+	// `init` is idempotent and always merges.
+	if _, err := initialize(ctx, fake, db, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if res, err := eng.Sync(ctx, engine.Options{}); err != nil || res.Failed > 0 {
@@ -189,30 +198,14 @@ func TestR3ForceReinitSeesPriorRemoteChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != "v2-remote" {
-		t.Errorf("f.txt = %q after force re-init; the pre-reinit remote edit was silently dropped (want %q)", got, "v2-remote")
-	}
-}
-
-func TestRefuseReinit(t *testing.T) {
-	db := openTestDB(t)
-	if err := refuseReinit(db, false); err != nil {
-		t.Fatalf("fresh db: %v", err)
-	}
-	if err := db.SetMeta(statedb.MetaRootFolderID, "x"); err != nil {
-		t.Fatal(err)
-	}
-	if err := refuseReinit(db, false); err == nil {
-		t.Fatal("initialized db without --force: want error")
-	}
-	if err := refuseReinit(db, true); err != nil {
-		t.Fatalf("initialized db with --force: %v", err)
+		t.Errorf("f.txt = %q after re-init; the pre-reinit remote edit was silently dropped (want %q)", got, "v2-remote")
 	}
 }
 
 func TestInitializeSurfacesClientErrors(t *testing.T) {
 	// A fake with no root folder makes List fail; initialize must propagate.
 	db := openTestDB(t)
-	_, err := initialize(context.Background(), brokenClient{}, db, config.Default(), false)
+	_, err := initialize(context.Background(), brokenClient{}, db, config.Default())
 	if err == nil {
 		t.Fatal("want error from broken client")
 	}

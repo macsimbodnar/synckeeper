@@ -25,10 +25,10 @@ import (
 )
 
 func newInitCmd() *cobra.Command {
-	var force, adopt, installService, noService bool
+	var installService, noService bool
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Authenticate, find or create the Drive folder, and create the state DB",
+		Short: "Set up (or re-sync) this machine against the Drive folder; safe to re-run",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -62,20 +62,24 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			defer db.Close()
-			if err := refuseReinit(db, force); err != nil {
-				return err
-			}
 
-			ts, err := auth.Login(ctx, configDir)
+			// `init` is idempotent (W18-B), which makes it the recovery
+			// command too — so it must not drag the user through a browser
+			// every time. A stored token that still works is used as-is; the
+			// interactive flow runs only when there is none. `login` remains
+			// the way to force a fresh one.
+			ts, err := auth.TokenSource(ctx, configDir)
 			if err != nil {
-				return err
+				if ts, err = auth.Login(ctx, configDir); err != nil {
+					return err
+				}
 			}
 			client, err := driveclient.New(ctx, ts)
 			if err != nil {
 				return err
 			}
 
-			rootID, err := initialize(ctx, client, db, cfg, adopt)
+			rootID, err := initialize(ctx, client, db, cfg)
 			if err != nil {
 				return err
 			}
@@ -89,24 +93,29 @@ func newInitCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Initialized.\n  drive folder: %q (id %s)\n  sync dir:     %s\n  config:       %s\n",
-				cfg.Drive.FolderName, rootID, syncDir, cfgPath)
+				root.Name(db, cfg.Drive.FolderName), rootID, syncDir, cfgPath)
 
-			if adopt {
-				fmt.Println("Adopting: merging existing Drive contents with the local folder (nothing is deleted)…")
-				eng := &engine.Engine{
-					DB: db, Client: client, Cfg: cfg, SyncDir: syncDir,
-					QuarantineDir: filepath.Join(configDir, "quarantine"), RootID: rootID,
-				}
-				res, err := eng.Sync(ctx, engine.Options{})
-				if res != nil {
-					printAdoptResult(res)
-				}
-				if err != nil {
-					return fmt.Errorf("adopt merge: %w", err)
-				}
-				if res.Failed > 0 {
-					return fmt.Errorf("%d of %d merge actions failed; re-run `synckeeper sync`", res.Failed, len(res.Plan))
-				}
+			// Always merge (W18-B). This was `--adopt`; it is now what `init`
+			// does, because it is the only correct answer in every case and
+			// the flag only ever asked the user to confirm the obvious. A
+			// union merge over the existing baseline uploads what is local,
+			// downloads what is remote, pairs identical content, and conflicts
+			// the rest — it cannot delete (spec §11), so it is safe to re-run
+			// and safe as the recovery path for a lost DB.
+			fmt.Println("Merging this machine with the Drive folder (union; nothing is deleted)…")
+			eng := &engine.Engine{
+				DB: db, Client: client, Cfg: cfg, SyncDir: syncDir,
+				QuarantineDir: filepath.Join(configDir, "quarantine"), RootID: rootID,
+			}
+			res, err := eng.Sync(ctx, engine.Options{})
+			if res != nil {
+				printMergeResult(res)
+			}
+			if err != nil {
+				return fmt.Errorf("merge: %w", err)
+			}
+			if res.Failed > 0 {
+				return fmt.Errorf("%d of %d merge actions failed; re-run `synckeeper sync`", res.Failed, len(res.Plan))
 			}
 
 			// Daemon-first onboarding (spec §1): offer to install the login
@@ -127,16 +136,14 @@ func newInitCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "re-initialize even if a state DB already exists")
-	cmd.Flags().BoolVar(&adopt, "adopt", false, "join an existing non-empty Drive folder by merging both sides (union; nothing deleted)")
 	cmd.Flags().BoolVar(&installService, "service", false, "install the login service after init without prompting")
 	cmd.Flags().BoolVar(&noService, "no-service", false, "skip the login-service offer (wins over --service)")
 	return cmd
 }
 
-// printAdoptResult summarizes the first-merge sync: what came down, what went
-// up, what already matched, and any conflict copies kept.
-func printAdoptResult(res *engine.Result) {
+// printMergeResult summarizes init's merge: what came down, what went up,
+// what already matched, and any conflict copies kept.
+func printMergeResult(res *engine.Result) {
 	var down, up, adopted, conflicts int
 	var conflictPaths []string
 	for _, a := range res.Plan {
@@ -164,32 +171,16 @@ func printAdoptResult(res *engine.Result) {
 	}
 }
 
-// refuseReinit blocks init when the DB already tracks a Drive folder,
-// unless --force is given.
-func refuseReinit(db *statedb.DB, force bool) error {
-	_, err := db.GetMeta(statedb.MetaRootFolderID)
-	switch {
-	case errors.Is(err, statedb.ErrNotFound):
-		return nil
-	case err != nil:
-		return err
-	case force:
-		return nil
-	default:
-		return errors.New("already initialized (state DB has a root folder); use --force to re-initialize")
-	}
-}
-
 // initialize performs the Drive-side setup through the client interface so
 // it can be tested against the fake: resolve the sync folder, fetch the
 // changes start token, and record both plus a stable machine id. It returns
 // the folder id.
 //
-// If the folder already holds files and adopt is false it refuses, so a user
-// can't silently join an existing Drive folder — joining is an explicit
-// `--adopt`. Nothing is persisted on that refusal, so re-running with
-// --adopt works cleanly.
-func initialize(ctx context.Context, client driveclient.Client, db *statedb.DB, cfg config.Config, adopt bool) (string, error) {
+// It never refuses. `--adopt` and `--force` are gone (W18-B): joining a
+// non-empty Drive folder is a union merge that cannot delete (spec §11), so
+// making the user assert an intention first only ever taught them to pass a
+// flag without reading it. Re-running over a live install is a no-op.
+func initialize(ctx context.Context, client driveclient.Client, db *statedb.DB, cfg config.Config) (string, error) {
 	// Id-first (W18-A): a stored root id wins whatever the folder is called
 	// now, so a rename in the Drive web UI is recorded rather than acted on.
 	// Only a genuinely absent folder is created — and then the baseline is
@@ -199,17 +190,9 @@ func initialize(ctx context.Context, client driveclient.Client, db *statedb.DB, 
 		return "", err
 	}
 	if res.Created {
-		// A folder we just made is empty: nothing to refuse over, and
-		// Resolve already walked the mirror.
+		// A folder we just made is empty, and Resolve already walked the
+		// mirror; there is nothing to rebuild.
 		return res.ID, ensureMachineID(db)
-	}
-	children, err := client.List(ctx, res.ID)
-	if err != nil {
-		return "", err
-	}
-	if len(children) > 0 && !adopt {
-		return "", fmt.Errorf("Drive folder %q already contains %d item(s); re-run `synckeeper init --adopt` to join it by merging both sides (union; nothing is deleted)",
-			res.Name, len(children))
 	}
 	// Rebuild the remote mirror together with a fresh page token. Resetting
 	// only the token would silently skip every remote change since the last

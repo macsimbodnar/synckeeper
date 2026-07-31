@@ -719,3 +719,13 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **The surviving distinction, stated in both tests:** the folder *itself* gone (F5 → recreated, never propagated) versus the folder's *contents* gone (G2 → ordinary §4.2 deletion).
 - Docs same commit: spec §3 invariant 4 (amended, dated, with the accepted costs), §6's sync-dir bullet, §16.3 and §16.4; MANUAL §6 (two lines replacing the old sanity-guard bullet) and §9 (the unsupported single-folder-mount configuration — landing **with** the code, not before it); testing.md W18.5 + re-targeted F5/G2 rows.
 - Gates: build, vet, full suite (22/22 packages), `make audit` — green.
+
+### 2026-07-31 — W18 item B: `init` is flagless and idempotent
+> "next"
+- **`--adopt` and `--force` removed.** `refuseReinit` deleted, and `initialize`'s "already contains N item(s)" refusal with it. `init` now always runs the union merge — the old `--adopt` path — because it cannot delete (§11) and is therefore the only correct answer in every case; the flag only ever taught the user to pass something unread. `--service`/`--no-service` stay, since scripted onboarding needs them.
+- **One thing the plan did not call out, added because an idempotent command demands it:** `init` no longer forces a browser sign-in every run. It reuses a stored token via `auth.TokenSource` and falls back to `auth.Login` only when there is none. Without this, "safe to re-run" and "the fix for a lost DB" would have meant re-authenticating each time, and `login` already exists to force a fresh flow.
+- **DOC1 golden guard did its job:** dropping the two flags failed `TestCLISurfaceMatchesManifest` until the manifest, MANUAL §3 and spec §15 moved in this commit.
+- **Two tests retired with the flags they pinned**, replaced by a stronger property: `TestInitializeJoinsNonEmptyFolderIdempotently` asserts that joining succeeds, resolves the *existing* folder rather than minting one, and that a second run leaves exactly one `Synckeeper` folder on Drive. `TestRefuseReinit` is gone outright — it tested a gate that no longer exists.
+- **R3 kept, re-worded:** its scenario (a re-init must rebuild the mirror, or a pre-reinit remote edit is silently dropped) is unchanged and still passes; only its `--force --adopt` narration needed updating.
+- Docs same commit: MANUAL §1 (idempotent, never deletes), §2 (second machine runs the same command — there is no join mode), §3 (init row), §7 (a lost DB is fixed by `init`, not `doctor --repair`); spec §11 and §15 both dated; testing.md W18.6.
+- Gates: build, vet, full suite, `make audit` — green.

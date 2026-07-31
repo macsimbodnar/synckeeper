@@ -13,10 +13,12 @@ Keeps **one local folder** ↔ **one Google Drive folder** identical, both direc
 Needs a binary for your machine (README — `make build`, Go 1.26+; macOS primary today) **and your own Google OAuth `credentials.json`** in the config dir — set that up **first** (§5).
 
 ```sh
-synckeeper init          # opens your browser for Google sign-in, creates the
-                         # Drive folder ("Synckeeper") and the local one (~/Synckeeper),
+synckeeper init          # signs you in via the browser, creates the Drive folder
+                         # ("Synckeeper") and the local one (~/Synckeeper),
                          # then offers to keep syncing at login
 ```
+
+`init` is **idempotent** — re-run it any time. It never deletes: it merges both sides (local-only → upload, remote-only → download, identical → paired up, different → conflict copy).
 
 `init` ends with **`Start Synckeeper automatically at login? [Y/n]`** — yes installs the login service (background sync from now on). `--service` / `--no-service` skip the prompt (scripts/pipes get no prompt; it prints how to install later).
 
@@ -31,11 +33,10 @@ First sign-in on your own unpublished client shows Google's **"unverified app" w
 Second machine, after installing the binary:
 
 ```sh
-synckeeper init --adopt      # join the existing non-empty Drive folder,
-                             # then offers to keep syncing at login
+synckeeper init      # joins the existing Drive folder and merges both sides
 ```
 
-Same login-service offer as a first-machine `init`. `--adopt` union-merges: local-only → upload, remote-only → download, identical → pair up, differ on both → conflict copy. **Adoption never deletes.** Plain `init` refuses a non-empty Drive folder and points at `--adopt`.
+Same command as the first machine — there is no separate "join" mode. The union merge is local-only → upload, remote-only → download, identical → pair up, differ on both → conflict copy. **Joining never deletes**, so re-running it is always safe.
 
 ## 3. Command reference
 
@@ -43,7 +44,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 
 | Command | What it does |
 |---|---|
-| `init [--force] [--adopt] [--service\|--no-service]` | Authenticate, find/create the Drive folder, create local state, then offer the login service (§1). Takes the instance lock — stop the login service first if it's running (§7). `--force`: re-init over an existing state DB. `--adopt`: §2. `--service`/`--no-service`: install/skip the login service without prompting. |
+| `init [--service\|--no-service]` | Set up this machine, or re-sync it: signs in if needed, resolves the Drive folder, merges both sides (union — nothing deleted), then offers the login service (§1). **Safe to re-run** — it is also the fix for a lost state DB (§7). Takes the instance lock — stop the login service first if it's running (§7). `--service`/`--no-service`: install/skip the login service without prompting. |
 | `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Stop the daemon first — `login` takes the instance lock, because a running daemon holds the old token in memory. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon runs, delegated to it and awaited. `--dry-run`: print the plan, change nothing (needs daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously, foreground: local changes picked up under a second, remote within the poll interval. |
@@ -119,7 +120,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 | Daemon logs auth failures / token expired or revoked | Stop the daemon → `synckeeper login` → restart it. |
 | `login`/`init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run the `login`/`init`, then reinstall the service. |
 | Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). The service runs `watch`, which can't sign in by itself: if you've never signed in, `synckeeper service uninstall` → `synckeeper init` → reinstall. |
-| State DB lost or corrupted | Stop the daemon, then `synckeeper doctor --repair` — rebuilds metadata, re-adopts matching files; next `sync` re-uploads/downloads the rest. Never deletes. |
+| State DB lost or corrupted | Stop the daemon, then `synckeeper init` — it re-resolves the Drive folder and merges both sides. Cannot delete: the rebuilt baseline starts empty, so every file is an upload or a download. |
 | Need a deleted file back | Check your system bin (a folder comes back whole), then Drive's bin. On a platform with no system bin, the quarantine folder (`<config dir>/quarantine/<date>/…`). Bins are not forever — Drive's empties after ~30 days, and your desktop's may too. |
 | Deleted a lot and want to see what went | `synckeeper activity` — a large deletion leaves a `deleted` line with the count and the destination. |
 | Something looks off | `synckeeper status -v`, then stop the daemon and run `synckeeper doctor` (read-only cross-check; it takes the instance lock). |

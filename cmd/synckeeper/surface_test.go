@@ -27,7 +27,7 @@ func TestCLISurfaceMatchesManifest(t *testing.T) {
 	// tree before Execute(), when cobra hasn't materialized them yet — so we
 	// materialize them explicitly below (decisions.md 2026-07-25).
 	want := map[string][]string{
-		"init":       {"adopt", "force", "no-service", "service"},
+		"init":       {"no-service", "service"},
 		"login":      {},
 		"status":     {"interval", "json", "plain"},
 		"activity":   {"number"},
