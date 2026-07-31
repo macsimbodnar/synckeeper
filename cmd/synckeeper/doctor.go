@@ -72,6 +72,10 @@ func printReport(r *doctor.Report, repaired bool) {
 	section("remote files not yet tracked", r.RemoteOnly)
 	section("rows whose remote file is missing", r.RemoteMissing)
 	section("orphan temp files", r.OrphanTemps)
+	if len(r.DriveDuplicates) > 0 {
+		section("same name twice in one Drive folder (only the first is synced)", r.DriveDuplicates)
+		fmt.Println("  fix these in the Drive web UI: keep the copy you want, bin the other.")
+	}
 	if r.StaleOps > 0 {
 		fmt.Printf("stale pending ops: %d (will be replanned on next sync)\n", r.StaleOps)
 	}

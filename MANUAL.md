@@ -4,7 +4,7 @@ How to *use* Synckeeper. (Build / dev / design docs → [README.md](README.md).)
 
 Keeps **one local folder** ↔ **one Google Drive folder** identical, both directions. Many machines sync against the same Drive folder (the hub + durable copy). Runs as a background daemon; **never silently loses or corrupts a file**: deletes → Drive bin + your system bin (never permanent); conflicting edits → conflict copy (never last-writer-wins); edit always beats delete.
 
-**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-07-30.
+**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-07-31.
 
 ---
 
@@ -54,7 +54,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 | `config` | Print the effective config and the file it's read from. |
 | `account` | Token status, which OAuth client is active (embedded default or your own), and the signed-in Google account (email via one `about.get`; online only, skipped offline). |
 | `info [--json]` | **Scriptable** (and the pre-`init` dump). One-shot static snapshot: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json` — both with their permission mode, flagged when other users can read them; `control.sock`, quarantine, system bin, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; local state (tracked items, pending ops, quarantine). Read-only, offline (email → `account`), works before `init`. `--json` for scripts. |
-| `doctor [--repair]` | Cross-check state DB vs disk vs Drive; reports the system-bin destination. `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites. |
+| `doctor [--repair]` | Cross-check state DB vs disk vs Drive; reports the system-bin destination, and names any Drive folder holding **the same name twice** (Drive allows it, a filesystem doesn't — only the first is synced; fix it in the Drive web UI). `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites, so it leaves both copies of a duplicated name alone. |
 | `service install\|uninstall\|status` | Manage the login service running `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, kept owner-only `0600` since it records synced file names). `install` then checks whether the daemon actually started and names the likely cause (e.g. missing `credentials.json`) if not. |
 | `help [command]` | Usage help for Synckeeper or a specific command (built-in). |
 | `completion <bash\|zsh\|fish\|powershell>` | Print a shell autocompletion script (built-in); `synckeeper completion <shell> --help` shows how to install it. |
@@ -124,14 +124,12 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 ## 8. Known bugs
 
-Confirmed and reproduced. Three groups: the deferred **"directory arm"** of the local-write gate (two facets, below), a **duplicate-on-Drive** case after a killed upload, and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+Confirmed and reproduced. Two groups: the deferred **"directory arm"** of the local-write gate (two facets, below) and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
 
 The directory arm — case-only names and renames for *directories and existing files*, a recorded follow-up:
 
 - **Same-name folder in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *New* files with such names resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine. *Workaround: avoid folder names differing only in case/accents.*
 - **Renaming an existing file to differ only in case/accents (`a.txt` → `A.txt`) makes your *other* machines retry that rename every cycle** — `status` shows a repeated failure; the file stays safe on both sides, its name just doesn't update elsewhere. Same deferred root cause (the case-only-rename arm of the gate). *Workaround: also edit the file's contents when you change its case — it then converges after a transient retry instead of looping.*
-
-- **Found 2026-07-30 (not yet fixed): if the daemon is killed *during* an upload, that file can end up on Drive twice — and the older copy can win.** Needs the kill to land after Google stored the file but before Synckeeper recorded it, plus Google's change feed not yet reporting it when the daemon restarts and retries. Drive allows two files with the same name in one folder; Synckeeper then keeps the **first by file id**, which is the older copy, and reports the other as a skipped duplicate — so your machines can show the older content while the newer sits in the Drive web UI. **Nothing is deleted** — both copies are on Drive. *If you hit it: open the folder in the Drive web UI, keep the copy you want and bin the other; the machines follow within a poll interval. To avoid it: stop the daemon (`synckeeper service stop`, or `p` in `status`) rather than killing it while a large file is uploading.*
 
 - **Under investigation (found 2026-07-25 on Linux): a folder deleted in Drive can be *re-uploaded* by another machine instead of being removed.** Observed once on a freshly adopted Linux machine: a tracked folder moved to the Drive bin was not removed locally, and the daemon then attempted to upload part of the tree back to Drive. Every one of those uploads **failed** and nothing reached Drive (they showed as `error upload …: no such file or directory` in `activity` — the local-write gate refusing files that no longer existed). The same deletion propagated correctly on the other (macOS) machine, and the normal path is covered by a passing regression test, so the trigger is machine-state-specific and not yet identified — the suspect is a `init --adopt` that was still running when the login service first tried to start, leaving part of the tree on disk but untracked. (The mass-delete guard was investigated as part of this and found correct; it has since been narrowed — §6 — so it no longer holds recoverable deletions at all.) *Nothing was lost* (Drive's bin and the other machine's rescue copy both held the content; that machine used the quarantine, which was the destination before the system bin replaced it). *If you hit it: check `synckeeper status` on every machine before deleting a large folder, and prefer deleting it on a machine's filesystem rather than in the Drive web UI until this is fixed.*
 

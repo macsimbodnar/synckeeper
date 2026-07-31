@@ -124,6 +124,7 @@ var crashCheckpoints = []string{
 	executor.CPDownloadTempWritten,
 	executor.CPDownloadBeforeCommit,
 	executor.CPQuarantineBeforeMove,
+	executor.CPMkdirBeforeCommit, // W17: a folder on Drive with no row yet
 }
 
 func TestFuzzConvergence(t *testing.T) {

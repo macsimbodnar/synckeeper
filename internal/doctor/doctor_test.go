@@ -240,3 +240,53 @@ func TestRepairIsIdempotentOnHealthyWorld(t *testing.T) {
 	}
 	_ = rep
 }
+
+// W17: Drive allows two items with one name in one folder; a filesystem does
+// not, so synckeeper keeps the first by file id and the shadowed one is
+// invisible on every machine. That state is only reported per-cycle as a skip
+// today, and the daemon never surfaces skips (W10) — so `doctor` names it.
+func TestCheckReportsDriveDuplicateNames(t *testing.T) {
+	w := newWorld(t)
+	w.write(t, "keep.txt", "synced")
+	w.sync(t)
+
+	// A second Drive file with the same name as a tracked one — the shape a
+	// crashed upload used to leave behind (W17), and the shape a user can
+	// also create by hand in the Drive web UI.
+	if _, err := w.fake.Upload(context.Background(), w.rootID, "keep.txt", strings.NewReader("the shadowed copy"), 17); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := w.doctor().Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.DriveDuplicates) != 1 || rep.DriveDuplicates[0] != "keep.txt" {
+		t.Errorf("DriveDuplicates = %v, want [keep.txt]", rep.DriveDuplicates)
+	}
+	if rep.Healthy() {
+		t.Error("a folder holding one name twice is not healthy")
+	}
+	// Reported, never repaired: choosing a winner is the user's call, and
+	// --repair only ever adds (spec §12).
+	rep2, err := w.doctor().Repair(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep2.DriveDuplicates) != 1 {
+		t.Errorf("repair changed the duplicate report: %v", rep2.DriveDuplicates)
+	}
+	kids, err := w.fake.List(context.Background(), w.rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, k := range kids {
+		if k.Name == "keep.txt" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("repair removed something: %d nodes named keep.txt, want both still there", n)
+	}
+}

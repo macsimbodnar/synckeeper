@@ -14,10 +14,13 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/executor"
+	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
 // The delete-class check is assertNoDeletes, shared with the adopt tests.
@@ -207,25 +210,17 @@ func TestW16LocalDeleteThenImmediateCycleStaysDeleted(t *testing.T) {
 	assertMirrorCoversBaseline(t, a)
 }
 
-// W17 (open, Max's call — plan.md W17, decisions.md 2026-07-30 "A crashed
-// upload plus a lagging feed mints a duplicate on Drive"): a crash between
-// Drive storing an upload and the commit rolls both rows back by design
-// (invariant 6), so the replan has no record of it — and while the change
-// feed has not reported it either, the replan uploads a SECOND copy under
-// the same name. Drive allows same-name siblings, so both survive: §5's
-// "first by id wins" then keeps the older one and shadows the newer, which
-// can revert every machine to older content.
+// W17: a crash between Drive storing an upload and the commit rolls both rows
+// back by design (invariant 6), so the replan has no record of it — and while
+// the change feed has not reported it either, the replan used to upload a
+// SECOND copy under the same name. Drive allows same-name siblings, so both
+// survived: §5's "first by id wins" then kept the older one and shadowed the
+// newer, reverting every machine to older content.
 //
-// Out of W16's scope: W16 is about writes that DID commit. Closing this one
-// changes the §4.6 crash-resume contract (the discarded pending-op journal
-// would have to be consulted, or every upload would have to check the parent
-// listing first), which is a design decision, not an implementation detail.
-//
-// Kept in-tree and skipped so the reproduction is not re-derived: unskip it
-// with the fix and it is the red test.
+// The fix does not adopt the orphan itself — it seeds the mirror with it and
+// lets §4.2 decide (decisions.md 2026-07-30). Here the content is identical,
+// so the table adopts and plans nothing.
 func TestW17CrashedUploadWithheldFeedMintsDuplicate(t *testing.T) {
-	t.Skip("open defect: see plan.md W17 — unskip with the fix")
-
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 	a.write(t, "anchor.txt", "anchor")
@@ -263,6 +258,169 @@ func TestW17CrashedUploadWithheldFeedMintsDuplicate(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("Drive holds %d nodes named dup.txt, want 1: the replan re-uploaded a file Drive already had", n)
+	}
+	if got := a.read(t, "dup.txt"); got != "v1" {
+		t.Errorf("content = %q", got)
+	}
+	// And the orphan is now ordinary tracked state, not a special case.
+	fake.HoldChanges(false)
+	if res := a.syncRaw(t); len(res.Plan) != 0 {
+		t.Errorf("the caught-up feed replanned %d actions: %v", len(res.Plan), res.Plan)
+	}
+	assertMirrorCoversBaseline(t, a)
+}
+
+// W17: the same crash for a remote MKDIR — the other non-idempotent Drive
+// call, and the worse one: a shadowed duplicate folder makes every file
+// uploaded into it invisible to the other machines.
+func TestW17CrashedMkdirWithheldFeedMakesNoDuplicateFolder(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+	a.write(t, "anchor.txt", "anchor")
+	a.syncRaw(t)
+
+	a.write(t, "photos/holiday.jpg", "bytes")
+	fake.HoldChanges(true)
+
+	var fired atomic.Bool
+	executor.FaultHook = func(name string) error {
+		if name == executor.CPMkdirBeforeCommit && fired.CompareAndSwap(false, true) {
+			return errors.New("injected crash at " + name)
+		}
+		return nil
+	}
+	if _, err := a.eng.Sync(context.Background(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	executor.FaultHook = nil
+	// The crash shape: the folder is on Drive, no row records it, the feed
+	// is quiet. Assert that rather than assume it.
+	kids, err := fake.List(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := countNamed(kids, "photos"); n != 1 {
+		t.Fatalf("setup: Drive holds %d folders named photos, want the crashed run's 1", n)
+	}
+	for _, it := range mustItems(t, a) {
+		if it.RelPath == "photos" {
+			t.Fatalf("setup: the crash still committed a row for photos")
+		}
+	}
+
+	if _, err := a.eng.Sync(context.Background(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	kids, err = fake.List(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := countNamed(kids, "photos"); n != 1 {
+		t.Errorf("Drive holds %d folders named photos, want 1: the replan re-created a folder Drive already had", n)
+	}
+
+	// And it converges once the feed catches up, with the file inside it.
+	fake.HoldChanges(false)
+	a.syncRaw(t)
+	res := a.syncRaw(t)
+	if len(res.Plan) != 0 {
+		t.Errorf("still replanning %d actions: %v", len(res.Plan), res.Plan)
+	}
+	assertMirrorCoversBaseline(t, a)
+	if got := a.read(t, "photos/holiday.jpg"); got != "bytes" {
+		t.Errorf("content = %q", got)
+	}
+}
+
+func countNamed(files []driveclient.File, name string) int {
+	n := 0
+	for _, f := range files {
+		if f.Name == name {
+			n++
+		}
+	}
+	return n
+}
+
+func mustItems(t *testing.T, m *machine) []statedb.Item {
+	t.Helper()
+	items, err := m.db.AllItems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return items
+}
+
+// W17: the seeding is safe when the same-name item is NOT ours — a file the
+// user created in the Drive web UI with different content. Seeding it is
+// still right: §4.2's "absent | new | new, diff md5" row conflicts it, which
+// is exactly what that deserves. No duplicate, no silent overwrite.
+func TestW17SeededStrangerBecomesAConflictNotADuplicate(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+	a.write(t, "anchor.txt", "anchor")
+	a.syncRaw(t)
+
+	a.write(t, "notes.txt", "mine")
+	fake.HoldChanges(true)
+
+	var fired atomic.Bool
+	executor.FaultHook = func(name string) error {
+		if name == executor.CPUploadBeforeCommit && fired.CompareAndSwap(false, true) {
+			return errors.New("injected crash at " + name)
+		}
+		return nil
+	}
+	if _, err := a.eng.Sync(context.Background(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	executor.FaultHook = nil
+	// Whatever the crashed upload left on Drive, replace its content so the
+	// item at that name is demonstrably not the local file's twin.
+	kids, err := fake.List(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range kids {
+		if k.Name == "notes.txt" {
+			if _, err := fake.Update(context.Background(), k.ID, strings.NewReader("theirs"), 6); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	a.syncRaw(t)
+	a.syncRaw(t)
+
+	kids, err = fake.List(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, k := range kids {
+		if k.Name == "notes.txt" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("Drive holds %d nodes named notes.txt, want 1", n)
+	}
+	// Remote wins the canonical name; the local content survives as a
+	// conflict copy, uploaded (spec §4.2).
+	if got := a.read(t, "notes.txt"); got != "theirs" {
+		t.Errorf("canonical content = %q, want the remote's", got)
+	}
+	var conflict string
+	for p := range a.listTree(t) {
+		if strings.Contains(p, "conflict") {
+			conflict = p
+		}
+	}
+	if conflict == "" {
+		t.Fatalf("the local content was not preserved as a conflict copy: %v", a.listTree(t))
+	}
+	if got := a.read(t, conflict); got != "mine" {
+		t.Errorf("conflict copy = %q, want the local content", got)
 	}
 }
 

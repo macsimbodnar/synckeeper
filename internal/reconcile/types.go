@@ -138,4 +138,12 @@ type Skip struct {
 	RelPath string
 	Reason  string
 	FileID  string
+
+	// Duplicate marks the one skip kind that means Drive itself holds two
+	// items under one name in one folder (it allows that; a filesystem does
+	// not). Unlike every other skip it is not a property of the file — it is
+	// a state of the Drive folder that a person has to resolve there, so
+	// `doctor` reports it separately (W17). Fold collisions are NOT this:
+	// those are two distinct Drive names this filesystem cannot tell apart.
+	Duplicate bool
 }

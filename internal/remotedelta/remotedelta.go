@@ -272,7 +272,7 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseFold, normFold
 				// its baseline row harmless instead of reading it as
 				// remote-deleted (C2b, R19).
 				skips = append(skips, reconcile.Skip{RelPath: rel, FileID: n.FileID,
-					Reason: "duplicate name in Drive folder; kept first by id"})
+					Reason: "duplicate name in Drive folder; kept first by id", Duplicate: true})
 				continue
 			}
 			if caseFold || normFold {

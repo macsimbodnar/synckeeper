@@ -13,7 +13,23 @@ Format:
 
 ---
 
-## 2026-07-30 — A crashed upload plus a lagging feed mints a duplicate on Drive (found building W16; scheduled as W17, **open**)
+## 2026-07-30 — W17 as built: seed the mirror and let the decision table decide
+
+**Context:** the W17 finding (below) went back to Max as three questions rather than one. Every answer here is his.
+
+**Approach — the journal lookup (a), not a check before every create.** `CleanStaleState` now takes `ctx`/`client`/`rootID` and, when stale ops exist, calls `seedOrphanCreates`. Rejected: listing the parent before every new-file create — an API call on the most common path, 1117 of them for one adopted folder. Rejected as unnecessary: an idempotency key in Drive `appProperties`, which is exact but needs a query method on the `Client` interface plus fake support, for a case that only arises after a crash. **One objection I raised was checked and found thin:** "the recovery path gains a network dependency" is nearly vacuous, because `CleanStaleState` runs seven lines before `remotedelta.Refresh`, which already aborts the cycle when Drive is unreachable. Corrected to Max before he chose.
+
+**Shape — seed the mirror, decide nothing (Max, agent-proposed reframing).** Recovery writes no baseline row and contains no adoption logic: it puts what we created into the mirror exactly as the feed eventually will, and §4.2 resolves it. Three reasons this beat bespoke adoption: it is the **same fix shape as W16**, so there is one idea in the codebase instead of two; it reuses the most-tested code in the project instead of adding a second decision site; and it is **correct when the same-name item is not ours at all** — a file the user made in the Drive web UI meanwhile gets the conflict it deserves, which bespoke "adopt the orphan" logic would have had to special-case (pinned by `TestW17SeededStrangerBecomesAConflictNotADuplicate`). It also revealed that spec §4.6 **already promised this behaviour** — "an uploaded-but-uncommitted file reappears as both-new-same-md5 → adopt" was true only once the feed had caught up. So this is the code catching up to the spec, not a spec change.
+
+**Not taken, recorded so it is not re-derived:** stamping the new Drive id into the op's unused `pending_ops.drive_file_id` the moment the API returns, which would shrink the guess window to a single `UPDATE` and make recovery an exact `Get(id)`. Max chose the plain version. The cost analysis is here if the name match ever proves too coarse.
+
+**Scope is exactly the two non-idempotent Drive calls,** `Upload` and `Mkdir`; `Move` and `Trash` replayed twice are harmless. The **mkdir arm was reproduced before being fixed**, per the W16 discipline, and is the worse of the two — a shadowed duplicate *folder* makes every file uploaded into it invisible elsewhere. Reaching its crash shape needed a new checkpoint, `CPMkdirBeforeCommit` (`mkdirRemote` had none); it joins the fuzzer's checkpoint list so the class is generated continuously.
+
+**`doctor` reports same-name Drive siblings (Max).** The state was only ever surfaced as a per-cycle skip, and the daemon never surfaces skips — W10 is still open — so a user could be in it and never know. `reconcile.Skip` gains `Duplicate`, set **only** for the exact-duplicate case: a fold collision is two distinct Drive names this filesystem cannot tell apart, a different phenomenon that would dilute the signal. **Reported, never repaired** — Max explicitly took the read-only option, so spec §12's "`--repair` only ever adds" stands unchanged, and a test asserts repair leaves both copies in place.
+
+**Consequences:** spec §4.6 amended; MANUAL §8 loses the entry in the fix's own commit; testing.md W17.1–W17.5; plan.md W17 done. The 40-seed sweep with crashes on is green — that sweep, red on seeds 23 and 33, is what found this.
+
+## 2026-07-30 — A crashed upload plus a lagging feed mints a duplicate on Drive (found building W16; fixed the same day — see the entry above)
 
 **Context:** W16's new `Fake.HoldChanges` made Drive's eventual consistency expressible for the first time, and widening the fuzzer to 40 seeds immediately failed two of them (23, 33) on the *convergence* oracle — machine trees agreeing with each other but not with Drive. Crash-dependent (`SYNCKEEPER_FUZZ_CRASH=0` → both pass). Minimized to a deterministic 40-line reproduction before anything was concluded.
 

@@ -133,7 +133,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	if err := guards.CheckSyncDir(e.SyncDir, len(baseItems)); err != nil {
 		return nil, err
 	}
-	if err := executor.CleanStaleState(e.DB, e.SyncDir); err != nil {
+	if err := executor.CleanStaleState(ctx, e.DB, e.Client, e.RootID, e.SyncDir); err != nil {
 		return nil, err
 	}
 

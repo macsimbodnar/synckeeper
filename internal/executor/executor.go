@@ -45,6 +45,7 @@ const (
 	CPDownloadBeforeCommit = "download_before_commit" // target replaced, DB row still old
 	CPQuarantineBeforeMove = "quarantine_before_move" // quarantine decided, file untouched
 	CPTrashBeforeCommit    = "trash_before_commit"    // content in the bin, rows not yet dropped
+	CPMkdirBeforeCommit    = "mkdir_before_commit"    // folder exists on Drive, DB does not know (W17)
 )
 
 func checkpoint(name string) error {
@@ -205,14 +206,19 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 
 // CleanStaleState removes leftover temp files and journal rows from a
 // previous crashed run. The regenerated plan supersedes stale ops; partial
-// effects are self-healing through the reconcile decision table.
-func CleanStaleState(db *statedb.DB, syncDir string) error {
+// effects are self-healing through the reconcile decision table — but only
+// for effects the decision table can see, which is why the stale creates are
+// looked up on Drive first (W17).
+func CleanStaleState(ctx context.Context, db *statedb.DB, client driveclient.Client, rootID, syncDir string) error {
 	stale, err := db.StaleOps()
 	if err != nil {
 		return err
 	}
 	if len(stale) > 0 {
 		slog.Info("discarding stale pending ops from a previous run; replanning", "count", len(stale))
+		if err := seedOrphanCreates(ctx, db, client, rootID, stale); err != nil {
+			return err
+		}
 	}
 	if err := db.ClearOps(); err != nil {
 		return err
@@ -227,6 +233,74 @@ func CleanStaleState(db *statedb.DB, syncDir string) error {
 		}
 		return nil
 	})
+}
+
+// seedOrphanCreates tells the remote mirror about items a crashed run created
+// on Drive but never committed (W17). `Upload` and `MkdirRemote` are the only
+// two Drive calls that are not idempotent — calling them twice makes a second
+// item, and Drive allows same-name siblings — so replanning them blind mints a
+// duplicate whenever the change feed has not caught up yet. A move or a trash
+// replayed twice is harmless and needs nothing here.
+//
+// It does not decide anything. Its whole job is to put what we created into
+// the mirror, exactly as the feed eventually will; reconcile's decision table
+// then resolves the item on its own terms — identical content adopts, changed
+// content conflicts (spec §4.2, §4.6). That is also the right answer when the
+// same-name item turns out not to be ours at all but something the user made
+// in the Drive web UI meanwhile: a conflict is precisely what that deserves.
+//
+// Best effort by construction: an op whose parent folder is not known locally
+// is left alone (nothing to look in), and a name that is simply not on Drive
+// seeds nothing — the replanned create is then correct.
+func seedOrphanCreates(ctx context.Context, db *statedb.DB, client driveclient.Client, rootID string, stale []statedb.PendingOp) error {
+	items, err := db.AllItems()
+	if err != nil {
+		return err
+	}
+	// rel_path -> drive id for parent resolution, the same map Apply builds.
+	// A folder seeded below joins it, so an upload inside a folder the same
+	// crashed run created still resolves its parent (ops arrive in op_id
+	// order, and the plan puts mkdirs before the transfers that need them).
+	pathIDs := map[string]string{"": rootID}
+	for _, it := range items {
+		pathIDs[it.RelPath] = it.DriveFileID
+	}
+	listed := map[string][]driveclient.File{}
+	for _, op := range stale {
+		if op.Type != string(reconcile.Upload) && op.Type != string(reconcile.MkdirRemote) {
+			continue
+		}
+		dir := path.Dir(op.RelPath)
+		if dir == "." {
+			dir = ""
+		}
+		parent, ok := pathIDs[dir]
+		if !ok {
+			continue
+		}
+		children, ok := listed[parent]
+		if !ok {
+			if children, err = client.List(ctx, parent); err != nil {
+				return fmt.Errorf("checking whether a crashed run already created %s on Drive: %w", op.RelPath, err)
+			}
+			listed[parent] = children
+		}
+		name := path.Base(op.RelPath)
+		for _, f := range children {
+			if f.Name != name {
+				continue
+			}
+			slog.Info("a previous run created this on Drive but never recorded it; telling the mirror before replanning",
+				"rel_path", op.RelPath, "file_id", f.ID)
+			if err := db.UpsertRemoteNode(remotedelta.NodeFromFile(f, parent)); err != nil {
+				return err
+			}
+			if f.IsDir() {
+				pathIDs[op.RelPath] = f.ID
+			}
+		}
+	}
+	return nil
 }
 
 func (x *Executor) abs(rel string) string {
@@ -332,6 +406,9 @@ func (x *Executor) mkdirRemote(ctx context.Context, opID int64, a reconcile.Acti
 	}
 	// Ensure the local dir exists too (resurrect case already has it).
 	if err := os.MkdirAll(x.abs(a.RelPath), 0o755); err != nil {
+		return err
+	}
+	if err := checkpoint(CPMkdirBeforeCommit); err != nil {
 		return err
 	}
 	x.setPathID(a.RelPath, f.ID)

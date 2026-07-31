@@ -50,6 +50,14 @@ type Report struct {
 	Adopted        int // rows written by repair
 	Notes          []string
 
+	// DriveDuplicates are folders on Drive holding two items under one name
+	// (Drive allows it, a filesystem does not). Synckeeper keeps the first by
+	// file id and skips the rest, so the shadowed item is invisible on every
+	// machine — including, after W17's crash window, a copy of your own file.
+	// Reported only: resolving it means choosing a winner in the Drive web
+	// UI, which is a person's decision, and `--repair` only ever adds (§12).
+	DriveDuplicates []string
+
 	// SystemBin is where a deletion arriving from Drive lands on this
 	// machine, and whether that destination is the user's own bin (W14-M2).
 	// Reported, never a fault: a platform without a bin is not broken, it is
@@ -63,7 +71,7 @@ func (r *Report) Healthy() bool {
 	return len(r.MissingLocal) == 0 && len(r.LocalModified) == 0 &&
 		len(r.UntrackedLocal) == 0 && len(r.RemoteOnly) == 0 &&
 		len(r.RemoteMissing) == 0 && r.StaleOps == 0 && len(r.OrphanTemps) == 0 &&
-		len(r.Notes) == 0
+		len(r.DriveDuplicates) == 0 && len(r.Notes) == 0
 }
 
 // Check is read-only: it compares DB vs disk vs Drive and reports every
@@ -129,9 +137,14 @@ func (d *Doctor) Check(ctx context.Context) (*Report, error) {
 		} else {
 			rep.Notes = append(rep.Notes, "no changes page token; remote comparison uses cached state — run `doctor --repair`")
 		}
-		remote, _, err := remotedelta.Snapshot(d.DB, rootID, d.Cfg.Engine.Ignore, names.CaseInsensitiveFS(d.SyncDir), names.NormalizationInsensitiveFS(d.SyncDir))
+		remote, skips, err := remotedelta.Snapshot(d.DB, rootID, d.Cfg.Engine.Ignore, names.CaseInsensitiveFS(d.SyncDir), names.NormalizationInsensitiveFS(d.SyncDir))
 		if err != nil {
 			return nil, err
+		}
+		for _, sk := range skips {
+			if sk.Duplicate {
+				rep.DriveDuplicates = append(rep.DriveDuplicates, sk.RelPath)
+			}
 		}
 		remoteIDs := map[string]bool{}
 		for _, r := range remote {
@@ -266,7 +279,7 @@ func findOrphanTemps(syncDir string) []string {
 }
 
 func sortAll(r *Report) {
-	for _, s := range [][]string{r.MissingLocal, r.LocalModified, r.UntrackedLocal, r.RemoteOnly, r.RemoteMissing, r.OrphanTemps} {
+	for _, s := range [][]string{r.MissingLocal, r.LocalModified, r.UntrackedLocal, r.RemoteOnly, r.RemoteMissing, r.OrphanTemps, r.DriveDuplicates} {
 		sort.Strings(s)
 	}
 }
