@@ -5,7 +5,7 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 ## Start here, in this order
 
 1. **[docs/status.md](docs/status.md)** — last / current / next task. The session-to-session state pointer; **update it before ending any work session**.
-2. **[docs/plan.md](docs/plan.md)** — the workstream backlog (W1–W9) that status points into.
+2. **[docs/plan.md](docs/plan.md)** — the workstream backlog (W1–W18) that status points into.
 3. **[docs/spec.md](docs/spec.md)** — the authoritative design doc & contract for whatever you touch. When spec and plan disagree, the spec wins.
 4. **[docs/decisions.md](docs/decisions.md)** — before changing anything already decided: what was chosen, when, by whom, and why. Newest first.
 
@@ -16,7 +16,7 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 | `docs/status.md` | last/current/next pointer | end of every work session (rewrite sections, don't append) |
 | `docs/worklog.md` | append-only action log, keyed by the prompt | every prompt — append the prompt + timestamp + short action/decision bullets (never rewrite past entries) |
 | `docs/spec.md` | design doc & contract, acceptance criteria (§16) | behavior changes — same commit, dated inline note |
-| `docs/plan.md` | workstreams W1–W9 + retired phase history | item done / reprioritized (date it) |
+| `docs/plan.md` | workstreams W1–W18 + retired phase history | item done / added / reprioritized (date it) — **and commit it** |
 | `docs/decisions.md` | append-only log: context, decision, who, consequences | every scope change / deviation / non-obvious choice, before or alongside the code |
 | `docs/testing.md` | acceptance ledger — rows are the criteria | with the feature, never after |
 | `docs/ideas.md` | Max's informal wishlist / inbox | triage items into spec + plan |
@@ -27,12 +27,12 @@ Personal bidirectional sync between one local folder and one Google Drive folder
 ## Project state model
 
 - The **phase system (0–7) is finished and retired** — those docs live in `docs/history/` and are context, not work. Do not resume phase checklists.
-- Active work is organized as **workstreams W1–W9** in `docs/plan.md`. W1 (correctness fixes) blocks everything else.
+- Active work is organized as **workstreams W1–W18** in `docs/plan.md`. W1 (correctness fixes) is closed, but its principle stands and keeps being applied: **correctness outranks features and ports** — W16, W17 and W18 each jumped the queue on it.
 - Decisions belong to **Max**; agents propose, `decisions.md` records who/when/why.
 
 ## Hard rules
 
-- **Never `git push`.** Commit when asked or when a work item completes; Max pushes himself.
+- **Never `git push`.** Commit when asked, when a work item completes, **and whenever the plan changes** — a new/reordered/rescoped workstream in `plan.md` with its `decisions.md` and `status.md` entries is finished work, so a planning session ends in a commit exactly like a coding session does. Don't hold a plan open for review uncommitted; commit it, then present it. Max pushes himself.
 - `go build ./... && go vet ./... && go test ./...` green at every commit.
 - Builds are **native per platform** (no cross-compile requirement); cgo is permitted where the OS's best API needs it (spec §10). Pure Go preferred where equal.
 - Tests land with the feature, as `docs/testing.md` rows.
