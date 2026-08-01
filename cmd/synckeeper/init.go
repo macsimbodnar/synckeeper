@@ -102,12 +102,16 @@ func newInitCmd() *cobra.Command {
 			// downloads what is remote, pairs identical content, and conflicts
 			// the rest — it cannot delete (spec §11), so it is safe to re-run
 			// and safe as the recovery path for a lost DB.
+			//
+			// PreferNewer is set here and nowhere else (W18-E): at the one-off
+			// moment a machine joins, the more recent edit is the answer the
+			// user would give to "which of these two is the real one".
 			fmt.Println("Merging this machine with the Drive folder (union; nothing is deleted)…")
 			eng := &engine.Engine{
 				DB: db, Client: client, Cfg: cfg, SyncDir: syncDir,
 				QuarantineDir: filepath.Join(configDir, "quarantine"), RootID: rootID,
 			}
-			res, err := eng.Sync(ctx, engine.Options{})
+			res, err := eng.Sync(ctx, engine.Options{PreferNewer: true})
 			if res != nil {
 				printMergeResult(res)
 			}

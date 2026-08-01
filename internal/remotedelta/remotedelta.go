@@ -215,7 +215,7 @@ func NodeFromFile(f driveclient.File, parentID string) statedb.RemoteNode {
 }
 
 func toNode(f driveclient.File, parent string) statedb.RemoteNode {
-	return statedb.RemoteNode{
+	n := statedb.RemoteNode{
 		FileID:   f.ID,
 		ParentID: parent,
 		Name:     f.Name,
@@ -225,6 +225,12 @@ func toNode(f driveclient.File, parent string) statedb.RemoteNode {
 		Version:  f.Version,
 		Trashed:  f.Trashed,
 	}
+	// A zero time must stay a zero stamp: UnixNano() on it is a large negative
+	// number, and "not known" is what 0 means downstream (W18-E).
+	if !f.ModifiedTime.IsZero() {
+		n.ModifiedNS = f.ModifiedTime.UnixNano()
+	}
+	return n
 }
 
 // Snapshot derives the reconcile remote snapshot from the cache: BFS from
@@ -291,11 +297,12 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseFold, normFold
 			seen[n.Name] = true
 			isDir := n.MimeType == driveclient.FolderMimeType
 			snapshot[rel] = reconcile.RemoteItem{
-				FileID:  n.FileID,
-				IsDir:   isDir,
-				Size:    n.Size,
-				MD5:     n.MD5,
-				Version: n.Version,
+				FileID:     n.FileID,
+				IsDir:      isDir,
+				Size:       n.Size,
+				MD5:        n.MD5,
+				Version:    n.Version,
+				ModifiedNS: n.ModifiedNS,
 			}
 			if isDir && !visited[n.FileID] {
 				visited[n.FileID] = true

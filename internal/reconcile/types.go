@@ -32,6 +32,10 @@ type RemoteItem struct {
 	Size    int64
 	MD5     string // empty for dirs
 	Version int64
+
+	// ModifiedNS is Drive's modifiedTime in unix nanoseconds, 0 when unknown.
+	// Read only under PreferNewer.
+	ModifiedNS int64
 }
 
 // Input bundles the three snapshots plus what conflict naming needs.
@@ -48,6 +52,16 @@ type Input struct {
 	// instead of blind-uploading a duplicate (C2, R19).
 	CaseFold bool
 	NormFold bool
+
+	// PreferNewer makes a both-new conflict give the canonical name to the
+	// side edited last instead of always to Drive. Set by exactly one caller,
+	// `init`'s merge (spec §11, W18-E): joining a machine is a one-off event
+	// where the user's own answer to "which of these two is the real one" is
+	// the more recent edit. Steady-state §4.2 leaves it false and keeps
+	// remote-wins, which is deterministic WITHOUT a clock — every machine
+	// agrees on what Drive holds, while newer-wins needs cross-machine clock
+	// agreement and a skewed machine would always lose the plain name.
+	PreferNewer bool
 
 	// ShadowedRemote holds file ids that exist on Drive but were collapsed
 	// out of the remote snapshot (a duplicate or fold-colliding sibling

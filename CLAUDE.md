@@ -51,5 +51,5 @@ make audit                             # pre-publication secret-scan gate on its
 SYNCKEEPER_LIVE_TEST=1 go test ./...   # live smoke vs a throwaway Drive folder
 SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h -v  # -v: pass criteria read the "converged on N files" line
 SYNCKEEPER_SCALE_FILES=50000 go test ./internal/watch/ -run 'TestScale|TestFSEventsScale' -timeout 20m  # W1-scale acceptance
-SYNCKEEPER_FUZZ_RUNS=60 SYNCKEEPER_FUZZ_STEPS=150 go test ./internal/engine -run TestFuzzConvergence  # deep fuzz (W4)
+SYNCKEEPER_FUZZ_RUNS=60 SYNCKEEPER_FUZZ_STEPS=150 go test ./internal/engine -run TestFuzzConvergence  # deep fuzz (W4); SYNCKEEPER_FUZZ_CRASH is a PROBABILITY (default 0.12), not a flag — the recorded sweeps use the default
 ```

@@ -18,7 +18,7 @@ synckeeper init          # signs you in via the browser, creates the Drive folde
                          # then offers to keep syncing at login
 ```
 
-`init` is **idempotent** — re-run it any time. It never deletes: it merges both sides (local-only → upload, remote-only → download, identical → paired up, different → conflict copy).
+`init` is **idempotent** — re-run it any time. It never deletes: it merges both sides (local-only → upload, remote-only → download, identical → paired up, different → conflict copy). At `init` only, a differing pair gives the plain name to whichever side was **edited more recently**; the other is the conflict copy. Both survive everywhere.
 
 `init` ends with **`Start Synckeeper automatically at login? [Y/n]`** — yes installs the login service (background sync from now on). `--service` / `--no-service` skip the prompt (scripts/pipes get no prompt; it prints how to install later).
 
@@ -101,6 +101,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 ## 6. How syncing behaves
 
 - **Conflicts.** Same file changed both sides → remote keeps the name, your local version kept beside it as `name (conflict <machine> <date_time>).ext` — and uploaded too, so every machine sees both. Nothing lost.
+- **Except at `init`, where the newer edit keeps the name.** Joining a machine compares your file's modification time against Drive's; the later one takes the plain name, the other becomes the conflict copy (renamed on Drive too, so both machines see the same pair). Ordinary syncing after that is remote-keeps-the-name, which needs no agreement between your machines' clocks. Badly skewed clocks can therefore misname a pair at `init` — never lose one.
 - **Deletes never permanent.** Deleted in Drive → the local copy goes to **your system bin** (macOS Trash / Linux desktop trash), where you can restore it like anything else you deleted; deleted locally → the Drive file goes to Drive's bin (restorable ~30 days).
 - **A deleted folder is one bin entry, both ways.** A folder deleted in Drive arrives in your bin as that folder, contents inside, restorable in one go — not as one entry per file. A folder you delete locally likewise goes into Drive's bin as one folder. If anything inside it changed since the scan, or a file the sync never saw is in there, the folder is removed file by file instead and the stranger is left alone.
 - **No system bin? Quarantine.** Where the OS offers no trash (unsupported platform, a build without it, a bin that refuses the move), the copy goes to the dated quarantine folder (`<config dir>/quarantine/<date>/…`, kept `quarantine_retention_days` days) exactly as before. `activity` names the one that was used (`trash` vs `quarantine`); `info` shows the bin destination.
@@ -127,13 +128,17 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 ## 8. Known bugs
 
-Confirmed and reproduced. Three groups: **found by the 2026-07-31 review** (three still open), the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+Confirmed and reproduced. Four groups: **found by the 2026-07-31 review** (three still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
 
 Found by the 2026-07-31 adversarial review, all reproduced; remaining fixes planned as [plan.md](docs/plan.md) W18:
 
 - **A crash can leave the daemon syncing nothing, silently.** If a journalled create's Drive parent folder is later unreadable, every cycle fails in crash recovery and the journal never drains — the daemon backs off and logs, but nothing syncs, indefinitely. *Workaround: `doctor --repair` clears the journal (mind the entry above).*
 - **One unreadable folder inside the sync dir stops all syncing.** A directory this process can't read fails the whole scan, every cycle, visible only in the log. *Workaround: make it readable, or move it out of the sync folder.*
 - **An edit landing mid-upload leaves a conflict copy** instead of simply re-uploading: the interrupted upload keeps the canonical name and your newer content becomes the conflict copy beside it. Nothing lost; tidy it by hand.
+
+Found 2026-08-01 by a fuzzer run configured to crash before *every* cycle:
+
+- **Repeated crashes around a folder rename can stop one machine syncing.** After a local folder rename, that machine's plan can end up wanting to upload *and* download the same file in one cycle; the engine refuses the whole plan rather than risk it, and refusing changes nothing, so it refuses again next cycle. **Nothing is lost or corrupted** — the refusal is the safety check working — but that machine stops syncing until something changes. Needs a crash mid-cycle repeatedly, so it is unlikely in normal use. *Symptom: every cycle logs `plan violates §4.5: upload and download both act on …`. Workaround: edit or touch the named file, which changes the plan.*
 
 The directory arm — case-only names and renames for *directories and existing files*, a recorded follow-up:
 

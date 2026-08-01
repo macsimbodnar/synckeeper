@@ -13,6 +13,34 @@ Format:
 
 ---
 
+## 2026-08-01 — W18-E as built: the loser steps aside on Drive, and two older defects came out with it
+
+**Context:** implementing W18-E ("the init merge names the conflict winner by last edit"). The plan fixed the *rule*; the plumbing was mechanical, but the plan shape for the new "local wins" case was not specified, and building it surfaced two defects that had nothing to do with E.
+
+**As built (agent, within the decision Max already made):**
+
+1. **The losing Drive file is renamed on Drive, not re-uploaded.** Remote-wins backs the local file up on disk (`ConflictBackup`) and uploads it under the conflict name. Local-wins is the mirror: `MoveRemote` renames the Drive copy to the conflict name, the local winner uploads under the plain name, and the loser downloads under the conflict name. **The rename is load-bearing.** Without it the winner's upload lands beside a same-named sibling, and Drive permits two items under one name in one folder — the exact W17 shadowing shape, which "first by id wins" then resolves by hiding one of them. So the plan's phrase "the loser is still preserved and uploaded" is literally true remote-wins and *preserved by rename* local-wins: its bytes are already on Drive; re-uploading them would be the wrong verb. The winner's upload is `ProtectedBy` that rename (invariant 7), which needed `noteFailure` to record `MoveRemote` failures — it widens nothing, since only actions the planner explicitly marks are affected.
+2. **Applied to the fold-equal arm too** (C2/R19), or the documented promise would hold for `notes.txt` vs `notes.txt` and quietly fail for `Notes.txt` vs `notes.txt` — a doc-code drift of exactly the kind this project polices.
+3. **Column named `modified_ns`, not the plan's illustrative `modified_time`**: it stores unix nanoseconds, matching `items.local_mtime_ns`. One `alter table`, no backfill, as decided 2026-07-31.
+4. **An unknown stamp (0) and a tie both fall back to remote-wins.** This is what makes the missing backfill correct rather than merely cheap: a pre-v5 mirror row reads as "not known", not as "older than everything" — which is also why `toNode` must not call `UnixNano()` on a zero time.
+
+**Two defects found building it, both pre-existing, both fixed here red-first** (testing.md W18.8, W18.9):
+
+- **Folder ids were learned too late.** The executor seeded its rel_path → Drive id map from the baseline plus whatever actions had already committed. At an init merge the baseline is empty, so nothing inside a folder being *adopted* had a resolvable parent until that folder's `Record` had run — and `Record` is in the transfer stage. For E's rename that is a **deterministic** failure (the moves stage runs strictly earlier); for a plain upload into the same folder it was a **race** the upload nearly always won (a `Record` is a DB write; an upload hashes a file first). A parent id is a fact about Drive, not about our DB, so `Apply` now seeds it from the plan's own dir `Record`/`MkdirLocal` actions before anything runs.
+- **A download onto a path the plan itself empties.** Pass 3 pinned the §7 overwrite guard to the occupant the scan saw, without checking whether an earlier stage was already planned to move it away — so the guard refused the download every cycle. Self-inflicted, and permanent: a refused plan changes no state, so the next cycle plans the same thing. Minimized with no init merge in sight — rename a file on one machine and give a new file its old name, and the second machine plans the pair. A vacate that *fails* still refuses the download, because the guard then finds an occupant where it expected none, so invariant 7 is preserved by the same mechanism.
+
+**Consequences:** spec §4.2 (the scoped exception + the vacated-download rule), §11, §13 (schema v5); MANUAL §1/§6; testing.md W18.7–W18.10. Fuzzer acceptance re-run: the documented 40-seed sweep is green. Steady-state §4.2 is untouched, which is why it stays green.
+
+## 2026-08-01 — Found, not fixed: a crash before *every* cycle wedges reconcile on a §4.5 overlap
+
+**Context:** while running W18-E's fuzzer acceptance I set `SYNCKEEPER_FUZZ_CRASH=1` — crash probability **1.0**, a crash before every op-phase sync — mistaking it for a boolean "crashes on". It is not the sweep this project has ever run (the default is 0.12, and that is what every recorded "40-seed sweep green" used). At 1.0, **2 of 40 seeds fail**, and they fail identically at commit `433d41f` (W17's close), before any W18 code: **pre-existing, not a W18 regression.**
+
+**The shape — both failing seeds are one defect.** Seed 19: `upload` **and** `download` both act on `dir9/f3.txt`; seed 2: the same message on `dir14/f2.txt`. In each case a local directory rename (`move_remote da → dir9`) is in the plan and a file under it draws both actions — the R25 family. `ValidateTransferStage` catches it and refuses the whole plan, so **nothing is lost or corrupted**; but a refused plan changes no state, so the next cycle plans the same thing. That machine stops syncing until something external changes. Replay: `SYNCKEEPER_FUZZ_SEED=19 SYNCKEEPER_FUZZ_RUNS=1 SYNCKEEPER_FUZZ_CRASH=1 go test ./internal/engine -run TestFuzzConvergence`. **Verified pre-existing** by replaying seed 19 in a worktree at `433d41f`, where it fails identically — and passes there at the default crash probability, which is why no recorded sweep ever saw it.
+
+**Decision (agent, pending Max's triage):** recorded, **not fixed here** — it is unrelated to W18-E, it is a planner investigation of its own size, and taking it inside E would have made one commit two unrelated things. The precedent for what happens next is W16/W17: a reproduced correctness defect outranks features and ports, and it is Max's call where it lands in the order. Flagged as a MANUAL §8 known bug because it ships unfixed.
+
+**Consequence for how the fuzzer is run:** `SYNCKEEPER_FUZZ_CRASH` is a *probability*, not a flag. CLAUDE.md's command list documents `SYNCKEEPER_FUZZ_RUNS`/`STEPS` but not this, which is how the mistake was available to make; the fuzz command line there now says so.
+
 ## 2026-07-31 — W18 items D and E settled: the simplest answer was the one already built
 
 **Context:** two W18 items were flagged as worth re-opening before implementation — E's schema migration, and D's treatment of an empty sync dir. Discussing them surfaced facts neither of us had when the first decisions were made.

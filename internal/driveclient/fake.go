@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // FakeRootID is the id of the fake's Drive root ("My Drive").
@@ -26,6 +27,19 @@ type Fake struct {
 	holdAt     int   // change-log offset the feed stops reporting at
 	trashCalls int   // API calls, so a test can prove a folder went in ONE
 	AboutInfo  About // returned by About; tests set it to simulate an account
+
+	// Now stamps ModifiedTime on every mutation, as Drive's own clock does.
+	// nil means time.Now; a test pins it to make one side of a conflict
+	// demonstrably older than the other (W18-E).
+	Now func() time.Time
+}
+
+// now is the fake Drive's clock. Callers must hold f.mu.
+func (f *Fake) now() time.Time {
+	if f.Now != nil {
+		return f.Now()
+	}
+	return time.Now()
 }
 
 // TrashCount is how many Trash calls the client has made — the measure of
@@ -180,13 +194,14 @@ func (f *Fake) Upload(_ context.Context, parentID, name string, content io.Reade
 	sum := md5.Sum(data)
 	file := &fakeFile{
 		File: File{
-			ID:       f.newID(),
-			Name:     name,
-			MimeType: "application/octet-stream",
-			MD5:      hex.EncodeToString(sum[:]),
-			Size:     int64(len(data)),
-			Version:  1,
-			Parents:  []string{parentID},
+			ID:           f.newID(),
+			Name:         name,
+			MimeType:     "application/octet-stream",
+			MD5:          hex.EncodeToString(sum[:]),
+			Size:         int64(len(data)),
+			Version:      1,
+			Parents:      []string{parentID},
+			ModifiedTime: f.now(),
 		},
 		content: data,
 	}
@@ -211,6 +226,7 @@ func (f *Fake) Update(_ context.Context, fileID string, content io.Reader, _ int
 	file.MD5 = hex.EncodeToString(sum[:])
 	file.Size = int64(len(data))
 	file.Version++
+	file.ModifiedTime = f.now()
 	f.logChange(file)
 	return file.File, nil
 }
@@ -249,11 +265,12 @@ func (f *Fake) Mkdir(_ context.Context, parentID, name string) (File, error) {
 		return File{}, err
 	}
 	file := &fakeFile{File: File{
-		ID:       f.newID(),
-		Name:     name,
-		MimeType: FolderMimeType,
-		Version:  1,
-		Parents:  []string{parentID},
+		ID:           f.newID(),
+		Name:         name,
+		MimeType:     FolderMimeType,
+		Version:      1,
+		Parents:      []string{parentID},
+		ModifiedTime: f.now(),
 	}}
 	f.files[file.ID] = file
 	f.logChange(file)
@@ -273,6 +290,7 @@ func (f *Fake) Move(_ context.Context, fileID, newParentID, newName string) (Fil
 	file.Name = newName
 	file.Parents = []string{newParentID}
 	file.Version++
+	file.ModifiedTime = f.now()
 	f.logChange(file)
 	return file.File, nil
 }

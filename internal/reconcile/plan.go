@@ -15,6 +15,28 @@ type remoteRef struct {
 	item RemoteItem
 }
 
+// localWinsName decides who keeps the plain name in a both-new conflict.
+// Only the init merge asks (PreferNewer, spec §11); everywhere else the answer
+// is "Drive", which needs no clock. An unknown remote stamp — a mirror row
+// written before schema v5, or a Drive reply without modifiedTime — falls back
+// to that same clock-free rule rather than guessing, which is also why the
+// migration needs no backfill. A tie goes to Drive for the same reason.
+func (in Input) localWinsName(loc LocalItem, r RemoteItem) bool {
+	return in.PreferNewer && r.ModifiedNS > 0 && loc.MtimeNS > r.ModifiedNS
+}
+
+// remoteStepsAside renames the losing Drive file to the conflict name, in
+// place, before anything is uploaded. It is what keeps the local winner's
+// upload from minting a SECOND item under one name in one Drive folder — the
+// shape W17 was about — and it preserves the loser on the Drive side without a
+// re-upload, since its bytes are already there. Its local copy arrives as the
+// matching Download.
+func remoteStepsAside(remotePath string, r RemoteItem, in Input) Action {
+	return Action{Type: MoveRemote, RelPath: remotePath,
+		NewRelPath: conflicts.Path(remotePath, in.Machine, in.Now),
+		FileID:     r.FileID, MD5: r.MD5, Size: r.Size}
+}
+
 // Plan computes the ordered action plan. Output order: local dir moves
 // (top-down), mkdirs (top-down), file moves and conflict backups, transfers,
 // deletes (bottom-up).
@@ -419,12 +441,22 @@ func Plan(in Input) ([]Action, []Skip) {
 			continue
 		}
 		if r, ok := newRemoteAt(target); ok && !r.IsDir {
-			if r.MD5 == loc.MD5 {
+			switch {
+			case r.MD5 == loc.MD5:
 				// Adopt: identical content already on both sides.
 				transfers = append(transfers, Action{Type: Record, RelPath: target, FileID: r.FileID,
 					MD5: r.MD5, Size: r.Size, Version: r.Version,
 					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
-			} else {
+			case in.localWinsName(loc, r):
+				// Init merge, local edited last (W18-E): the local file keeps
+				// the plain name and Drive's copy steps aside.
+				moves = append(moves, remoteStepsAside(target, r, in))
+				transfers = append(transfers,
+					Action{Type: Upload, RelPath: target, ProtectedBy: target},
+					Action{Type: Download, RelPath: conflicts.Path(target, in.Machine, in.Now),
+						FileID: r.FileID, MD5: r.MD5, Size: r.Size, Version: r.Version,
+						ProtectedBy: target})
+			default:
 				// Both-new conflict: the backup acts at the post-move path,
 				// where the ancestor's MoveLocal (hoisted before it) has
 				// already put the local content.
@@ -444,7 +476,8 @@ func Plan(in Input) ([]Action, []Skip) {
 			// ordinary §4.2 rows fire, remote winning the canonical byte
 			// form. Was: a blind Upload minted a case-duplicate on Drive
 			// and the snapshot collapse later quarantined the local file.
-			if r.MD5 == loc.MD5 {
+			switch {
+			case r.MD5 == loc.MD5:
 				// Adopt via a case-only rename to the remote byte form.
 				// The destination "occupant" is the source itself under
 				// the fold, so the §7 gate pins to the file's own stat.
@@ -454,7 +487,17 @@ func Plan(in Input) ([]Action, []Skip) {
 					MD5: r.MD5, Size: r.Size, Version: r.Version,
 					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS,
 					ProtectedBy: target})
-			} else {
+			case in.localWinsName(loc, r):
+				// Init merge, local edited last (W18-E). The local byte form
+				// keeps the plain name; Drive's copy steps aside from ITS own
+				// path, which is the fold-equal one.
+				moves = append(moves, remoteStepsAside(rp, r, in))
+				transfers = append(transfers,
+					Action{Type: Upload, RelPath: target, ProtectedBy: rp},
+					Action{Type: Download, RelPath: conflicts.Path(rp, in.Machine, in.Now),
+						FileID: r.FileID, MD5: r.MD5, Size: r.Size, Version: r.Version,
+						ProtectedBy: rp})
+			default:
 				// Both-new conflict: the backup vacates the fold-path, the
 				// remote byte form downloads onto it fresh.
 				cp := conflicts.Path(target, in.Machine, in.Now)
@@ -488,6 +531,23 @@ func Plan(in Input) ([]Action, []Skip) {
 	}
 
 	// --- Pass 3: new remote items not yet claimed ----------------------
+	// Local paths an already-planned move or backup empties before the
+	// transfers run. A download onto such a path must expect it ABSENT: the
+	// §7 guard means "this exact file must still be here", so pinning the
+	// occupant the scan saw refuses the download every cycle once the moves
+	// stage has legitimately taken it away. (Found building W18-E, whose
+	// conflict shape produces this routinely on the other machine; reachable
+	// before it too — rename a file on one machine and give a new file its old
+	// name, and the second machine plans exactly this pair.) A vacate that
+	// FAILS still refuses the download, since the guard then finds an occupant
+	// where it expected none — invariant 7 by the same mechanism.
+	vacated := map[string]bool{}
+	for _, m := range moves {
+		switch m.Type {
+		case MoveLocal, ConflictBackup:
+			vacated[m.RelPath] = true
+		}
+	}
 	for _, rp := range slices.Sorted(maps.Keys(in.Remote)) {
 		r := in.Remote[rp]
 		if baseIDs[r.FileID] || claimed[rp] {
@@ -515,7 +575,7 @@ func Plan(in Input) ([]Action, []Skip) {
 			// Replaced-in-place: an unchanged local file sits where the new
 			// remote item lands; the guard pins the replace to its scanned
 			// stat so a mid-cycle edit is never clobbered.
-			if l, ok := in.Local[target]; ok && !l.IsDir {
+			if l, ok := in.Local[target]; ok && !l.IsDir && !vacated[target] {
 				act.LocalExists, act.LocalSize, act.LocalMtimeNS = true, l.Size, l.MtimeNS
 			}
 			transfers = append(transfers, act)

@@ -79,6 +79,13 @@ type Executor struct {
 	pathIDs          map[string]string // rel_path -> drive file id, for parent lookup
 	failedProtectors map[string]bool   // failed ConflictBackup/MoveLocal sources (invariant 7)
 	quarantineFellTo int               // items the bin refused; reported in the Summary (W14-M2)
+
+	// bumpedVersions holds Drive versions this run itself moved past the one
+	// the plan carries. A remote move bumps the version, so a later action on
+	// the same file id would otherwise commit a baseline row already one
+	// behind the mirror, and the next cycle would plan a pointless metadata
+	// refresh. Only W18-E's init merge plans both on one file in one cycle.
+	bumpedVersions map[string]int64
 }
 
 // Summary reports what happened.
@@ -111,7 +118,22 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 	for _, it := range items {
 		x.pathIDs[it.RelPath] = it.DriveFileID
 	}
+	// Folders the plan already knows the Drive id of are seeded before anything
+	// runs: a dir Record adopts a folder that exists on Drive right now, and a
+	// MkdirLocal materializes one locally. Seeding them decouples a child
+	// action from WHEN its parent's row commits — the parent id is a fact about
+	// Drive, not about our DB. Without it, at an init merge (empty baseline, so
+	// pathIDs starts holding only the root) a conflict inside an adopted folder
+	// fails in the moves stage, which runs before any Record; a child upload in
+	// the same folder merely races the Record inside the parallel transfer
+	// stage and usually wins. Both are the same missing fact.
+	for _, a := range plan {
+		if a.IsDir && a.FileID != "" && (a.Type == reconcile.Record || a.Type == reconcile.MkdirLocal) {
+			x.pathIDs[a.RelPath] = a.FileID
+		}
+	}
 	x.failedProtectors = map[string]bool{}
+	x.bumpedVersions = map[string]int64{}
 	x.quarantineFellTo = 0
 
 	ops := make([]statedb.PendingOp, len(plan))
@@ -327,11 +349,28 @@ func (x *Executor) setPathID(rel, id string) {
 	x.pathIDs[rel] = id
 }
 
-// noteFailure records a failed protector — a conflict backup or a local
-// move — so actions that depend on it are refused for the rest of the run
-// (invariant 7).
+// versionOf is the Drive version to commit for a file id: the plan's, unless
+// an earlier action in this same run already moved past it.
+func (x *Executor) versionOf(fileID string, planned int64) int64 {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if v, ok := x.bumpedVersions[fileID]; ok && v > planned {
+		return v
+	}
+	return planned
+}
+
+// noteFailure records a failed protector — a conflict backup, a local move, or
+// a remote one — so actions that depend on it are refused for the rest of the
+// run (invariant 7). The remote arm exists for W18-E's init merge: the losing
+// Drive file steps aside by rename, and if that rename fails, uploading the
+// local winner under the same name would put two items under one name in one
+// Drive folder (the W17 shape). Only actions the planner explicitly marked
+// ProtectedBy are affected, so this widens nothing else.
 func (x *Executor) noteFailure(a reconcile.Action) {
-	if a.Type != reconcile.ConflictBackup && a.Type != reconcile.MoveLocal {
+	switch a.Type {
+	case reconcile.ConflictBackup, reconcile.MoveLocal, reconcile.MoveRemote:
+	default:
 		return
 	}
 	x.mu.Lock()
@@ -474,6 +513,9 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 		return err
 	}
 	x.renamePathIDs(a.RelPath, a.NewRelPath)
+	x.mu.Lock()
+	x.bumpedVersions[a.FileID] = f.Version
+	x.mu.Unlock()
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 		// RenameItemPath renames the row — and, for a directory, every
 		// descendant row — leaving is_dir and the scanned stat/md5 intact.
@@ -655,7 +697,8 @@ func (x *Executor) download(ctx context.Context, opID int64, a reconcile.Action)
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 		return statedb.UpsertItem(tx, statedb.Item{
 			DriveFileID: a.FileID, RelPath: a.RelPath, Size: info.Size(), ContentMD5: sum,
-			LocalMtimeNS: info.ModTime().UnixNano(), DriveMD5: sum, DriveVersion: a.Version,
+			LocalMtimeNS: info.ModTime().UnixNano(), DriveMD5: sum,
+			DriveVersion: x.versionOf(a.FileID, a.Version),
 		})
 	})
 }

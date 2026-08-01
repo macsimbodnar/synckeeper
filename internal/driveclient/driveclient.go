@@ -6,6 +6,7 @@ package driveclient
 import (
 	"context"
 	"io"
+	"time"
 )
 
 // FolderMimeType is Drive's mimeType for folders.
@@ -25,6 +26,11 @@ type File struct {
 	Version  int64
 	Parents  []string
 	Trashed  bool
+
+	// ModifiedTime is when Drive last saw the file change. Read by exactly one
+	// decision — the init merge's conflict naming (spec §11, W18-E) — and the
+	// zero value means "not known", which falls back to the clock-free rule.
+	ModifiedTime time.Time
 }
 
 // IsDir reports whether the file is a Drive folder.

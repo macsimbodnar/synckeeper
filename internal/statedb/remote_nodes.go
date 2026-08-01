@@ -19,19 +19,25 @@ type RemoteNode struct {
 	Size     int64
 	Version  int64
 	Trashed  bool
+
+	// ModifiedNS is Drive's modifiedTime in unix nanoseconds; 0 means the feed
+	// never reported one (a row written before schema v5). Only the init
+	// merge's conflict naming reads it (spec §11, W18-E).
+	ModifiedNS int64
 }
 
 // upsertRemoteNodeSQL is shared by the DB-level and tx-scoped writers so the
 // change feed and our own commits produce byte-identical rows.
 const upsertRemoteNodeSQL = `insert into remote_nodes
-	(file_id, parent_id, name, mime_type, md5, size, version, trashed)
-	values (?, ?, ?, ?, ?, ?, ?, ?)
+	(file_id, parent_id, name, mime_type, md5, size, version, trashed, modified_ns)
+	values (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	on conflict(file_id) do update set parent_id = excluded.parent_id,
 		name = excluded.name, mime_type = excluded.mime_type, md5 = excluded.md5,
-		size = excluded.size, version = excluded.version, trashed = excluded.trashed`
+		size = excluded.size, version = excluded.version, trashed = excluded.trashed,
+		modified_ns = excluded.modified_ns`
 
 func upsertRemoteNodeArgs(n RemoteNode) []any {
-	return []any{n.FileID, n.ParentID, n.Name, n.MimeType, n.MD5, n.Size, n.Version, boolToInt(n.Trashed)}
+	return []any{n.FileID, n.ParentID, n.Name, n.MimeType, n.MD5, n.Size, n.Version, boolToInt(n.Trashed), n.ModifiedNS}
 }
 
 // UpsertRemoteNode inserts or replaces a cached node.
@@ -100,7 +106,7 @@ func (d *DB) HasRemoteNode(fileID string) (bool, error) {
 
 // AllRemoteNodes returns the whole cache.
 func (d *DB) AllRemoteNodes() ([]RemoteNode, error) {
-	rows, err := d.sql.Query(`select file_id, parent_id, name, mime_type, md5, size, version, trashed
+	rows, err := d.sql.Query(`select file_id, parent_id, name, mime_type, md5, size, version, trashed, modified_ns
 		from remote_nodes`)
 	if err != nil {
 		return nil, err
@@ -110,7 +116,7 @@ func (d *DB) AllRemoteNodes() ([]RemoteNode, error) {
 	for rows.Next() {
 		var n RemoteNode
 		var trashed int
-		if err := rows.Scan(&n.FileID, &n.ParentID, &n.Name, &n.MimeType, &n.MD5, &n.Size, &n.Version, &trashed); err != nil {
+		if err := rows.Scan(&n.FileID, &n.ParentID, &n.Name, &n.MimeType, &n.MD5, &n.Size, &n.Version, &trashed, &n.ModifiedNS); err != nil {
 			return nil, err
 		}
 		n.Trashed = trashed != 0

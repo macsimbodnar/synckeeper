@@ -51,7 +51,7 @@ Reconciliation is a **pure function** `(base, local, remote) → ordered action 
 | absent | new | absent | upload, insert row |
 | absent | absent | new | download, insert row |
 | absent | new | new, same md5 | adopt: record row, no transfer |
-| absent | new | new, diff md5 | conflict: local becomes the conflicted copy, download remote |
+| absent | new | new, diff md5 | conflict: local becomes the conflicted copy, download remote (at `init`'s merge: the **newer** side keeps the plain name — see below) |
 | present | unchanged | unchanged | nothing (refresh row if metadata drifted) |
 | present | changed | unchanged | upload new revision |
 | present | unchanged | changed | download (atomic replace) |
@@ -74,6 +74,10 @@ Reconciliation is a **pure function** `(base, local, remote) → ordered action 
 **Every row is decided at the path the item will occupy when the action runs.** When an ancestor directory moved remotely in the same cycle, a local path's remote counterpart must be looked up at its *post-move* path; resolving it at the pre-move path silently skips the row that applies (typically `absent | new | new, diff md5` → conflict) and can emit two actions for one path. *(Adopted 2026-07-18, W1.8 — see decisions.md. Implemented 2026-07-18, W1.8.4 — R11; the conflict backup acts at the post-move path, where the ancestor's hoisted MoveLocal has already put the local content.)*
 
 **Remote wins the canonical name in conflicts** — deterministic across machines (they all agree on what Drive holds); the local version is preserved as the conflicted copy *and uploaded*, so every machine sees both versions. Conflict copy naming: `<stem> (conflict <machine_name> <YYYY-MM-DD_HHMMSS>)<suffix>`.
+
+**One scoped exception: `init`'s merge names the winner by last edit** *(added 2026-08-01, W18-E)*. At the `absent | new | new, diff md5` row — and only there, and only for the merge `init` runs (§11) — the side with the later modification time keeps the plain name: local mtime against Drive's `modifiedTime`. When the local side wins, the losing Drive file is **renamed on Drive** to the conflict name and downloaded under it, mirroring what a conflict backup does locally; the rename is required, not cosmetic, since uploading the winner beside an unrenamed sibling would put two items under one name in one Drive folder (§5, W17). Both copies survive on both sides either way. **Steady state is unchanged and stays clock-free**: remote-wins needs no cross-machine clock agreement, while newer-wins does, and a machine with a skewed clock would lose the plain name every time. An unknown Drive stamp (0) and a tie both fall back to remote-wins, which is why the schema v5 column needs no backfill.
+
+**A download onto a path the same plan empties expects it empty** *(added 2026-08-01, W18-E)*. The §7 overwrite guard pins a download to the local state the plan assumed; when an earlier stage is planned to move that occupant away, the assumption is *absent*, not the scanned file. Pinning the scanned file made the guard refuse the download every cycle — a self-inflicted wedge, not a real mid-cycle edit. A vacate that *fails* still refuses the download, since the guard then finds an occupant where it expected none (invariant 7 by the same mechanism). *(Found building W18-E, which produces the pair routinely; reachable before it — rename a file on one machine and give a new file its old name.)*
 
 ### 4.3 Moves and renames
 
@@ -172,7 +176,7 @@ Functionality is agnostic; implementations are modular per OS and **should explo
 
 ## 11. Multi-machine
 
-A new machine joins with `init`: adoption is the ordinary first sync over an **empty baseline**, which structurally cannot produce a delete (delete-class actions require a baseline row missing on one side). Union merge: local-only uploads, remote-only downloads, md5-equal pairs adopt, divergent pairs conflict. *(2026-07-31, W18-B: this was `init --adopt`, with plain `init` refusing a non-empty folder. The flag is gone — the merge is the only correct answer in every case, and it cannot delete, so the refusal bought nothing. The same property makes an idempotent `init` the recovery path for a lost DB.)* Machine identity: a random persisted `machine_id` plus a human `machine_name` used in conflict filenames.
+A new machine joins with `init`: adoption is the ordinary first sync over an **empty baseline**, which structurally cannot produce a delete (delete-class actions require a baseline row missing on one side). Union merge: local-only uploads, remote-only downloads, md5-equal pairs adopt, divergent pairs conflict — **and a divergent pair's plain name goes to the side edited last** (§4.2's scoped exception; the loser is preserved on both sides under the conflict name). *(2026-08-01, W18-E: joining is the one-off moment where "which of these two is real?" has a better answer than "Drive's", and the user's own answer is the more recent edit. Reads Drive's `modifiedTime`, mirrored in `remote_nodes.modified_ns`, schema v5; an unknown stamp falls back to remote-wins, so no backfill is needed — `init` force-walks the mirror it then reads.)* *(2026-07-31, W18-B: this was `init --adopt`, with plain `init` refusing a non-empty folder. The flag is gone — the merge is the only correct answer in every case, and it cannot delete, so the refusal bought nothing. The same property makes an idempotent `init` the recovery path for a lost DB.)* Machine identity: a random persisted `machine_id` plus a human `machine_name` used in conflict filenames.
 
 ## 12. Repair
 
@@ -205,7 +209,7 @@ ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # 
 
 ## 14. State DB
 
-SQLite via `database/sql`, WAL, single connection, writes serialized. Versioned migrations; a binary refuses a schema newer than it knows, and **read-only commands must not migrate** — migrations run only under the instance lock *(2026-07-17)*. Tables: `items` (baseline; keyed by file id, unique rel_path), `meta` (page token, root folder id, machine id, schema version), `pending_ops` (journal), `remote_nodes` (Drive metadata mirror), `daemon_status` (heartbeat singleton), `activity` (capped ring with direction).
+SQLite via `database/sql`, WAL, single connection, writes serialized. Versioned migrations; a binary refuses a schema newer than it knows, and **read-only commands must not migrate** — migrations run only under the instance lock *(2026-07-17)*. Tables: `items` (baseline; keyed by file id, unique rel_path), `meta` (page token, root folder id, machine id, schema version), `pending_ops` (journal), `remote_nodes` (Drive metadata mirror, incl. `modified_ns` — Drive's `modifiedTime` in unix nanoseconds, read only by §11's merge naming; **v5**, 2026-08-01, W18-E), `daemon_status` (heartbeat singleton), `activity` (capped ring with direction).
 
 ## 15. CLI surface
 

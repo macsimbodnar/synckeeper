@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"golang.org/x/oauth2"
 	drive "google.golang.org/api/drive/v3"
@@ -12,7 +13,7 @@ import (
 )
 
 // fileFields is the metadata set the engine needs, per docs/spec.md.
-const fileFields = "id, name, mimeType, md5Checksum, size, version, parents, trashed"
+const fileFields = "id, name, mimeType, md5Checksum, size, version, parents, trashed, modifiedTime"
 
 const uploadChunkSize = 8 * 1024 * 1024
 
@@ -31,7 +32,7 @@ func New(ctx context.Context, ts oauth2.TokenSource) (Client, error) {
 }
 
 func fromAPI(f *drive.File) File {
-	return File{
+	out := File{
 		ID:       f.Id,
 		Name:     f.Name,
 		MimeType: f.MimeType,
@@ -41,6 +42,12 @@ func fromAPI(f *drive.File) File {
 		Parents:  f.Parents,
 		Trashed:  f.Trashed,
 	}
+	// Drive returns RFC 3339; an unparseable or absent stamp stays the zero
+	// time, which every reader treats as "not known" rather than as epoch.
+	if t, err := time.Parse(time.RFC3339, f.ModifiedTime); err == nil {
+		out.ModifiedTime = t
+	}
+	return out
 }
 
 func (r *real) List(ctx context.Context, parentID string) ([]File, error) {

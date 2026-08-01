@@ -111,6 +111,12 @@ var migrations = []string{
 	// v3 -> v4: activity.source — direction of the change, "local" (pushed to
 	// Drive) or "remote" (pulled down), so activity/status can label events.
 	`alter table activity add column source text not null default '';`,
+	// v4 -> v5: remote_nodes.modified_ns — Drive's modifiedTime in unix
+	// nanoseconds, read only by the init merge's conflict naming (spec §11,
+	// W18-E). No backfill: 0 means "not known" and falls back to the clock-free
+	// rule, and `init` — the one command that reads the column — force-walks
+	// the mirror before reading it, so it populates what it consumes.
+	`alter table remote_nodes add column modified_ns integer not null default 0;`,
 }
 
 // Path returns the state DB path inside the given config dir.

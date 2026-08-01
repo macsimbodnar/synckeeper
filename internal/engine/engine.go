@@ -89,6 +89,12 @@ type Options struct {
 	// with the --confirm-deletes hint (spec §6).
 	DeferMassDelete bool
 
+	// PreferNewer hands the plain name in a both-new conflict to the side
+	// edited last instead of always to Drive. Set by `init`'s merge alone
+	// (spec §11, W18-E); every other caller leaves it false so steady-state
+	// §4.2 stays clock-free.
+	PreferNewer bool
+
 	// Stage, when set, is told which stage this cycle is in — reporting only,
 	// read by the daemon's `stat` answer (W15-U5). Nil is valid and costs
 	// nothing; the engine's behaviour is identical either way.
@@ -187,6 +193,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		CaseFold:       e.caseInsensitive(),
 		NormFold:       e.normInsensitive(),
 		ShadowedRemote: shadowed,
+		PreferNewer:    opts.PreferNewer,
 	})
 	res := &Result{Plan: plan}
 	res.Skips = append(res.Skips, remoteSkips...)
