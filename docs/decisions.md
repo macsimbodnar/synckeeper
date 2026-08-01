@@ -13,6 +13,22 @@ Format:
 
 ---
 
+## 2026-08-01 — W18-H narrowed to 404, and what that leaves for item F
+
+**Context:** W18-H (review F2) says crash recovery should classify its `List` failure and "skip the op on a permanent (404/permission) failure, keep failing on a transient one". Implementing it forced the 403 question, because item A had already scoped `driveclient.IsNotFound` to **404 only** on the grounds that a 403 is a permission or quota problem and must never look like deletion.
+
+**Decision (agent, narrowing the item; Max's call to revisit):** **404 skips the op; everything else keeps failing the cycle.**
+
+The 403 case looks skippable and is not. `withRetry` already absorbs rate-limit 403s, so a 403 reaching recovery is a genuine permission failure, and while it lasts the replanned upload cannot create a duplicate either — it hits the same 403. But permissions come back. When they do, the journal has long since been cleared, the replanned upload succeeds, and it creates a **second same-name item** beside the one the crashed run left there — because the change feed never reports a create that predates the current page token, so nothing else would ever have told us about it. That is precisely the W17 duplicate, which shadows one copy under §5's "first by id wins" and silently reverts content on every machine. A wedge is a standstill; that is data corruption. **Durability outranks availability**, so the 403 arm stays blocking.
+
+**What this leaves, recorded rather than hidden:** a parent that keeps refusing to be listed for a reason other than being gone still stops the cycle. MANUAL §8's entry is therefore **narrowed, not removed** — and corrected while there: it claimed the standstill was visible "only in the log", but a hard cycle error is written to `daemon_status.last_error` and printed by `status` as `last error:` (`internal/watch/status.go` → `internal/status/render.go`). Doc claims are claims about code.
+
+**The clean close is already on record.** W17's not-taken option — stamping the created Drive id into `pending_ops` — makes recovery an exact `Get(id)`, which needs no parent listing and settles every failure mode, not one. It changes the executor's create path and the journal, so it is a workstream item, not a line in this one.
+
+**Interaction with item F, flagged before F is built:** `doctor --repair` is the only user-facing escape from the residual (it clears stale journal rows; `init` does not, since `ResetBaseline` only fires when root identity changes). Unregistering `doctor` therefore strands it. F must either keep an escape or land together with the `Get(id)` fix. Recorded in plan.md item F's neighbourhood so it cannot be missed.
+
+**Consequences:** spec §4.6 (recovery's classification, dated); MANUAL §8 narrowed + corrected; testing.md W18.14; plan.md W18-H.
+
 ## 2026-08-01 — W18-G as built: two additions the item did not list, and one boundary left where it is
 
 **Context:** implementing W18-G (review F4 — one unreadable subdirectory failed `scanner.Scan` every cycle, permanently). The item already carried its own hard part: baseline rows under the skipped subtree must be held harmless, or the fix is worse than the bug. Building it raised three smaller calls.

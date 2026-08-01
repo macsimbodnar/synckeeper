@@ -133,7 +133,7 @@ Confirmed and reproduced. Four groups: **found by the 2026-07-31 review** (two s
 
 Found by the 2026-07-31 adversarial review, all reproduced; remaining fixes planned as [plan.md](docs/plan.md) W18:
 
-- **A crash can leave the daemon syncing nothing, silently.** If a journalled create's Drive parent folder is later unreadable, every cycle fails in crash recovery and the journal never drains — the daemon backs off and logs, but nothing syncs, indefinitely. *Workaround: `doctor --repair` clears the journal (mind the entry above).*
+- **A crash can leave the daemon syncing nothing** *(narrowed 2026-08-01)*. If a crash interrupted a file being created in a Drive folder, and that folder afterwards keeps refusing to be listed — for any reason **other than being deleted**, which is now handled — every cycle stops in crash recovery before anything syncs. Not silent: `synckeeper status` shows it as a repeating `last error`. *Workaround: `doctor --repair` clears the journal (mind the entry above).*
 - **An edit landing mid-upload leaves a conflict copy** instead of simply re-uploading: the interrupted upload keeps the canonical name and your newer content becomes the conflict copy beside it. Nothing lost; tidy it by hand.
 
 Found 2026-08-01 by a fuzzer run configured to crash before *every* cycle:

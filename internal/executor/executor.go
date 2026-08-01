@@ -302,7 +302,32 @@ func seedOrphanCreates(ctx context.Context, db *statedb.DB, client driveclient.C
 		}
 		children, ok := listed[parent]
 		if !ok {
-			if children, err = client.List(ctx, parent); err != nil {
+			children, err = client.List(ctx, parent)
+			switch {
+			case err == nil:
+			case driveclient.IsNotFound(err):
+				// The folder the crashed run was creating into is gone from
+				// Drive, so whatever it may have created inside went with it:
+				// there is nothing to seed and nothing that can be duplicated,
+				// which is the entire reason this function exists (W17). Skip
+				// the op and let the journal drain.
+				//
+				// Blocking here wedged the whole daemon instead: recovery runs
+				// before ClearOps, so one unrecoverable stale create failed
+				// every cycle forever and nothing else synced either (W18-H,
+				// review F2 — reproduced at 3/3 cycles, pending_ops_left=1).
+				// The function's own comment already claimed to be "best
+				// effort by construction"; that was true of an unknown parent
+				// and false of a List failure.
+				slog.Info("the Drive folder a crashed run was creating into no longer exists; nothing to recover for it",
+					"rel_path", op.RelPath, "parent_id", parent)
+				children = nil
+			default:
+				// Anything else may well work next time — a rate limit that
+				// outlived its retries, a network blip, a permission that is
+				// about to be restored. Retrying IS the correct answer there,
+				// and skipping would let the replanned create mint the second
+				// same-name item W17 exists to prevent.
 				return fmt.Errorf("checking whether a crashed run already created %s on Drive: %w", op.RelPath, err)
 			}
 			listed[parent] = children
