@@ -106,6 +106,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 - **A deleted folder is one bin entry, both ways.** A folder deleted in Drive arrives in your bin as that folder, contents inside, restorable in one go — not as one entry per file. A folder you delete locally likewise goes into Drive's bin as one folder. If anything inside it changed since the scan, or a file the sync never saw is in there, the folder is removed file by file instead and the stranger is left alone.
 - **No system bin? Quarantine.** Where the OS offers no trash (unsupported platform, a build without it, a bin that refuses the move), the copy goes to the dated quarantine folder (`<config dir>/quarantine/<date>/…`, kept `quarantine_retention_days` days) exactly as before. `activity` names the one that was used (`trash` vs `quarantine`); `info` shows the bin destination.
 - **Edit beats delete, always.** Deleted one side, edited the other → the edit survives and comes back.
+- **A folder Synckeeper can't read is skipped, not fatal.** The rest of the tree keeps syncing; everything inside that folder is left alone on **both** sides — never treated as deleted, so nothing of yours goes to a bin because of a permission. Reported in `sync` output, and the daemon logs one warning per folder. Fix the permissions and it picks up again by itself.
 - **Renaming the Drive folder is safe.** Synckeeper tracks it by Drive id, not by name, so renaming it in the web UI changes nothing — the new name is picked up and shown by `status`/`info`. `folder_name` in the config keeps one job: naming the folder if Synckeeper ever has to create it.
 - **Moves/renames synced as moves**, files and folders alike: the Drive file/folder keeps its identity and history; a folder rename travels as one operation. (Exception: renaming an *empty* folder syncs as delete + recreate — no contents as evidence — costing only the folder's Drive-side id.)
 - **Mass-delete guard — only when a deletion can't be undone.** Deleting a lot is not held back: everything you delete is one restore away, in Drive's bin or your own. The guard fires only where that isn't true — **a machine with no system bin**, where the local copies fall back to the quarantine folder — and then only past >25% of your files and >10 absolute. There, a one-shot `sync` stops and asks for `--confirm-deletes`, the daemon keeps syncing everything else and shows the block in `status` until you confirm, and it never self-confirms. `status`/`doctor` say plainly when your machine has no bin. **A large deletion that *did* run is reported**, not hidden: a `deleted` line in `activity` with the count and where to restore from.
@@ -128,12 +129,11 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 ## 8. Known bugs
 
-Confirmed and reproduced. Four groups: **found by the 2026-07-31 review** (three still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+Confirmed and reproduced. Four groups: **found by the 2026-07-31 review** (two still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
 
 Found by the 2026-07-31 adversarial review, all reproduced; remaining fixes planned as [plan.md](docs/plan.md) W18:
 
 - **A crash can leave the daemon syncing nothing, silently.** If a journalled create's Drive parent folder is later unreadable, every cycle fails in crash recovery and the journal never drains — the daemon backs off and logs, but nothing syncs, indefinitely. *Workaround: `doctor --repair` clears the journal (mind the entry above).*
-- **One unreadable folder inside the sync dir stops all syncing.** A directory this process can't read fails the whole scan, every cycle, visible only in the log. *Workaround: make it readable, or move it out of the sync folder.*
 - **An edit landing mid-upload leaves a conflict copy** instead of simply re-uploading: the interrupted upload keeps the canonical name and your newer content becomes the conflict copy beside it. Nothing lost; tidy it by hand.
 
 Found 2026-08-01 by a fuzzer run configured to crash before *every* cycle:

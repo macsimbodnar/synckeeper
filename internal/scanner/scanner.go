@@ -23,7 +23,31 @@ func Scan(root string, base map[string]reconcile.BaseItem, ignore []string) (map
 
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// One unreadable directory used to fail the whole cycle, every
+			// cycle, visible only in the log (W18-G, review F4). It is now
+			// reported and walked around — but the engine MUST hold the
+			// baseline rows under it harmless, or "absent from the local
+			// scan" reads as "deleted locally" and trashes them on Drive,
+			// which is worse than the wedge. Skip.Unreadable is what tells it.
+			//
+			// Only a directory is tolerated: an unreadable root is already a
+			// hard error before the scan starts (guards.EnsureSyncDir), and a
+			// file that cannot be statted inside a readable directory means
+			// the tree is moving under us — the cycle should fail and replan.
+			if p == root || d == nil || !d.IsDir() {
+				return err
+			}
+			rel, relErr := filepath.Rel(root, p)
+			if relErr != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			skips = append(skips, reconcile.Skip{RelPath: rel, Unreadable: true,
+				Reason: "directory could not be read; its contents are left untouched on both sides: " + err.Error()})
+			// The folder itself is known to exist even though its contents are
+			// not: say so, so its own baseline row is never read as deleted.
+			snapshot[rel] = reconcile.LocalItem{IsDir: true}
+			return nil
 		}
 		if p == root {
 			return nil

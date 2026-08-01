@@ -13,6 +13,20 @@ Format:
 
 ---
 
+## 2026-08-01 — W18-G as built: two additions the item did not list, and one boundary left where it is
+
+**Context:** implementing W18-G (review F4 — one unreadable subdirectory failed `scanner.Scan` every cycle, permanently). The item already carried its own hard part: baseline rows under the skipped subtree must be held harmless, or the fix is worse than the bug. Building it raised three smaller calls.
+
+**As built (agent, within the decision Max already made):**
+
+1. **Only directories are tolerated.** A file whose `lstat` fails inside a *readable* directory means the tree is moving under us — the W3 soak measured 3,488 of those as chaos racing the scanner, and they converged by failing and replanning. That is the right answer there, so the tolerance is scoped to `d.IsDir()`. An unreadable **root** is untouched too: `guards.EnsureSyncDir` already makes it a hard error before the scan starts, so the scanner's new tolerance can never mask one.
+2. **The unreadable folder stays in the local snapshot as a directory.** We know it exists; only its contents are unknown. Saying so keeps its own baseline row out of the "deleted locally" branch without needing the held set to cover it, and avoids reporting the same folder twice — once by the scanner and once by the planner.
+3. **The daemon warns once per folder per occurrence.** Not in the item, but required by it in spirit: skips reach the one-shot `sync` output and nothing else (the daemon's channel for them is still plan.md W10), so tolerating the directory silently would have turned a loud wedge into an invisible standstill — arguably the worse failure, since the wedge at least stopped everything and got noticed. Per-*cycle* logging was rejected: a 45 s poll would bury the log in identical lines. The flag re-arms when the folder becomes readable again, so a recurrence is still reported.
+
+**Boundary recorded, not built:** a *new remote* file landing under an unreadable folder still fails its download every cycle — we genuinely cannot write there. That is a visible failed action on one file, not a wedge and not a deletion, and suppressing it would mean teaching reconcile path prefixes it otherwise does not need. Left as is, deliberately.
+
+**Consequences:** spec §5 (new bullet, and unreadable directories added to the always-reported list); MANUAL §6 gains the behaviour and §8 **loses its F4 known-bug entry** in this commit, as the rule requires; testing.md W18.11–W18.13; plan.md W18-G. Both halves red-first: without the scanner change the cycle hard-errors; without the hold it plans two delete-class actions including a collapsed folder delete carrying its subtree.
+
 ## 2026-08-01 — W18-E as built: the loser steps aside on Drive, and two older defects came out with it
 
 **Context:** implementing W18-E ("the init merge names the conflict winner by last edit"). The plan fixed the *rule*; the plumbing was mechanical, but the plan shape for the new "local wins" case was not specified, and building it surfaced two defects that had nothing to do with E.

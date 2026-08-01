@@ -43,6 +43,13 @@ type Engine struct {
 
 	caseFold *bool // lazily probed once; sync cycles are serialized
 	normFold *bool
+
+	// warnedUnreadable remembers which directories this daemon has already
+	// complained about (W18-G). The condition is standing, not per-cycle, and
+	// a poll every 45 s would otherwise bury the log in identical lines; it
+	// re-arms when the directory becomes readable again, so a recurrence is
+	// still reported.
+	warnedUnreadable map[string]bool
 }
 
 // defaultTrash is the bin used when Engine.Trash is nil. A var so the suite's
@@ -193,8 +200,12 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		CaseFold:       e.caseInsensitive(),
 		NormFold:       e.normInsensitive(),
 		ShadowedRemote: shadowed,
-		PreferNewer:    opts.PreferNewer,
+		// Rows the scan could not see because a directory refused to be read
+		// (W18-G) — held harmless, never read as a local deletion.
+		UnreadableLocal: expandUnreadable(baseItems, localSkips),
+		PreferNewer:     opts.PreferNewer,
 	})
+	e.warnUnreadable(localSkips)
 	res := &Result{Plan: plan}
 	res.Skips = append(res.Skips, remoteSkips...)
 	res.Skips = append(res.Skips, localSkips...)
@@ -335,6 +346,55 @@ func expandShadowed(baseItems []statedb.Item, skips []reconcile.Skip) map[string
 		}
 	}
 	return shadowed
+}
+
+// expandUnreadable returns the baseline file ids whose LOCAL side the scan
+// could not see: every tracked row under a directory the scan reported as
+// unreadable (W18-G). It is the local mirror of expandShadowed, and it is not
+// optional — without it, tolerating an unreadable directory is worse than
+// wedging on it: every file under it is missing from the local snapshot,
+// reconcile reads that as "deleted locally", and one lost read permission
+// trashes a whole subtree on Drive.
+func expandUnreadable(baseItems []statedb.Item, skips []reconcile.Skip) map[string]bool {
+	var prefixes []string
+	for _, s := range skips {
+		if s.Unreadable {
+			prefixes = append(prefixes, s.RelPath+"/")
+		}
+	}
+	if len(prefixes) == 0 {
+		return nil
+	}
+	held := map[string]bool{}
+	for _, it := range baseItems {
+		for _, pre := range prefixes {
+			if strings.HasPrefix(it.RelPath, pre) {
+				held[it.DriveFileID] = true
+				break
+			}
+		}
+	}
+	return held
+}
+
+// warnUnreadable says once, per directory, that a folder cannot be read and
+// is therefore not syncing. Skips reach the one-shot `sync` output but the
+// daemon has no channel for them yet (plan.md W10), so without this a folder
+// would quietly stop syncing on a daemon-first install — the fix for a wedge
+// must not be an invisible standstill.
+func (e *Engine) warnUnreadable(skips []reconcile.Skip) {
+	seen := map[string]bool{}
+	for _, s := range skips {
+		if !s.Unreadable {
+			continue
+		}
+		seen[s.RelPath] = true
+		if !e.warnedUnreadable[s.RelPath] {
+			slog.Warn("a folder in the sync dir cannot be read; its contents are not syncing and nothing under it will be deleted on either side — fix its permissions",
+				"rel_path", s.RelPath, "reason", s.Reason)
+		}
+	}
+	e.warnedUnreadable = seen // re-arms once the directory is readable again
 }
 
 // withoutDeletes returns the plan minus the delete-class actions (the daemon's

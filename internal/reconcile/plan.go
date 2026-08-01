@@ -200,6 +200,14 @@ func Plan(in Input) ([]Action, []Skip) {
 				Reason: "remote copy is shadowed by a duplicate or fold-colliding name in Drive; leaving both sides alone"})
 			continue
 		}
+		if in.UnreadableLocal[b.FileID] {
+			// W18-G: the local copy is under a directory the scan could not
+			// read. "Local absent" would be a lie, and acting on it would
+			// trash the Drive copy of a file that is sitting right there.
+			skips = append(skips, Skip{RelPath: p,
+				Reason: "local copy is inside a directory that could not be read; leaving both sides alone"})
+			continue
+		}
 		// Under a local-driven dir rename this row's file, if it survives,
 		// already sits at its post-rename location — every row is decided
 		// at the path the item will occupy (§4.2), on both sides.
@@ -623,6 +631,14 @@ func Plan(in Input) ([]Action, []Skip) {
 			// deletion; leave the local dir alone and report it.
 			skips = append(skips, Skip{RelPath: p, FileID: b.FileID,
 				Reason: "remote folder is shadowed by a duplicate or fold-colliding name in Drive; leaving both sides alone"})
+			continue
+		}
+		if in.UnreadableLocal[b.FileID] {
+			// W18-G, dir flavor: a folder under an unreadable one is not a
+			// local deletion, and trashing it on Drive would take the whole
+			// subtree with it (§4.2's collapse).
+			skips = append(skips, Skip{RelPath: p,
+				Reason: "local folder is inside a directory that could not be read; leaving both sides alone"})
 			continue
 		}
 		// A local-driven move source (or a dir inside one) lives on at its

@@ -68,6 +68,13 @@ type Input struct {
 	// lost "first by id"). A baseline row whose id is shadowed is held
 	// harmless — surfaced as a skip, never read as remote-deleted (C2b).
 	ShadowedRemote map[string]bool
+
+	// UnreadableLocal is the same idea on the local side (W18-G): baseline
+	// file ids that live under a directory the scan could not read. They are
+	// absent from Local for a reason that is not deletion, so a plan that
+	// believed the snapshot would trash the user's Drive copies of an entire
+	// subtree because one folder lost its read permission.
+	UnreadableLocal map[string]bool
 }
 
 // Type enumerates plan actions.
@@ -152,6 +159,12 @@ type Skip struct {
 	RelPath string
 	Reason  string
 	FileID  string
+
+	// Unreadable marks a local directory the scan could not read (W18-G).
+	// Everything under it is missing from the local snapshot for a reason
+	// that is not "the user deleted it", so the engine expands this into
+	// Input.UnreadableLocal and the planner holds those rows harmless.
+	Unreadable bool
 
 	// Duplicate marks the one skip kind that means Drive itself holds two
 	// items under one name in one folder (it allows that; a filesystem does
