@@ -153,3 +153,25 @@ func TestTheDashboardNamesARejectedToken(t *testing.T) {
 		t.Error("the raw error is listed above the credentials line")
 	}
 }
+
+// TestAFoldedRowShowsItsCount: one row standing for 288 failed cycles must say
+// how many, and the count must survive the width cut — which cuts a message
+// from the right and a path from the left, so it sits on opposite ends.
+func TestAFoldedRowShowsItsCount(t *testing.T) {
+	ref := testRef()
+	snap := testSnapshot(ref)
+	snap.Status.Activity = []statedb.Activity{
+		{TS: ref.Add(-time.Minute).Unix(), Kind: "error", Detail: driveAuthError, Count: 288},
+		{TS: ref.Add(-2 * time.Minute).Unix(), Kind: "upload", RelPath: "Photos/2026/a-very-long-folder-name/img_8841.raf", Source: "local", Count: 7},
+	}
+	m := New(Options{Snapshot: snap, Width: 80, Height: 30, Clock: testRef})
+	m.view = ViewActivity
+
+	out := m.View()
+	if !strings.Contains(out, "×288") {
+		t.Errorf("the folded error does not show its count:\n%s", out)
+	}
+	if !strings.Contains(out, "×7") {
+		t.Errorf("the folded upload does not show its count:\n%s", out)
+	}
+}

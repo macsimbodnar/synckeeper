@@ -1,6 +1,7 @@
 package statedb
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -57,9 +58,12 @@ func TestDaemonStatusRoundTrip(t *testing.T) {
 func TestActivityRingCap(t *testing.T) {
 	db := openTemp(t)
 
+	// Distinct paths: an entry identical to the newest one folds into it by
+	// design (W19-2), so a ring-cap test has to append distinct entries or it
+	// would be measuring the fold instead.
 	total := activityCap + 25
 	for i := 0; i < total; i++ {
-		if err := db.AppendActivity(Activity{TS: int64(i), Kind: "upload", RelPath: "f"}); err != nil {
+		if err := db.AppendActivity(Activity{TS: int64(i), Kind: "upload", RelPath: fmt.Sprintf("f%d", i)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,7 +104,7 @@ func TestActivitySourceRoundTrip(t *testing.T) {
 func TestRecentActivityLimit(t *testing.T) {
 	db := openTemp(t)
 	for i := 0; i < 10; i++ {
-		if err := db.AppendActivity(Activity{TS: int64(i), Kind: "download"}); err != nil {
+		if err := db.AppendActivity(Activity{TS: int64(i), Kind: "download", RelPath: fmt.Sprintf("f%d", i)}); err != nil {
 			t.Fatal(err)
 		}
 	}

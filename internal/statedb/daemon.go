@@ -52,6 +52,11 @@ type Activity struct {
 	RelPath string
 	Detail  string
 	Source  string
+
+	// Count is how many times this entry repeated in a row: a cycle that keeps
+	// failing folds into one row with a count instead of filling the ring with
+	// copies. 1 for anything that happened once, and for pre-v7 rows.
+	Count int
 }
 
 // SetDaemonStatus upserts the singleton status row.
@@ -99,15 +104,50 @@ func (d *DB) GetDaemonStatus() (DaemonStatus, error) {
 }
 
 // AppendActivity records one action and trims the ring to activityCap rows.
+//
+// An entry identical to the newest one **folds into it**: the count goes up and
+// the timestamp moves to now, instead of a second row. A failing cycle repeats
+// its error every retry — with a backoff capped at ten poll intervals, that is
+// enough to fill the whole ring in a couple of days and evict every real sync
+// the user might want to look back at (found in the field, 2026-08-15). Folding
+// only against the *newest* row keeps the ring in timestamp order, and means
+// any real activity in between ends the run rather than merging across it.
 func (d *DB) AppendActivity(a Activity) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if _, err := d.sql.Exec(`insert into activity (ts, kind, rel_path, detail, source) values (?, ?, ?, ?, ?)`,
-		a.TS, a.Kind, a.RelPath, a.Detail, a.Source); err != nil {
+	folded, err := d.foldIntoNewest(a)
+	if err != nil {
 		return err
 	}
-	_, err := d.sql.Exec(`delete from activity where id <= (select max(id) from activity) - ?`, activityCap)
+	if !folded {
+		if _, err := d.sql.Exec(`insert into activity (ts, kind, rel_path, detail, source, count) values (?, ?, ?, ?, ?, 1)`,
+			a.TS, a.Kind, a.RelPath, a.Detail, a.Source); err != nil {
+			return err
+		}
+	}
+	_, err = d.sql.Exec(`delete from activity where id <= (select max(id) from activity) - ?`, activityCap)
 	return err
+}
+
+// foldIntoNewest bumps the newest row when a is a repeat of it, and reports
+// whether it did. Identity is the whole visible entry — kind, path, detail and
+// direction — so a genuinely different event never disappears into a count.
+func (d *DB) foldIntoNewest(a Activity) (bool, error) {
+	var id int64
+	err := d.sql.QueryRow(`select id from activity
+		where id = (select max(id) from activity)
+		  and kind = ? and rel_path = ? and detail = ? and source = ?`,
+		a.Kind, a.RelPath, a.Detail, a.Source).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := d.sql.Exec(`update activity set ts = ?, count = count + 1 where id = ?`, a.TS, id); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RecentActivity returns up to limit most-recent activity rows, newest first.
@@ -115,7 +155,7 @@ func (d *DB) RecentActivity(limit int) ([]Activity, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := d.sql.Query(`select id, ts, kind, rel_path, detail, source from activity
+	rows, err := d.sql.Query(`select id, ts, kind, rel_path, detail, source, count from activity
 		order by id desc limit ?`, limit)
 	if err != nil {
 		return nil, err
@@ -124,7 +164,7 @@ func (d *DB) RecentActivity(limit int) ([]Activity, error) {
 	var out []Activity
 	for rows.Next() {
 		var a Activity
-		if err := rows.Scan(&a.ID, &a.TS, &a.Kind, &a.RelPath, &a.Detail, &a.Source); err != nil {
+		if err := rows.Scan(&a.ID, &a.TS, &a.Kind, &a.RelPath, &a.Detail, &a.Source, &a.Count); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

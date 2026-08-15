@@ -76,6 +76,17 @@ func Clip(s string, max int) string {
 	return string(r[:max-1]) + "…"
 }
 
+// RepeatSuffix renders a folded activity row's repeat count, or "" when the
+// entry happened once. A row that stands for 288 failed cycles must say so —
+// the fold is what stops them filling the ring, and the count is what is left
+// of the ones that are no longer there.
+func RepeatSuffix(count int) string {
+	if count < 2 {
+		return ""
+	}
+	return fmt.Sprintf(" (×%d)", count)
+}
+
 // DirectionLabel renders an activity's change direction for humans.
 func DirectionLabel(source string) string {
 	switch source {

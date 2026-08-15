@@ -455,6 +455,16 @@ func (m Model) rowsFor(t theme, acts []statedb.Activity, w, limit int) []string 
 				text += " " + a.Detail
 			}
 		}
+		if a.Count > 1 {
+			// A folded row's count is the news in it — "this has been failing 288
+			// times" — so it goes on the end the width cut keeps: in front of a
+			// message (cut from the right), behind a path (cut from the left).
+			if a.RelPath == "" {
+				text = "×" + comma(a.Count) + " " + text
+			} else {
+				text += " ×" + comma(a.Count)
+			}
+		}
 		switch layout {
 		case "full":
 			rows = append(rows, fmt.Sprintf("%s %s %s %s",

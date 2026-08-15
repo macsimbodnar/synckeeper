@@ -40,6 +40,7 @@ func newActivityCmd() *cobra.Command {
 				if a.Detail != "" {
 					line += " " + status.OneLine(a.Detail)
 				}
+				line += status.RepeatSuffix(a.Count)
 				fmt.Println(line)
 			}
 			return nil

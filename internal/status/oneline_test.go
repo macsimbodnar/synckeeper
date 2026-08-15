@@ -94,3 +94,24 @@ func TestARejectedTokenIsNamedInPlainStatus(t *testing.T) {
 		t.Error("status --json lost daemon.last_error_auth")
 	}
 }
+
+// TestFoldedRowsAreCountedInPlainStatus: the plain view says how many times an
+// entry repeated, since the copies it stands for are no longer in the ring.
+func TestFoldedRowsAreCountedInPlainStatus(t *testing.T) {
+	now := time.Now()
+	snap := fixtures(now)["running_watching"]
+	snap.Activity = []statedb.Activity{
+		{TS: now.Add(-time.Minute).Unix(), Kind: "error", Detail: "auth: cannot fetch token", Count: 288},
+		{TS: now.Add(-2 * time.Minute).Unix(), Kind: "upload", RelPath: "a.txt", Source: "local", Count: 1},
+	}
+
+	var buf bytes.Buffer
+	PrintHuman(&buf, snap)
+	out := buf.String()
+	if !strings.Contains(out, "(×288)") {
+		t.Errorf("plain status does not count a folded row:\n%s", out)
+	}
+	if strings.Contains(out, "(×1)") {
+		t.Error("plain status decorated an entry that happened once")
+	}
+}

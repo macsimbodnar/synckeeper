@@ -113,6 +113,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 - **Deleting the sync folder itself is never a deletion.** If `~/Synckeeper` is gone, Synckeeper recreates it and downloads your files back — it never reads a missing folder as "delete everything on Drive". Deleting the *contents* is different and is a real deletion: it propagates to Drive's bin like any other.
 - **Sanity guard (not confirmable).** A sync folder that is unreadable, or is not a directory → syncing stops with an error. No flag overrides it.
 - **Not synced (skipped — reported in `sync` output, not `status`):** Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, filesystem-invalid names, Drive same-name duplicates in one folder (first wins, rest skipped). Listed by a one-shot `synckeeper sync` (and `init --adopt`); the daemon doesn't surface them in `status`. Ignored patterns skipped silently.
+- **A repeating entry is counted, not repeated.** The same event in a row (typically an error the daemon retries) is kept as one entry with a repeat count and the time it last happened — in `status`, `activity` and the dashboard alike. Without it a fault lasting a couple of days would fill the 500-entry ring and evict every real sync from it.
 - **Crash safe.** Interrupt at any point (crash, kill, power loss) → recovered next run; partial transfers discarded and replanned.
 
 ## 7. Recovery
@@ -168,7 +169,7 @@ Three views, switched with number keys or Tab:
 | View | Shows |
 |---|---|
 | **1 overview** | next poll (an estimate — see below), last sync + cycle summary, tracked/pending/quarantine counts, where deletions from Drive land, and an **attention** block that appears only when something needs it (guard block + how to release it, **expired credentials + `synckeeper login`**, last error, no system bin, dead daemon, missing credentials, autostart not installed), then recent activity |
-| **2 activity** | the recorded history, newest first, with direction and file count — the most recent 200 entries of the daemon's 500-entry ring (`activity -n` reads further back). Scroll it, filter (`f`), or search paths/details/kinds (`/`) — the heading reports `N of M` and what is filtering |
+| **2 activity** | the recorded history, newest first, with direction and file count — the most recent 200 entries of the daemon's 500-entry ring (`activity -n` reads further back). An entry repeating in a row is **one row with a count** (`×288`), so a failing cycle can't push your history out of the ring. Scroll it, filter (`f`), or search paths/details/kinds (`/`) — the heading reports `N of M` and what is filtering |
 | **3 info** | the static picture — version, every path with permission modes, sync target + Drive folder id, machine name + id, OAuth client, token status, effective config. Same data `info` prints |
 
 | Keys | |

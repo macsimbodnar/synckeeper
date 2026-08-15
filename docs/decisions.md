@@ -28,6 +28,22 @@ Format:
 
 **Consequences:** `internal/status` gains `OneLine`/`Clip` (shared by the writer and every reader, so the two cannot drift); `internal/watch`'s recorder flattens before it writes; `internal/tui` gains `flatten` + `clampBody`; `PrintHuman` and `synckeeper activity` flatten what earlier versions already stored, since those rows are still in Max's ring. No sync-path change. plan.md W19; testing.md W19.1–W19.4; MANUAL §10.
 
+## 2026-08-15 — W19-2: a repeating activity entry folds into a count, and that is also W10's answer
+
+**Context:** the third defect behind the field report. The activity ring holds 500 rows and the daemon appends one per failed cycle; a failure it cannot fix (here, a revoked refresh token) retries at a backoff capped at ten poll intervals, so in two to three days the ring holds nothing but copies of one message and every real sync the user might want to look back at is gone. The screenshot's rows span 2d10h → 2d12h at ~10-minute spacing — the ring had been full of that one error for days.
+
+**Decision (Max, 2026-08-15 — the schema column, over an in-memory dedupe in the daemon):** an entry identical to the **newest** row folds into it: `count + 1` and the timestamp moves to the latest occurrence. Schema **v7**, `activity.count`, `default 1`, no backfill.
+
+- **Why the column and not daemon-side dedupe.** A count is what tells the user "this has been failing 288 times" versus "one blip"; in-memory state would also be lost on every restart, which is precisely when a user restarts to see whether the problem persists.
+- **Identity is the whole visible entry** — kind, rel_path, detail and source. Two files, two details or two directions stay two rows; nothing a user could distinguish on screen disappears into a count.
+- **Only the newest row folds.** That keeps the ring in timestamp order (rows are read by `id desc`), and makes a real event between two repeats end the run rather than merging across it — so the history in between is never swallowed.
+- **The count renders on the end the width cut keeps:** in front of a message (cut from the right), behind a path (cut from the left). `status --plain` and `activity` print `(×N)`; an entry that happened once is not decorated.
+- **Two existing tests were re-fixtured, not weakened.** `TestActivityRingCap` and `TestRecentActivityLimit` appended 500+ *identical* rows, which now correctly produce one. They assert the cap and the limit, so they now append distinct paths and their assertions are unchanged.
+
+**This also settles W10's flagged open question.** W10 (surface skips in `activity`) was scheduled with one unresolved design detail: a permanent skip recurs identically every cycle and would flood the capped ring. That question now has a general answer in the storage layer rather than a special case in the skip path — W10 can emit its per-skip entries plainly.
+
+**Consequences:** schema v7 (read-only commands need an exact match, so `status` asks for one migration under the daemon); `statedb.Activity` gains `Count`; `status.RepeatSuffix` shared by the plain views; spec §13; MANUAL §6 and §10; plan.md W19-2 and W10; testing.md W19.8–W19.10.
+
 ## 2026-08-15 — W19-3: `login` drops the instance lock, because the daemon can now adopt a token
 
 **Context:** the second half of W19. Max's OAuth client is still an unverified **testing** client in the Google console, whose refresh tokens expire about weekly, so `invalid_grant` is not a one-off — it is a recurring event this tool has to handle gracefully. Two things made it worse than it needed to be. `status.Input.tokenPresent` only stats `token.json`, so `status` reported `token: present` for two days against a credential Google had already refused; and `auth.TokenSource` builds the `oauth2.TokenSource` **once**, at daemon startup, around the refresh token as it was then — so `synckeeper login` in another terminal changed nothing for the running daemon, which kept refreshing with the dead token until restarted.

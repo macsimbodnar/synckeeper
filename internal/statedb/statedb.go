@@ -122,6 +122,11 @@ var migrations = []string{
 	// is classified where the error object still exists (internal/auth) and
 	// stored, rather than string-matched by each reader (W19-3).
 	`alter table daemon_status add column last_error_auth integer not null default 0;`,
+	// v6 -> v7: activity.count — how many times the newest row repeated. A
+	// failure that recurs every cycle used to append a row per cycle and evict
+	// the real history from the capped ring within days (W19-2). Existing rows
+	// default to 1, which is what they are.
+	`alter table activity add column count integer not null default 1;`,
 }
 
 // Path returns the state DB path inside the given config dir.

@@ -85,6 +85,34 @@ func TestARefusedTokenIsRecordedAsSuch(t *testing.T) {
 	}
 }
 
+// TestARepeatingFailureDoesNotEvictTheHistory is the field scenario end to
+// end at the daemon's own layer: two days of a failing cycle used to leave 500
+// copies of one error and nothing else. The user's real activity has to
+// survive the outage that hid it.
+func TestARepeatingFailureDoesNotEvictTheHistory(t *testing.T) {
+	db := recorderDB(t)
+	r := &recorder{db: db}
+
+	r.append(statedb.Activity{TS: 1, Kind: "upload", RelPath: "notes.md", Source: "local"})
+	for i := 0; i < 600; i++ { // more than the whole ring holds
+		r.recordError(errors.New(driveAuthError))
+	}
+
+	acts, err := db.RecentActivity(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 2 {
+		t.Fatalf("600 identical failures left %d rows, want 2 (the fold + the upload)", len(acts))
+	}
+	if acts[0].Count != 600 {
+		t.Errorf("count = %d, want 600", acts[0].Count)
+	}
+	if acts[1].RelPath != "notes.md" {
+		t.Errorf("the real activity was evicted: %+v", acts[1])
+	}
+}
+
 // TestStoredTextIsBounded: an error carrying a whole response body is clipped
 // before it reaches the database — the state db is not a log.
 func TestStoredTextIsBounded(t *testing.T) {

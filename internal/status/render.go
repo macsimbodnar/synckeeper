@@ -72,6 +72,7 @@ func PrintHuman(w io.Writer, s Snapshot) {
 			if a.Detail != "" {
 				line += " " + OneLine(a.Detail)
 			}
+			line += RepeatSuffix(a.Count)
 			fmt.Fprintln(w, line)
 		}
 	}
