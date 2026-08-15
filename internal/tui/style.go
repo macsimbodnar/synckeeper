@@ -64,7 +64,13 @@ func visibleLen(s string) int { return len([]rune(s)) }
 // truncate shortens s to width runes, marking the cut with an ellipsis. Paths
 // are cut from the left (the tail — the file name — is the informative end);
 // everything else from the right.
+//
+// Both cutters flatten first, which is what makes "one cell, one line" true
+// for values this package does not control — a Drive error, or a file name
+// that legitimately contains a newline. Without it a single row draws five,
+// every row budget under-counts, and the frame scrolls off its own screen.
 func truncate(s string, width int) string {
+	s = flatten(s)
 	r := []rune(s)
 	if width <= 0 || len(r) <= width {
 		return s
@@ -76,6 +82,7 @@ func truncate(s string, width int) string {
 }
 
 func truncatePath(s string, width int) string {
+	s = flatten(s)
 	r := []rune(s)
 	if width <= 0 || len(r) <= width {
 		return s
@@ -84,6 +91,24 @@ func truncatePath(s string, width int) string {
 		return "…"
 	}
 	return "…" + string(r[len(r)-(width-1):])
+}
+
+// flatten turns every line-breaking character into a space, so a cell occupies
+// exactly one row. It deliberately neither collapses runs nor trims — unlike
+// `status.OneLine`, which normalizes text on its way *into* the database, this
+// one is applied to strings the view has already composed and spaced, and a
+// swallowed leading space would shift a whole column.
+func flatten(s string) string {
+	if !strings.ContainsAny(s, "\n\r\t\v\f") {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t', '\v', '\f':
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // pad right-pads to width runes (no-op when already wider).

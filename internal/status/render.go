@@ -36,7 +36,10 @@ func PrintHuman(w io.Writer, s Snapshot) {
 			fmt.Fprintf(w, "guard:         BLOCKED — %s\n", ds.GuardReason)
 		}
 		if ds.LastError != "" {
-			fmt.Fprintf(w, "last error:    %s\n", ds.LastError)
+			// Flattened here too: rows written before the daemon learned to
+			// flatten them are still in the ring, and a `last error:` that runs
+			// five lines breaks the one-fact-per-line shape a script greps.
+			fmt.Fprintf(w, "last error:    %s\n", OneLine(ds.LastError))
 		}
 	}
 
@@ -61,9 +64,9 @@ func PrintHuman(w io.Writer, s Snapshot) {
 	if len(s.Activity) > 0 {
 		fmt.Fprintln(w, "recent activity:")
 		for _, a := range s.Activity {
-			line := fmt.Sprintf("  %-9s %-11s %-9s %s", Ago(s.Now, a.TS), DirectionLabel(a.Source), a.Kind, a.RelPath)
+			line := fmt.Sprintf("  %-9s %-11s %-9s %s", Ago(s.Now, a.TS), DirectionLabel(a.Source), a.Kind, OneLine(a.RelPath))
 			if a.Detail != "" {
-				line += " " + a.Detail
+				line += " " + OneLine(a.Detail)
 			}
 			fmt.Fprintln(w, line)
 		}

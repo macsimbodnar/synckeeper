@@ -12,7 +12,13 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/engine"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/status"
 )
+
+// maxStoredText bounds one stored error or detail. A Drive error carries its
+// whole HTTP response body; the informative part is the first sentence, and
+// the database is not a log.
+const maxStoredText = 400
 
 // HeartbeatInterval is how often the daemon refreshes its status row while
 // otherwise idle, so a quiet daemon still looks alive. Read-only commands
@@ -112,7 +118,7 @@ func (r *recorder) cycleDone(res *engine.Result, dur time.Duration, syncErr erro
 		r.s.LastSyncAt = now
 		r.s.LastError = ""
 	} else {
-		r.s.LastError = syncErr.Error()
+		r.s.LastError = status.Clip(status.OneLine(syncErr.Error()), maxStoredText)
 	}
 	if res != nil {
 		cs := statedb.CycleSummary{
@@ -225,7 +231,13 @@ func (r *recorder) recordError(err error) {
 	r.append(statedb.Activity{TS: time.Now().Unix(), Kind: "error", Detail: err.Error()})
 }
 
+// append records one activity row, flattened first. Nothing downstream renders
+// a multi-line cell: the dashboard budgets its panels in rows and a five-line
+// Drive error would push the whole frame off the screen, so the text is made
+// one line here, once, rather than at each of the readers.
 func (r *recorder) append(a statedb.Activity) {
+	a.RelPath = status.OneLine(a.RelPath)
+	a.Detail = status.Clip(status.OneLine(a.Detail), maxStoredText)
 	if err := r.db.AppendActivity(a); err != nil {
 		slog.Debug("append activity", "err", err)
 	}

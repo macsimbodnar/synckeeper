@@ -36,9 +36,9 @@ func newActivityCmd() *cobra.Command {
 			}
 			for _, a := range acts { // newest first
 				line := fmt.Sprintf("%s  %-11s %-9s %s",
-					time.Unix(a.TS, 0).Format("2006-01-02 15:04:05"), status.DirectionLabel(a.Source), a.Kind, a.RelPath)
+					time.Unix(a.TS, 0).Format("2006-01-02 15:04:05"), status.DirectionLabel(a.Source), a.Kind, status.OneLine(a.RelPath))
 				if a.Detail != "" {
-					line += " " + a.Detail
+					line += " " + status.OneLine(a.Detail)
 				}
 				fmt.Println(line)
 			}

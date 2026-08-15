@@ -30,15 +30,16 @@ func (m Model) View() string {
 	// moving between database reads (U3). The snapshot's own Now stays as the
 	// record of when it was gathered.
 	m.snap.Status.Now = m.now()
-	body := m.body(t, w)
+	notice, hasNotice := m.noticeLine(t, w)
+	body := m.clampBody(t, m.body(t, w), hasNotice)
 
 	var b strings.Builder
 	b.WriteString(m.header(t, w))
 	b.WriteByte('\n')
 	b.WriteString(m.identity(t, w))
 	b.WriteByte('\n')
-	if line, ok := m.noticeLine(t, w); ok {
-		b.WriteString(line)
+	if hasNotice {
+		b.WriteString(notice)
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
@@ -47,6 +48,29 @@ func (m Model) View() string {
 	b.WriteString(m.footer(t, w))
 	b.WriteByte('\n')
 	return b.String()
+}
+
+// clampBody is the frame's last-resort height guard: whatever a panel decided
+// to draw, the finished frame never emits more lines than the terminal has.
+// Every budget above is computed in *rows*, so any value that renders taller
+// than one row would scroll the header away — which is exactly what a
+// multi-line Drive error did before those values were flattened. The flattening
+// is the fix; this is the invariant that keeps the next such value from
+// reaching the screen, and a test asserts it for every state.
+func (m Model) clampBody(t theme, body string, hasNotice bool) string {
+	// header, identity, the blank line, the footer, and View's trailing newline.
+	chrome := 5
+	if hasNotice {
+		chrome++
+	}
+	allowed := m.height - chrome
+	lines := strings.Split(body, "\n")
+	if allowed < 1 || len(lines) <= allowed {
+		return body
+	}
+	kept := lines[:allowed]
+	kept[allowed-1] = t.muted(truncate("… the window is too short to draw the rest", m.width))
+	return strings.Join(kept, "\n")
 }
 
 // noticeLine reports the result of the last daemon action, painted by outcome
@@ -413,9 +437,14 @@ func (m Model) rowsFor(t theme, acts []statedb.Activity, w, limit int) []string 
 			dir = "—"
 		}
 		text := a.RelPath
+		// A row with no path is a message, not a file: an error or a cycle
+		// summary. Cutting it from the left — right for a path, whose tail is
+		// the file name — throws away the sentence that says what went wrong
+		// and keeps the JSON tail that says nothing.
+		cut := truncatePath
 		if a.Detail != "" {
 			if text == "" {
-				text = a.Detail
+				text, cut = a.Detail, truncate
 			} else {
 				text += " " + a.Detail
 			}
@@ -426,15 +455,15 @@ func (m Model) rowsFor(t theme, acts []statedb.Activity, w, limit int) []string 
 				pad(status.Ago(s.Now, a.TS), tsW),
 				paintFn(pad(glyph+" "+dir, dirW)),
 				pad(a.Kind, kindW),
-				truncatePath(text, pathW)))
+				cut(text, pathW)))
 		case "compact":
 			rows = append(rows, fmt.Sprintf("%s %s %s %s",
 				pad(status.Ago(s.Now, a.TS), tsW),
 				paintFn(glyph),
 				pad(truncate(a.Kind, kindW), kindW),
-				truncatePath(text, pathW)))
+				cut(text, pathW)))
 		default:
-			rows = append(rows, paintFn(glyph)+" "+truncatePath(text, pathW-2))
+			rows = append(rows, paintFn(glyph)+" "+cut(text, pathW-2))
 		}
 	}
 	return rows

@@ -13,6 +13,21 @@ Format:
 
 ---
 
+## 2026-08-15 — W19: the dashboard's row budgets are rows, so a stored value must be one line
+
+**Context:** Max's `status` filled the whole terminal with one repeated Google auth error — no header, no cycle/totals panels, no attention block. Reproduced offline: 60 activity rows carrying the five-line `invalid_grant` error render a **200-line frame in a 58-row terminal**, so the alternate screen scrolls and everything above the last rows is gone. Three separate defects stack into that picture: text stored with newlines, a repeating failure that fills the 500-row ring in ~2–3 days, and a revoked token that `status` still reports as `token: present`.
+
+**Decision (Max, 2026-08-15, agent-diagnosed):** fix all three as **W19**, ahead of W7, on the standing rule that a reproduced field defect outranks features and ports. Order: flatten → classify the token → fold the repeats → docs with each.
+
+**The calls inside item 1, agent-made while building:**
+
+1. **Flatten at both ends, with two different functions, deliberately.** `status.OneLine` normalizes text on its way *into* the database — collapse whitespace runs, trim — while `internal/tui`'s `flatten` only maps line-breaking characters to spaces and neither collapses nor trims. The view applies it to strings it has already composed and column-padded, and the trimming version silently ate a note's leading space, shifting a whole column (caught by the `info` golden). Same guarantee, two contracts.
+2. **A row with no path is cut from the right.** This, more than the newlines, is what the screenshot actually shows: `truncatePath` keeps the **tail**, which is right for a file name and wrong for a sentence — the tail of a Drive error is `"error_description": "Token has been expired or revoked." }`. An activity row with an empty `rel_path` is a message, not a file, so it is now cut from the right and keeps its head.
+3. **`View` clamps the finished frame to the terminal height.** Belt and braces: the flattening is the fix, the clamp is the invariant that keeps the *next* such value off the screen, and it is asserted for every golden state rather than for the error case alone. It cuts from the body end and says it did.
+4. **Stored text is bounded at 400 runes.** A Drive error carries its whole response body; the informative part is the first sentence and the state db is not a log.
+
+**Consequences:** `internal/status` gains `OneLine`/`Clip` (shared by the writer and every reader, so the two cannot drift); `internal/watch`'s recorder flattens before it writes; `internal/tui` gains `flatten` + `clampBody`; `PrintHuman` and `synckeeper activity` flatten what earlier versions already stored, since those rows are still in Max's ring. No sync-path change. plan.md W19; testing.md W19.1–W19.4; MANUAL §10.
+
 ## 2026-08-01 — W18-H narrowed to 404, and what that leaves for item F
 
 **Context:** W18-H (review F2) says crash recovery should classify its `List` failure and "skip the op on a permanent (404/permission) failure, keep failing on a transient one". Implementing it forced the 403 question, because item A had already scoped `driveclient.IsNotFound` to **404 only** on the grounds that a 403 is a permission or quota problem and must never look like deletion.

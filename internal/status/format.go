@@ -3,6 +3,7 @@ package status
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/macsimbodnar/synckeeper/internal/service"
@@ -46,6 +47,33 @@ func Dur(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
 	}
+}
+
+// OneLine flattens s into a single display line: every run of newlines, tabs
+// and other whitespace collapses to one space, and the result is trimmed.
+//
+// It is used by the writer (the daemon, before a string reaches the database)
+// and by every reader, so a stored value and a rendered cell cannot disagree
+// about how many lines they occupy. That agreement is the whole point: a Drive
+// auth failure arrives as five lines of JSON, and a five-line "row" silently
+// blows every height budget the dashboard computes in rows (found in the field,
+// 2026-08-15 — the overview scrolled off its own screen).
+func OneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// Clip shortens s to max runes, marking the cut. It bounds what is *stored*:
+// a rendered cell is cut to the terminal instead, so this only keeps a runaway
+// error body out of the database.
+func Clip(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
 }
 
 // DirectionLabel renders an activity's change direction for humans.

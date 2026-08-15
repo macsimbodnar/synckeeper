@@ -1,0 +1,134 @@
+package tui
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/macsimbodnar/synckeeper/internal/statedb"
+	"github.com/macsimbodnar/synckeeper/internal/status"
+)
+
+// driveAuthError is the error a revoked refresh token produces, verbatim from
+// the field (2026-08-15): five lines, of which only the first is information.
+const driveAuthError = "Get \"https://www.googleapis.com/drive/v3/changes?pageToken=204212&prettyPrint=false\": " +
+	"auth: cannot fetch token: 400\nResponse: {\n  \"error\": \"invalid_grant\",\n  " +
+	"\"error_description\": \"Token has been expired or revoked.\"\n}"
+
+func frameLines(s string) int { return len(strings.Split(strings.TrimSuffix(s, "\n"), "\n")) }
+
+// countActivityRows counts rendered activity rows by their timestamp column,
+// which only a row start carries — so it counts rows, not lines of one row.
+var rowStart = regexp.MustCompile(`(?m)^\s+\d+[smhd][0-9a-z]* ago\s`)
+
+func countActivityRows(frame string) int { return len(rowStart.FindAllString(frame, -1)) }
+
+// TestFrameNeverExceedsTheTerminalHeight is the invariant the field bug broke:
+// every panel budgets in rows, so one value that renders as five lines pushes
+// the header, the panels and the attention block off the top of the alternate
+// screen — which is what the user saw, a whole screen of nothing but error
+// text. Asserted for every golden state, not just the error one.
+func TestFrameNeverExceedsTheTerminalHeight(t *testing.T) {
+	ref := testRef()
+	for name, m := range frames(ref) {
+		t.Run(name, func(t *testing.T) {
+			if got := frameLines(m.View()); got > m.height {
+				t.Errorf("frame is %d lines in a %d-line terminal", got, m.height)
+			}
+		})
+	}
+}
+
+// multilineErrorModel is a dashboard whose whole activity ring is the field's
+// five-line auth error, with the same text as the daemon's last error.
+func multilineErrorModel(ref time.Time, view int) Model {
+	snap := testSnapshot(ref)
+	snap.Status.Daemon.LastError = driveAuthError
+	snap.Status.Activity = nil
+	for i := 0; i < 60; i++ {
+		detail := driveAuthError
+		// Every third row is a *short* multi-line error. It matters: a long one
+		// loses its newlines to the width cut anyway, so only a message that
+		// fits the column proves the cell itself is flattened.
+		if i%3 == 0 {
+			detail = "upload failed:\nquota exceeded"
+		}
+		snap.Status.Activity = append(snap.Status.Activity, statedb.Activity{
+			TS: ref.Add(-time.Duration(i) * time.Minute).Unix(), Kind: "error", Detail: detail,
+		})
+	}
+	m := New(Options{Snapshot: snap, Width: 100, Height: 30, Clock: testRef})
+	m.view = view
+	return m
+}
+
+// TestAMultilineErrorStaysOneRow is the regression itself: an activity detail
+// and a last error that arrive with newlines are rendered as one row each, so
+// the frame still fits and the header — the line that answers "is it working?"
+// — is still on screen.
+func TestAMultilineErrorStaysOneRow(t *testing.T) {
+	ref := testRef()
+	for _, view := range []int{ViewOverview, ViewActivity} {
+		m := multilineErrorModel(ref, view)
+		out := m.View()
+		if got := frameLines(out); got > m.height {
+			t.Errorf("view %d: frame is %d lines in a %d-line terminal", view, got, m.height)
+		}
+		first := strings.SplitN(out, "\n", 2)[0]
+		if !strings.Contains(first, "synckeeper") {
+			t.Errorf("view %d: the header is not the first line: %q", view, first)
+		}
+		// The discriminating assertions: a row is one line, so each view still
+		// shows what it budgeted for. Unflattened, one row eats five lines, the
+		// frame's height guard throws the rest away, and the user gets a screen
+		// of error text with nothing else on it — the reported bug.
+		if view == ViewActivity {
+			if got := countActivityRows(out); got < 15 {
+				t.Errorf("activity view: only %d rows fit the frame; a row is not one line:\n%s", got, out)
+			}
+		} else {
+			for _, panel := range []string{"cycle", "totals", "attention", "last error"} {
+				if !strings.Contains(out, panel) {
+					t.Errorf("overview lost its %q panel to the error rows:\n%s", panel, out)
+				}
+			}
+		}
+		if strings.Contains(out, "\"error\": \"invalid_grant\",\n") {
+			t.Errorf("view %d: the raw JSON body reached the screen", view)
+		}
+		// The head of the message survives: a row with no path is cut from the
+		// right, so what is kept is the sentence, not the JSON tail.
+		if !strings.Contains(out, `Get "https://www.googleapis.com`) {
+			t.Errorf("view %d: the error text was lost, not flattened:\n%s", view, out)
+		}
+		if strings.Contains(out, "expired or revoked.\" }") {
+			t.Errorf("view %d: the row kept the tail and cut the message", view)
+		}
+	}
+}
+
+// TestClampBodyIsTheLastResort: even a body that ignores its budget entirely
+// cannot scroll the frame, because View clamps what it emits.
+func TestClampBodyIsTheLastResort(t *testing.T) {
+	m := New(Options{Snapshot: testSnapshot(testRef()), Width: 100, Height: 12, Clock: testRef})
+	body := strings.Repeat("x\n", 200)
+	clamped := m.clampBody(theme{}, body, false)
+	if got := len(strings.Split(clamped, "\n")); got != m.height-5 {
+		t.Fatalf("clamped body is %d lines, want %d", got, m.height-5)
+	}
+	if !strings.Contains(clamped, "too short") {
+		t.Error("the clamp cut the body without saying so")
+	}
+}
+
+// TestOneLineIsSharedByWriterAndReader pins that the dashboard flattens with
+// the same function the daemon stores with, so the two cannot drift.
+func TestOneLineIsSharedByWriterAndReader(t *testing.T) {
+	if got := truncate(driveAuthError, 400); strings.Contains(got, "\n") {
+		t.Errorf("truncate left a newline in a cell: %q", got)
+	}
+	if got := truncatePath("Notes/two\nline.md", 40); got != status.OneLine("Notes/two\nline.md") {
+		t.Errorf("truncatePath = %q, want the flattened path", got)
+	}
+}

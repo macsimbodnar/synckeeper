@@ -187,6 +187,8 @@ Three views, switched with number keys or Tab:
 
 Aliases: `Shift-Tab` cycles views backwards, `Ctrl-F`/`Ctrl-B` page, `Home`/`End` jump to newest/oldest, and `Esc` quits (except while a search line is open, where it cancels the search).
 
+**One entry, one line.** An error can arrive many lines long (a Drive auth failure carries its whole HTTP response); it is stored and shown flattened to one line, cut at the window width — from the **right** for a message, so you keep the sentence, and from the **left** for a file path, so you keep the file name. The frame never draws more lines than the terminal has.
+
 Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
 
 `s`/`p`/`P`/`R` are the same requests `sync`, `pause`, `resume` and `reload` send; a result line appears under the header and clears itself. **`s` never confirms a held mass deletion** — a deletion the guard is holding is released only by `synckeeper sync --confirm-deletes` on the command line (§6), never by a keystroke.
