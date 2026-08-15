@@ -26,6 +26,12 @@ type DaemonStatus struct {
 	NextPollAt      int64
 	GuardBlocked    bool
 	GuardReason     string
+
+	// LastErrorAuth marks LastError as Google refusing the refresh token —
+	// revoked, or expired, which an unverified "testing" OAuth client does
+	// about weekly. Retrying never clears it; only `synckeeper login` does,
+	// so every view says so instead of showing raw OAuth JSON (W19).
+	LastErrorAuth bool
 }
 
 // CycleSummary is the JSON stored in DaemonStatus.LastCycleJSON.
@@ -54,16 +60,19 @@ func (d *DB) SetDaemonStatus(s DaemonStatus) error {
 	defer d.mu.Unlock()
 	_, err := d.sql.Exec(`insert into daemon_status
 		(id, running, pid, started_at, last_heartbeat_at, mode, paused,
-		 last_sync_at, last_cycle_json, last_error, next_poll_at, guard_blocked, guard_reason)
-		values (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 last_sync_at, last_cycle_json, last_error, next_poll_at, guard_blocked, guard_reason,
+		 last_error_auth)
+		values (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		on conflict(id) do update set
 			running = excluded.running, pid = excluded.pid, started_at = excluded.started_at,
 			last_heartbeat_at = excluded.last_heartbeat_at, mode = excluded.mode, paused = excluded.paused,
 			last_sync_at = excluded.last_sync_at, last_cycle_json = excluded.last_cycle_json,
 			last_error = excluded.last_error, next_poll_at = excluded.next_poll_at,
-			guard_blocked = excluded.guard_blocked, guard_reason = excluded.guard_reason`,
+			guard_blocked = excluded.guard_blocked, guard_reason = excluded.guard_reason,
+			last_error_auth = excluded.last_error_auth`,
 		boolToInt(s.Running), s.PID, s.StartedAt, s.LastHeartbeatAt, s.Mode, boolToInt(s.Paused),
-		s.LastSyncAt, s.LastCycleJSON, s.LastError, s.NextPollAt, boolToInt(s.GuardBlocked), s.GuardReason)
+		s.LastSyncAt, s.LastCycleJSON, s.LastError, s.NextPollAt, boolToInt(s.GuardBlocked), s.GuardReason,
+		boolToInt(s.LastErrorAuth))
 	return err
 }
 
@@ -71,19 +80,21 @@ func (d *DB) SetDaemonStatus(s DaemonStatus) error {
 // has never recorded itself.
 func (d *DB) GetDaemonStatus() (DaemonStatus, error) {
 	var s DaemonStatus
-	var running, paused, guard int
+	var running, paused, guard, authErr int
 	err := d.sql.QueryRow(`select running, pid, started_at, last_heartbeat_at, mode, paused,
-		last_sync_at, last_cycle_json, last_error, next_poll_at, guard_blocked, guard_reason
+		last_sync_at, last_cycle_json, last_error, next_poll_at, guard_blocked, guard_reason,
+		last_error_auth
 		from daemon_status where id = 1`).Scan(
 		&running, &s.PID, &s.StartedAt, &s.LastHeartbeatAt, &s.Mode, &paused,
-		&s.LastSyncAt, &s.LastCycleJSON, &s.LastError, &s.NextPollAt, &guard, &s.GuardReason)
+		&s.LastSyncAt, &s.LastCycleJSON, &s.LastError, &s.NextPollAt, &guard, &s.GuardReason,
+		&authErr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DaemonStatus{}, ErrNotFound
 	}
 	if err != nil {
 		return DaemonStatus{}, err
 	}
-	s.Running, s.Paused, s.GuardBlocked = running != 0, paused != 0, guard != 0
+	s.Running, s.Paused, s.GuardBlocked, s.LastErrorAuth = running != 0, paused != 0, guard != 0, authErr != 0
 	return s, nil
 }
 

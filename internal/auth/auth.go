@@ -63,9 +63,12 @@ func TokenSource(ctx context.Context, configDir string) (oauth2.TokenSource, err
 		return nil, err
 	}
 	return &persistingSource{
-		path: path,
-		src:  cfg.TokenSource(ctx, tok),
-		last: tok.AccessToken,
+		path:        path,
+		cfg:         cfg,
+		ctx:         ctx,
+		src:         cfg.TokenSource(ctx, tok),
+		last:        tok.AccessToken,
+		lastRefresh: tok.RefreshToken,
 	}, nil
 }
 
@@ -144,7 +147,10 @@ func Login(ctx context.Context, configDir string) (oauth2.TokenSource, error) {
 	if err := SaveToken(path, tok); err != nil {
 		return nil, fmt.Errorf("save token: %w", err)
 	}
-	return &persistingSource{path: path, src: cfg.TokenSource(ctx, tok), last: tok.AccessToken}, nil
+	return &persistingSource{
+		path: path, cfg: cfg, ctx: ctx,
+		src: cfg.TokenSource(ctx, tok), last: tok.AccessToken, lastRefresh: tok.RefreshToken,
+	}, nil
 }
 
 func randomState() (string, error) {

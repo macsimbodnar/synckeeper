@@ -45,7 +45,7 @@ Global flags: `-v` / `--verbose` — debug logging; `--version` — print versio
 | Command | What it does |
 |---|---|
 | `init [--service\|--no-service]` | Set up this machine, or re-sync it: signs in if needed, resolves the Drive folder, merges both sides (union — nothing deleted), then offers the login service (§1). **Safe to re-run** — it is also the fix for a lost state DB (§7). Takes the instance lock — stop the login service first if it's running (§7). `--service`/`--no-service`: install/skip the login service without prompting. |
-| `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Stop the daemon first — `login` takes the instance lock, because a running daemon holds the old token in memory. |
+| `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Runs beside a live daemon — no instance lock, no restart: the daemon re-reads `token.json` when Google refuses a refresh. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon runs, delegated to it and awaited. `--dry-run`: print the plan, change nothing (needs daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously, foreground: local changes picked up under a second, remote within the poll interval. |
 | `status [--plain] [--json] [--interval D]` | **Human:** on a terminal, the live dashboard (§10). **Scriptable:** piped/redirected it prints the one-shot report — daemon state, last sync, config, guard blocks, where deletions from Drive land (system bin or quarantine), recent activity; `--plain` forces that report on a terminal, `--json` emits it for scripts. Works daemon up or down. `--interval` sets how often the dashboard re-reads state (default 1s; it redraws ~4×/s regardless). |
@@ -96,7 +96,7 @@ cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeepe
 
 Keep it private: `chmod 600 credentials.json`. Synckeeper tightens the config dir itself (`0700`) on every run, and `info` flags a `credentials.json` other local users can read — it warns rather than refuses, since the file is yours.
 
-Then run `synckeeper init` (first time — it signs in and offers the login service) or `synckeeper login` (re-point an existing install). **Don't `service install` before signing in** — the service runs `watch`, which can't sign in by itself, so it will just crash-loop until you've authenticated. To (re-)authenticate later, the daemon must be stopped first: `synckeeper service uninstall`, sign in, then reinstall (§7). Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
+Then run `synckeeper init` (first time — it signs in and offers the login service) or `synckeeper login` (re-point an existing install). **Don't `service install` before signing in** — the service runs `watch`, which can't sign in by itself, so it will just crash-loop until you've authenticated. Re-authenticating later needs no stopping and no restart: run `synckeeper login` with the daemon running, and it adopts the new token on its next sync. Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
 
 ## 6. How syncing behaves
 
@@ -119,8 +119,8 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 | Problem | Fix |
 |---|---|
-| Daemon logs auth failures / token expired or revoked | Stop the daemon → `synckeeper login` → restart it. |
-| `login`/`init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run the `login`/`init`, then reinstall the service. |
+| Auth failures / token expired or revoked (`status` says `token: present but REJECTED`, the dashboard says `credentials expired`) | `synckeeper login`, daemon running or not — it picks the new token up on its next sync. Recurs weekly while the consent screen is in **Testing** (§5). |
+| `init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run `init`, then reinstall the service. (`login` no longer needs this.) |
 | Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). The service runs `watch`, which can't sign in by itself: if you've never signed in, `synckeeper service uninstall` → `synckeeper init` → reinstall. |
 | State DB lost or corrupted | Stop the daemon, then `synckeeper init` — it re-resolves the Drive folder and merges both sides. Cannot delete: the rebuilt baseline starts empty, so every file is an upload or a download. |
 | Need a deleted file back | Check your system bin (a folder comes back whole), then Drive's bin. On a platform with no system bin, the quarantine folder (`<config dir>/quarantine/<date>/…`). Bins are not forever — Drive's empties after ~30 days, and your desktop's may too. |
@@ -167,7 +167,7 @@ Three views, switched with number keys or Tab:
 
 | View | Shows |
 |---|---|
-| **1 overview** | next poll (an estimate — see below), last sync + cycle summary, tracked/pending/quarantine counts, where deletions from Drive land, and an **attention** block that appears only when something needs it (guard block + how to release it, last error, no system bin, dead daemon, missing credentials, autostart not installed), then recent activity |
+| **1 overview** | next poll (an estimate — see below), last sync + cycle summary, tracked/pending/quarantine counts, where deletions from Drive land, and an **attention** block that appears only when something needs it (guard block + how to release it, **expired credentials + `synckeeper login`**, last error, no system bin, dead daemon, missing credentials, autostart not installed), then recent activity |
 | **2 activity** | the recorded history, newest first, with direction and file count — the most recent 200 entries of the daemon's 500-entry ring (`activity -n` reads further back). Scroll it, filter (`f`), or search paths/details/kinds (`/`) — the heading reports `N of M` and what is filtering |
 | **3 info** | the static picture — version, every path with permission modes, sync target + Drive folder id, machine name + id, OAuth client, token status, effective config. Same data `info` prints |
 

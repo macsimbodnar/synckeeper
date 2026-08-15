@@ -117,6 +117,11 @@ var migrations = []string{
 	// rule, and `init` — the one command that reads the column — force-walks
 	// the mirror before reading it, so it populates what it consumes.
 	`alter table remote_nodes add column modified_ns integer not null default 0;`,
+	// v5 -> v6: daemon_status.last_error_auth — the last cycle failed because
+	// Google refused the refresh token, which no amount of retrying fixes. It
+	// is classified where the error object still exists (internal/auth) and
+	// stored, rather than string-matched by each reader (W19-3).
+	`alter table daemon_status add column last_error_auth integer not null default 0;`,
 }
 
 // Path returns the state DB path inside the given config dir.

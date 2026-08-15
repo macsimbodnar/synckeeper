@@ -9,7 +9,6 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/auth"
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
-	"github.com/macsimbodnar/synckeeper/internal/guards"
 )
 
 func newLoginCmd() *cobra.Command {
@@ -28,18 +27,13 @@ func newLoginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Holding the lock forces the daemon to be stopped first, which is
-			// required anyway: a running daemon keeps the old token in memory
-			// and won't use the new one until it restarts.
-			// The lock forces the daemon stopped, which login needs anyway: a
-			// running daemon holds the old token in memory. The lock error is
-			// already actionable (guards).
-			lock, err := guards.AcquireInstanceLock(configDir)
-			if err != nil {
-				return err
-			}
-			defer lock.Unlock()
-
+			// No instance lock. It used to be taken purely to force the daemon
+			// stopped, because a running daemon held the refused token in memory
+			// for its whole life — so the fix looked like it had not worked, and
+			// the user had to uninstall the service to apply it. The daemon now
+			// re-reads token.json when Google refuses a refresh (W19-3), so this
+			// command is safe to run beside it, and it writes nothing but that
+			// file (atomically, 0600).
 			ts, err := auth.Login(ctx, configDir)
 			if err != nil {
 				return err
@@ -52,7 +46,7 @@ func newLoginCmd() *cobra.Command {
 					return nil
 				}
 			}
-			fmt.Println("Re-authenticated and verified. Restart the daemon (`synckeeper watch`, or reinstall the service) to use the new token.")
+			fmt.Println("Re-authenticated and verified. A running daemon picks the new token up on its next sync — no restart needed.")
 			return nil
 		},
 	}

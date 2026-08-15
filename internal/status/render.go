@@ -50,7 +50,11 @@ func PrintHuman(w io.Writer, s Snapshot) {
 	if s.RootID != "" {
 		fmt.Fprintf(w, "root folder:   %s\n", s.RootID)
 	}
-	if s.TokenOK {
+	if s.TokenOK && s.TokenRejected {
+		// The file is there and useless: Google refused to refresh it. Retrying
+		// never clears this, so the line says the one thing that does.
+		fmt.Fprintf(w, "token:         present but REJECTED — expired or revoked; run `synckeeper login`\n")
+	} else if s.TokenOK {
 		fmt.Fprintf(w, "token:         present\n")
 	} else {
 		fmt.Fprintf(w, "token:         missing (run `synckeeper init`)\n")

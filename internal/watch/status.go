@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/macsimbodnar/synckeeper/internal/auth"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
@@ -117,8 +118,13 @@ func (r *recorder) cycleDone(res *engine.Result, dur time.Duration, syncErr erro
 	if syncErr == nil {
 		r.s.LastSyncAt = now
 		r.s.LastError = ""
+		r.s.LastErrorAuth = false
 	} else {
 		r.s.LastError = status.Clip(status.OneLine(syncErr.Error()), maxStoredText)
+		// Classified here, where the error object still exists, rather than by
+		// each reader matching on stored text. A refused refresh token is the
+		// one failure retrying cannot fix, and the views must say so.
+		r.s.LastErrorAuth = auth.IsExpiredGrant(syncErr)
 	}
 	if res != nil {
 		cs := statedb.CycleSummary{

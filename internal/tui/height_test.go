@@ -132,3 +132,24 @@ func TestOneLineIsSharedByWriterAndReader(t *testing.T) {
 		t.Errorf("truncatePath = %q, want the flattened path", got)
 	}
 }
+
+// TestTheDashboardNamesARejectedToken: the attention panel exists to tell the
+// user what to do without being asked. A revoked refresh token is the one
+// failure retrying never clears, and its raw OAuth text says nothing useful.
+func TestTheDashboardNamesARejectedToken(t *testing.T) {
+	snap := testSnapshot(testRef())
+	snap.Status.Daemon.LastError = driveAuthError
+	snap.Status.Daemon.LastErrorAuth = true
+	snap.Status.TokenOK, snap.Status.TokenRejected = true, true
+	m := New(Options{Snapshot: snap, Width: 100, Height: 30, Clock: testRef})
+
+	out := m.View()
+	if !strings.Contains(out, "credentials expired") || !strings.Contains(out, "synckeeper login") {
+		t.Errorf("the overview does not name the cure:\n%s", out)
+	}
+	// It leads the attention block: everything else on the screen is a symptom.
+	att := strings.Index(out, "credentials expired")
+	if last := strings.Index(out, "last error"); last >= 0 && last < att {
+		t.Error("the raw error is listed above the credentials line")
+	}
+}

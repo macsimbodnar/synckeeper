@@ -341,6 +341,12 @@ func (m Model) attention(t theme, w int) []string {
 		out = append(out, t.bad("⚠ guard BLOCKED")+" — "+truncate(s.Daemon.GuardReason, max(0, w-20)))
 		out = append(out, t.muted("  release it with `synckeeper sync --confirm-deletes` on this machine"))
 	}
+	// The credentials line comes first and names the cure: when Google refuses
+	// the refresh token, every other line on the screen is a consequence, and
+	// the raw OAuth error underneath tells the user nothing they can act on.
+	if s.TokenRejected {
+		out = append(out, t.bad("⚠ credentials expired")+" — run `synckeeper login`; syncing is stopped until you do")
+	}
 	if s.Daemon.LastError != "" {
 		out = append(out, t.bad("⚠ last error")+" — "+truncate(s.Daemon.LastError, max(0, w-18)))
 	}

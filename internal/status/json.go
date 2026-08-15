@@ -10,16 +10,17 @@ import (
 // only ever added, never renamed or removed.
 func JSONView(s Snapshot) map[string]any {
 	daemon := map[string]any{
-		"state":         s.State,
-		"pid":           s.Daemon.PID,
-		"mode":          s.Daemon.Mode,
-		"paused":        s.Daemon.Paused,
-		"started_at":    s.Daemon.StartedAt,
-		"last_sync_at":  s.Daemon.LastSyncAt,
-		"next_poll_at":  s.Daemon.NextPollAt,
-		"guard_blocked": s.Daemon.GuardBlocked,
-		"guard_reason":  s.Daemon.GuardReason,
-		"last_error":    s.Daemon.LastError,
+		"state":           s.State,
+		"pid":             s.Daemon.PID,
+		"mode":            s.Daemon.Mode,
+		"paused":          s.Daemon.Paused,
+		"started_at":      s.Daemon.StartedAt,
+		"last_sync_at":    s.Daemon.LastSyncAt,
+		"next_poll_at":    s.Daemon.NextPollAt,
+		"guard_blocked":   s.Daemon.GuardBlocked,
+		"guard_reason":    s.Daemon.GuardReason,
+		"last_error":      s.Daemon.LastError,
+		"last_error_auth": s.Daemon.LastErrorAuth,
 	}
 	if cs, ok := ParseCycle(s.Daemon.LastCycleJSON); ok {
 		daemon["last_cycle"] = cs
@@ -39,6 +40,7 @@ func JSONView(s Snapshot) map[string]any {
 		"machine_name":    s.MachineName,
 		"root_folder":     s.RootID,
 		"token_present":   s.TokenOK,
+		"token_rejected":  s.TokenRejected,
 		"tracked_items":   s.Items,
 		"pending_ops":     s.Pending,
 		"quarantine":      map[string]any{"files": s.QFiles, "bytes": s.QBytes},

@@ -58,6 +58,33 @@ func TestStoredTextIsOneLine(t *testing.T) {
 	}
 }
 
+// TestARefusedTokenIsRecordedAsSuch: the daemon classifies where the error
+// object still exists, so every view can say "run `synckeeper login`" instead
+// of showing the user raw OAuth JSON and leaving them to work it out.
+func TestARefusedTokenIsRecordedAsSuch(t *testing.T) {
+	db := recorderDB(t)
+	r := &recorder{db: db}
+
+	r.cycleDone(nil, time.Second, errors.New(driveAuthError), ModeBackoff, time.Now(), false, "")
+	ds, err := db.GetDaemonStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ds.LastErrorAuth {
+		t.Errorf("a refused refresh token was not classified: %q", ds.LastError)
+	}
+
+	// An ordinary failure is not, and a successful cycle clears the flag.
+	r.cycleDone(nil, time.Second, errors.New("dial tcp: no such host"), ModeBackoff, time.Now(), false, "")
+	if ds, _ := db.GetDaemonStatus(); ds.LastErrorAuth {
+		t.Error("a network error was classified as a credentials failure")
+	}
+	r.cycleDone(nil, time.Second, nil, ModeWatching, time.Now(), false, "")
+	if ds, _ := db.GetDaemonStatus(); ds.LastErrorAuth || ds.LastError != "" {
+		t.Error("a successful cycle left the credentials failure standing")
+	}
+}
+
 // TestStoredTextIsBounded: an error carrying a whole response body is clipped
 // before it reaches the database — the state db is not a log.
 func TestStoredTextIsBounded(t *testing.T) {

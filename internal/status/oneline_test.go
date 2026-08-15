@@ -65,3 +65,32 @@ func TestPlainStatusKeepsOneFactPerLine(t *testing.T) {
 		t.Error("the last error line lost its head")
 	}
 }
+
+// TestARejectedTokenIsNamedInPlainStatus: `token: present` is true of a
+// revoked credential and useless — the file is still there. The plain view
+// says what happened and what fixes it.
+func TestARejectedTokenIsNamedInPlainStatus(t *testing.T) {
+	now := time.Now()
+	snap := fixtures(now)["running_watching"]
+	snap.Daemon.LastError = multilineError
+	snap.Daemon.LastErrorAuth = true
+	snap.TokenOK, snap.TokenRejected = true, true
+
+	var buf bytes.Buffer
+	PrintHuman(&buf, snap)
+	out := buf.String()
+	if !strings.Contains(out, "token:         present but REJECTED") {
+		t.Errorf("plain status does not name the rejected token:\n%s", out)
+	}
+	if !strings.Contains(out, "synckeeper login") {
+		t.Error("plain status does not name the cure")
+	}
+
+	doc := JSONView(snap)
+	if doc["token_rejected"] != true {
+		t.Error("status --json lost token_rejected")
+	}
+	if doc["daemon"].(map[string]any)["last_error_auth"] != true {
+		t.Error("status --json lost daemon.last_error_auth")
+	}
+}

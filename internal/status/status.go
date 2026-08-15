@@ -51,6 +51,12 @@ type Snapshot struct {
 	RootID      string
 	TokenOK     bool
 
+	// TokenRejected is the daemon's own verdict: the stored token exists but
+	// Google refused to refresh it. TokenOK only says the file is there, and
+	// a revoked token leaves the file exactly where it was — which is why a
+	// dead sync reported "token: present" for two days (W19).
+	TokenRejected bool
+
 	Items   int
 	Pending int
 	QFiles  int
@@ -125,6 +131,7 @@ func Gather(in Input) Snapshot {
 		s.RootID = rootID
 	}
 	s.TokenOK = in.tokenPresent()
+	s.TokenRejected = ds.LastErrorAuth
 	s.Items, _ = in.DB.ItemCount()
 	s.Pending, _ = in.DB.PendingOpCount()
 	s.QFiles, s.QBytes = in.quarantine(filepath.Join(in.ConfigDir, "quarantine"))
