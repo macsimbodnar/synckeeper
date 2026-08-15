@@ -789,3 +789,9 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Migration rehearsed on a copy of Max's live database** (not the original): v4 → v7 applies clean, 4 tracked items and the activity ring intact. **Max's installed `dist/synckeeper` is at schema v4**, so read-only commands refuse until he runs the new binary once (by design) — rebuild + restart the daemon.
 - **Gates at every commit:** `go build ./... && go vet ./... && go test ./...`, `-race` on the touched packages, `make audit` — green.
 - Docs in the same commits: spec §12/§13, MANUAL §3/§5/§6/§7/§10, README (`internal/auth` row), plan.md W19 + W10, decisions.md ×3, testing.md W19.1–W19.10, status.md rewritten.
+
+### 2026-08-15 — MANUAL §5: the credentials chmod is a step, not an aside
+> "add this command to the manual of installation chmod 600 "$HOME/Library/Application Support/synckeeper/credentials.json""
+- Added the full `chmod 600 "$HOME/Library/Application Support/synckeeper/credentials.json"` to MANUAL §5's copy-paste block, beside the `cp` — it was only prose (`chmod 600 credentials.json`) before, which is not pasteable from the config dir a user is not standing in. Found live: the daemon logged the readable-credentials warning on Max's machine after tonight's restart.
+- Reworded the sentence after it to say why (a downloaded file arrives `0644`) and corrected who reports it: `info` **and** the daemon log, verified against `cmd/synckeeper/info.go:208` and `internal/auth/credentials.go:56` — doc claims are claims about code.
+- §1 still just points at §5; no duplication added there.

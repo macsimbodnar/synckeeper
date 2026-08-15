@@ -92,9 +92,10 @@ Synckeeper ships with **no credentials** — you supply your own Google Cloud "D
 
 ```sh
 cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeeper/credentials.json"
+chmod 600 "$HOME/Library/Application Support/synckeeper/credentials.json"
 ```
 
-Keep it private: `chmod 600 credentials.json`. Synckeeper tightens the config dir itself (`0700`) on every run, and `info` flags a `credentials.json` other local users can read — it warns rather than refuses, since the file is yours.
+The `chmod` is step 5, not a nicety: a downloaded file arrives `0644`, readable by every local user. Synckeeper tightens the config dir itself (`0700`) on every run, and `info` plus the daemon log flag a readable `credentials.json` — they warn rather than refuse, since the file is yours.
 
 Then run `synckeeper init` (first time — it signs in and offers the login service) or `synckeeper login` (re-point an existing install). **Don't `service install` before signing in** — the service runs `watch`, which can't sign in by itself, so it will just crash-loop until you've authenticated. Re-authenticating later needs no stopping and no restart: run `synckeeper login` with the daemon running, and it adopts the new token on its next sync. Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
 
