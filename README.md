@@ -41,7 +41,7 @@ The daemon is the product; the CLI (and any future UI) are thin clients of it. O
 | `internal/control` | control-socket protocol (line-delimited JSON; client + server); commands + the read-only `stat` query |
 | `internal/status` | read model for every read-only view: `Snapshot`/`Gather` (machine reads behind seams), the human + JSON renderers, and the display formatters `status`/`info`/`doctor`/`activity` share |
 | `internal/tui` | the live dashboard behind `status` on a terminal (bubbletea + lipgloss): pure `Update`/`View`, three views, golden-tested without a tty; read-only by construction (AST guard) |
-| `internal/auth` | OAuth loopback + S256 PKCE; token at `0600`; credential resolve (requires `credentials.json`; no embedded default) |
+| `internal/auth` | OAuth loopback + S256 PKCE; token at `0600`; credential resolve (requires `credentials.json`; no embedded default); classifies a refused refresh token and reloads `token.json` when one arrives |
 | `internal/config` | TOML load + validate |
 | `internal/conflicts` | conflict-copy naming |
 | `internal/names` | name mapping, case/normalization fold, validity rules |
