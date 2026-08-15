@@ -108,17 +108,57 @@ func TestAMultilineErrorStaysOneRow(t *testing.T) {
 	}
 }
 
-// TestClampBodyIsTheLastResort: even a body that ignores its budget entirely
+// TestFitBodyIsTheLastResort: even a body that ignores its budget entirely
 // cannot scroll the frame, because View clamps what it emits.
-func TestClampBodyIsTheLastResort(t *testing.T) {
+func TestFitBodyIsTheLastResort(t *testing.T) {
 	m := New(Options{Snapshot: testSnapshot(testRef()), Width: 100, Height: 12, Clock: testRef})
 	body := strings.Repeat("x\n", 200)
-	clamped := m.clampBody(theme{}, body, false)
-	if got := len(strings.Split(clamped, "\n")); got != m.height-5 {
-		t.Fatalf("clamped body is %d lines, want %d", got, m.height-5)
+	clamped := m.fitBody(theme{}, body, false)
+	if got := len(strings.Split(clamped, "\n")); got != m.height-chromeRows {
+		t.Fatalf("clamped body is %d lines, want %d", got, m.height-chromeRows)
 	}
 	if !strings.Contains(clamped, "too short") {
 		t.Error("the clamp cut the body without saying so")
+	}
+}
+
+// TestFitBodyPadsAShortBody is the other direction, and the reported bug: a
+// body with less to say than the window has rows is padded, so the footer never
+// climbs up the screen behind a short panel.
+func TestFitBodyPadsAShortBody(t *testing.T) {
+	m := New(Options{Snapshot: testSnapshot(testRef()), Width: 100, Height: 40, Clock: testRef})
+	for _, hasNotice := range []bool{false, true} {
+		got := m.fitBody(theme{}, "one\ntwo", hasNotice)
+		want := m.height - chromeRows
+		if hasNotice {
+			want--
+		}
+		if n := len(strings.Split(got, "\n")); n != want {
+			t.Errorf("notice=%v: padded body is %d lines, want %d", hasNotice, n, want)
+		}
+		if !strings.HasPrefix(got, "one\ntwo\n") {
+			t.Errorf("notice=%v: padding rewrote the body: %q", hasNotice, got)
+		}
+	}
+}
+
+// TestTheFooterIsTheLastLine pins the frame to the full height of the terminal
+// in every state: exactly as many lines as rows, with the tab bar on the last
+// one. A frame short of the bottom was the field report (2026-08-15) — with
+// four tracked files the footer sat a third of the way down a 58-row window.
+func TestTheFooterIsTheLastLine(t *testing.T) {
+	ref := testRef()
+	for name, m := range frames(ref) {
+		t.Run(name, func(t *testing.T) {
+			lines := strings.Split(m.View(), "\n")
+			if len(lines) != m.height {
+				t.Fatalf("frame is %d lines in a %d-line terminal", len(lines), m.height)
+			}
+			// The tab bar, not the hint half: a narrow window drops the hints.
+			if last := lines[len(lines)-1]; !strings.Contains(last, "1 overview") {
+				t.Errorf("the last line is not the footer: %q", last)
+			}
+		})
 	}
 }
 

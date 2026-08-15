@@ -16,9 +16,12 @@ import (
 // uselessness, which is worse than scrolling.
 const narrowWidth = 70
 
-// chromeRows is what the frame spends on header, identity strip, spacing and
-// footer; the rest is the body's height budget.
-const chromeRows = 6
+// chromeRows is what the frame spends around the body: the header, the identity
+// strip, the blank spacer and the footer. The rest is the body's height budget,
+// and the body is padded to exactly that many rows — a frame is always the full
+// height of the terminal, so the footer sits on the last line instead of
+// floating half-way up the screen under a short panel.
+const chromeRows = 4
 
 // View renders one frame. Pure: same model, same string, no clock and no
 // terminal involved — which is how every state below is golden-tested.
@@ -31,7 +34,7 @@ func (m Model) View() string {
 	// record of when it was gathered.
 	m.snap.Status.Now = m.now()
 	notice, hasNotice := m.noticeLine(t, w)
-	body := m.clampBody(t, m.body(t, w), hasNotice)
+	body := m.fitBody(t, m.body(t, w), hasNotice)
 
 	var b strings.Builder
 	b.WriteString(m.header(t, w))
@@ -46,31 +49,48 @@ func (m Model) View() string {
 	b.WriteString(body)
 	b.WriteByte('\n')
 	b.WriteString(m.footer(t, w))
-	b.WriteByte('\n')
+	// No trailing newline: the footer is the terminal's last line, and one more
+	// newline would cost a row — the frame would be a line short of the bottom.
 	return b.String()
 }
 
-// clampBody is the frame's last-resort height guard: whatever a panel decided
-// to draw, the finished frame never emits more lines than the terminal has.
-// Every budget above is computed in *rows*, so any value that renders taller
-// than one row would scroll the header away — which is exactly what a
-// multi-line Drive error did before those values were flattened. The flattening
-// is the fix; this is the invariant that keeps the next such value from
-// reaching the screen, and a test asserts it for every state.
-func (m Model) clampBody(t theme, body string, hasNotice bool) string {
-	// header, identity, the blank line, the footer, and View's trailing newline.
-	chrome := 5
-	if hasNotice {
-		chrome++
-	}
-	allowed := m.height - chrome
+// fitBody sizes the body to exactly the rows the frame has for it, in both
+// directions.
+//
+// Padding is the visible half: a body shorter than its budget used to leave the
+// footer wherever the panels happened to end, so on a tall window the tab bar
+// floated near the top with a screen of blank underneath it.
+//
+// Clamping is the height guard: whatever a panel decided to draw, the finished
+// frame never emits more lines than the terminal has. Every budget above is
+// computed in *rows*, so any value that renders taller than one row would
+// scroll the header away — which is exactly what a multi-line Drive error did
+// before those values were flattened. The flattening is the fix; this is the
+// invariant that keeps the next such value from reaching the screen, and a test
+// asserts it for every state.
+func (m Model) fitBody(t theme, body string, hasNotice bool) string {
+	allowed := m.bodyRows(hasNotice)
 	lines := strings.Split(body, "\n")
-	if allowed < 1 || len(lines) <= allowed {
+	switch {
+	case allowed < 1: // a window too short even for the chrome; clamp handled above it
 		return body
+	case len(lines) > allowed:
+		kept := lines[:allowed]
+		kept[allowed-1] = t.muted(truncate("… the window is too short to draw the rest", m.width))
+		return strings.Join(kept, "\n")
+	default:
+		return body + strings.Repeat("\n", allowed-len(lines))
 	}
-	kept := lines[:allowed]
-	kept[allowed-1] = t.muted(truncate("… the window is too short to draw the rest", m.width))
-	return strings.Join(kept, "\n")
+}
+
+// bodyRows is how many terminal rows the body occupies: everything the chrome
+// does not take. It is the raw figure — bodyBudget floors it for the panels.
+func (m Model) bodyRows(hasNotice bool) int {
+	rows := m.height - chromeRows
+	if hasNotice {
+		rows--
+	}
+	return rows
 }
 
 // noticeLine reports the result of the last daemon action, painted by outcome
@@ -593,12 +613,11 @@ func (m Model) footer(t theme, w int) string {
 }
 
 // bodyBudget is how many lines the body may draw. A visible notice costs one.
+// The floor keeps a panel from computing a negative window on a tiny terminal;
+// fitBody cuts whatever overflows.
 func (m Model) bodyBudget() int {
-	rows := m.height - chromeRows
-	if _, ok := m.visibleNotice(); ok {
-		rows--
-	}
-	return max(3, rows)
+	_, hasNotice := m.visibleNotice()
+	return max(3, m.bodyRows(hasNotice))
 }
 
 // joinEnds puts left and right on one line, right-aligned, dropping the right

@@ -795,3 +795,13 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Added the full `chmod 600 "$HOME/Library/Application Support/synckeeper/credentials.json"` to MANUAL §5's copy-paste block, beside the `cp` — it was only prose (`chmod 600 credentials.json`) before, which is not pasteable from the config dir a user is not standing in. Found live: the daemon logged the readable-credentials warning on Max's machine after tonight's restart.
 - Reworded the sentence after it to say why (a downloaded file arrives `0644`) and corrected who reports it: `info` **and** the daemon log, verified against `cmd/synckeeper/info.go:208` and `internal/auth/credentials.go:56` — doc claims are claims about code.
 - §1 still just points at §5; no duplication added there.
+
+### 2026-08-15 — W19-5: the frame fills the window, footer on the last line
+> "there is a visualization bug as you can see in the image. When there are no much logs the bottom line is not at the bottom. I would prefer to have it at the bottom of the console emulator. Fix this" (screenshot: 204×58 terminal, footer on row ~14)
+- Diagnosed from the code, not the screenshot alone: W19-1 clamped the frame from above and nothing padded it from below, and the two height figures disagreed — `clampBody` allowed `height-5` body rows, `bodyBudget` handed the panels `height-6`.
+- `clampBody` → `fitBody` in `internal/tui/view.go`: pads a short body to its exact row budget, still cuts an overlong one with the "window is too short" line. New `bodyRows` is the single raw figure; `bodyBudget` floors it at 3 for the panels.
+- `chromeRows` 6 → 4 (header, identity, spacer, footer) — the one constant both paths use, so the panels also recover the two rows the old estimate wasted.
+- `View` no longer writes a trailing newline: bubbletea's `standardRenderer` splits the view on `\n` and drops lines from the **top** when the count exceeds the terminal height, so that newline was a whole row of the budget (and would have cost the header on a full frame).
+- Tests: `TestTheFooterIsTheLastLine` (every golden state: line count == height, last line is the tab bar — a narrow window drops the hint half, so the assertion is on `1 overview`), `TestFitBodyPadsAShortBody`, and `TestClampBodyIsTheLastResort` renamed `TestFitBodyIsTheLastResort` against the new budget. All 15 goldens regenerated with `-update`.
+- Gates: `go build ./... && go vet ./... && go test ./...` green.
+- Docs in the same commit: MANUAL §10 (the frame is exactly the terminal height), plan.md W19 item 5, decisions.md, testing.md W19.11 + the renamed test in the W19.1 row. README unchanged — no build/layout/package change.

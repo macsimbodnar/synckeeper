@@ -189,7 +189,7 @@ Three views, switched with number keys or Tab:
 
 Aliases: `Shift-Tab` cycles views backwards, `Ctrl-F`/`Ctrl-B` page, `Home`/`End` jump to newest/oldest, and `Esc` quits (except while a search line is open, where it cancels the search).
 
-**One entry, one line.** An error can arrive many lines long (a Drive auth failure carries its whole HTTP response); it is stored and shown flattened to one line, cut at the window width — from the **right** for a message, so you keep the sentence, and from the **left** for a file path, so you keep the file name. The frame never draws more lines than the terminal has.
+**One entry, one line.** An error can arrive many lines long (a Drive auth failure carries its whole HTTP response); it is stored and shown flattened to one line, cut at the window width — from the **right** for a message, so you keep the sentence, and from the **left** for a file path, so you keep the file name. The frame is always exactly the height of the terminal — never more lines than it has, and padded when there's little to show, so the tab bar stays on the last line.
 
 Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
 

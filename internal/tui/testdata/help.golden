@@ -19,4 +19,12 @@ max_mbp  ·  /home/max/Synckeeper  ⇄  "Synckeeper"
  the dashboard only reads: it holds no lock and never writes to the database.
  a deletion held by the mass-delete guard is released only by
  `synckeeper sync --confirm-deletes` — never by a keystroke here.
+
+
+
+
+
+
+
+
 1 overview · 2 activity · 3 info                                s sync · p/P pause · ? help · q quit

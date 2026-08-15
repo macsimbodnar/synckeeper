@@ -13,6 +13,14 @@ Format:
 
 ---
 
+## 2026-08-15 — W19-5: a frame is always the terminal's exact height, and carries no trailing newline
+
+**Context:** with W19 shipped, Max's dashboard drew correctly but **short**: four tracked files and one activity row left the footer a third of the way up a 58-row window, blank screen underneath. Item 1 gave the frame an upper bound and no lower one, and the two height figures disagreed — `clampBody` allowed `height-5` body rows while `bodyBudget` handed the panels `height-6`.
+
+**Decision (agent-proposed, applied 2026-08-15):** the body is sized to its budget in **both** directions. `clampBody` → `fitBody` (pads with blank lines, or cuts with the existing "window is too short" line), one `chromeRows` constant (**4**: header, identity, spacer, footer) shared by `fitBody` and `bodyBudget`, and `View` stops writing a trailing newline — bubbletea's renderer splits the view on `\n`, so that newline is a line of the frame's budget and would give the bottom row away again.
+
+**Consequences:** the panels gained the two rows the old chrome estimate wasted, so the overview shows more activity. Every golden in `internal/tui/testdata` is regenerated with its padding and no final newline; testing.md W19.11 pins the new invariant (`TestTheFooterIsTheLastLine`, for every golden state). MANUAL §10's "never draws more lines than the terminal has" is now "always exactly the height of the terminal". No sync path touched.
+
 ## 2026-08-15 — W19: the dashboard's row budgets are rows, so a stored value must be one line
 
 **Context:** Max's `status` filled the whole terminal with one repeated Google auth error — no header, no cycle/totals panels, no attention block. Reproduced offline: 60 activity rows carrying the five-line `invalid_grant` error render a **200-line frame in a 58-row terminal**, so the alternate screen scrolls and everything above the last rows is gone. Three separate defects stack into that picture: text stored with newlines, a repeating failure that fills the 500-row ring in ~2–3 days, and a revoked token that `status` still reports as `token: present`.
