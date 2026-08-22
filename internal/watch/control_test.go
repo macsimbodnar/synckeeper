@@ -15,6 +15,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
+	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
 // startWatcherWithControl runs a watcher with a control socket at a short
@@ -235,5 +236,124 @@ ignore = ["*.tmp"]
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(toml), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A control `sync` must reach the loop while it is backing off after a failed
+// cycle. The field bug of 2026-08-22: the backoff was an uninterruptible
+// sleep, so the socket accepted the request, answered `triggered: true`, and
+// the request then sat in the channel for the whole 12-minute wait with
+// nothing in the log — a fix applied in another terminal (`synckeeper login`)
+// looked like it had done nothing. The poll here is an hour, so the first
+// backoff is an hour too: if the request has to wait it out, this times out.
+func TestControlSyncInterruptsTheBackoff(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+
+	// Break the remote where Max's expired token broke it: every cycle fails
+	// in `refresh remote state`, the loop's hard-error path.
+	if err := a.db.SetMeta(statedb.MetaPageToken, "not-a-page-token"); err != nil {
+		t.Fatal(err)
+	}
+	sock := startWatcherWithControl(t, a, time.Hour, "")
+
+	waitFor(t, "the loop is backing off", 10*time.Second, func() bool {
+		ds, err := a.db.GetDaemonStatus()
+		return err == nil && ds.Mode == ModeBackoff && ds.LastError != ""
+	})
+
+	// What the user does in the other terminal, and the file they then expect
+	// their explicit sync to move.
+	tok, err := fake.StartPageToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetMeta(statedb.MetaPageToken, tok); err != nil {
+		t.Fatal(err)
+	}
+	a.write(t, "after_the_fix.txt", "sync me now")
+
+	resp := call(t, sock, control.CmdSync, nil)
+	var data struct {
+		Triggered     bool `json:"triggered"`
+		WasBackingOff bool `json:"was_backing_off"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.Triggered || !data.WasBackingOff {
+		t.Errorf("sync reply = %+v; want triggered and was_backing_off", data)
+	}
+
+	waitFor(t, "the forced sync ran instead of waiting out the backoff", 10*time.Second, func() bool {
+		return remoteHasName(t, fake, root, "after_the_fix.txt")
+	})
+}
+
+// waitBackoff yields to an explicit sync instead of sleeping the wait out, and
+// hands the request's options back so the caller runs *that* cycle next.
+func TestWaitBackoffYieldsToAnExplicitSync(t *testing.T) {
+	w := &Watcher{}
+	syncNow := make(chan engine.Options, 1)
+	syncNow <- engine.Options{ConfirmDeletes: true}
+
+	start := time.Now()
+	opts, stopped := w.waitBackoff(context.Background(), time.Hour, syncNow, nil, nil, nil)
+	switch {
+	case stopped:
+		t.Fatal("reported shutdown")
+	case opts == nil:
+		t.Fatal("the forced sync was dropped")
+	case !opts.ConfirmDeletes:
+		t.Error("the request's options were not carried through")
+	case time.Since(start) > 5*time.Second:
+		t.Errorf("waited %v; the backoff was not cut short", time.Since(start))
+	}
+}
+
+// Nobody asks: the timer still ends the wait, and reports neither.
+func TestWaitBackoffEndsOnItsTimer(t *testing.T) {
+	w := &Watcher{}
+	opts, stopped := w.waitBackoff(context.Background(), 20*time.Millisecond, make(chan engine.Options), nil, nil, nil)
+	if stopped || opts != nil {
+		t.Fatalf("timer expiry reported as opts=%v stopped=%v", opts, stopped)
+	}
+}
+
+// Cancellation still wins: a shutdown must not linger a whole backoff.
+func TestWaitBackoffReturnsOnCancel(t *testing.T) {
+	w := &Watcher{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, stopped := w.waitBackoff(ctx, time.Hour, make(chan engine.Options), nil, nil, nil); !stopped {
+		t.Fatal("cancellation did not end the wait")
+	}
+}
+
+// A `reload` arriving during a backoff is serviced in place rather than
+// blocking the CLI for the rest of the wait, and does not end the wait.
+func TestWaitBackoffServicesReloadWithoutEndingTheWait(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "a", 45, 0.25)
+	cfg := config.Default()
+	cfg.Engine.MachineName = "a"
+	w := &Watcher{Eng: &engine.Engine{Cfg: cfg}, Poll: 45 * time.Second, ConfigDir: dir}
+
+	reloadCh := make(chan chan reloadResult)
+	go func() {
+		respCh := make(chan reloadResult, 1)
+		reloadCh <- respCh
+		<-respCh
+	}()
+
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	start := time.Now()
+	opts, stopped := w.waitBackoff(context.Background(), 300*time.Millisecond, make(chan engine.Options), reloadCh, ticker, newLiveState(w.Poll, w.Debounce))
+	if stopped || opts != nil {
+		t.Fatalf("reload ended the wait: opts=%v stopped=%v", opts, stopped)
+	}
+	if elapsed := time.Since(start); elapsed < 250*time.Millisecond {
+		t.Errorf("wait ended after %v; the reload cut it short", elapsed)
 	}
 }

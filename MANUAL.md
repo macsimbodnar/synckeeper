@@ -4,7 +4,7 @@ How to *use* Synckeeper. (Build / dev / design docs → [README.md](README.md).)
 
 Keeps **one local folder** ↔ **one Google Drive folder** identical, both directions. Many machines sync against the same Drive folder (the hub + durable copy). Runs as a background daemon; **never silently loses or corrupts a file**: deletes → Drive bin + your system bin (never permanent); conflicting edits → conflict copy (never last-writer-wins); edit always beats delete.
 
-**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-07-31.
+**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-08-22.
 
 ---
 
@@ -97,7 +97,7 @@ chmod 600 "$HOME/Library/Application Support/synckeeper/credentials.json"
 
 The `chmod` is step 5, not a nicety: a downloaded file arrives `0644`, readable by every local user. Synckeeper tightens the config dir itself (`0700`) on every run, and `info` plus the daemon log flag a readable `credentials.json` — they warn rather than refuse, since the file is yours.
 
-Then run `synckeeper init` (first time — it signs in and offers the login service) or `synckeeper login` (re-point an existing install). **Don't `service install` before signing in** — the service runs `watch`, which can't sign in by itself, so it will just crash-loop until you've authenticated. Re-authenticating later needs no stopping and no restart: run `synckeeper login` with the daemon running, and it adopts the new token on its next sync. Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
+Then run `synckeeper init` (first time — it signs in and offers the login service) or `synckeeper login` (re-point an existing install). **Don't `service install` before signing in** — the service runs `watch`, which can't sign in by itself, so it will just crash-loop until you've authenticated. Re-authenticating later needs no stopping and no restart: run `synckeeper login` with the daemon running, and it adopts the new token on its next sync — `synckeeper sync` right after makes that next sync immediate (§6). Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
 
 ## 6. How syncing behaves
 
@@ -114,6 +114,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 - **Deleting the sync folder itself is never a deletion.** If `~/Synckeeper` is gone, Synckeeper recreates it and downloads your files back — it never reads a missing folder as "delete everything on Drive". Deleting the *contents* is different and is a real deletion: it propagates to Drive's bin like any other.
 - **Sanity guard (not confirmable).** A sync folder that is unreadable, or is not a directory → syncing stops with an error. No flag overrides it.
 - **Not synced (skipped — reported in `sync` output, not `status`):** Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, filesystem-invalid names, Drive same-name duplicates in one folder (first wins, rest skipped). Listed by a one-shot `synckeeper sync` (and `init --adopt`); the daemon doesn't surface them in `status`. Ignored patterns skipped silently.
+- **A failed cycle is retried with a growing wait**, doubling from the poll interval to 10× it (45 s → 12 min at the defaults); `status` shows mode `backoff` and the error. **An explicit `sync` cuts the wait short** and runs at once — daemon keeps waiting only for its automatic triggers, so fixing the cause (e.g. `synckeeper login`) then asking for a sync applies it immediately instead of up to 12 minutes later. `reload` also works during the wait.
 - **A repeating entry is counted, not repeated.** The same event in a row (typically an error the daemon retries) is kept as one entry with a repeat count and the time it last happened — in `status`, `activity` and the dashboard alike. Without it a fault lasting a couple of days would fill the 500-entry ring and evict every real sync from it.
 - **Crash safe.** Interrupt at any point (crash, kill, power loss) → recovered next run; partial transfers discarded and replanned.
 
@@ -121,7 +122,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 | Problem | Fix |
 |---|---|
-| Auth failures / token expired or revoked (`status` says `token: present but REJECTED`, the dashboard says `credentials expired`) | `synckeeper login`, daemon running or not — it picks the new token up on its next sync. Recurs weekly while the consent screen is in **Testing** (§5). |
+| Auth failures / token expired or revoked (`status` says `token: present but REJECTED`, the dashboard says `credentials expired`) | `synckeeper login`, daemon running or not — it picks the new token up on its next sync. Follow it with `synckeeper sync` (or `s` in the dashboard) to apply it now rather than after the retry wait (§6). Recurs weekly while the consent screen is in **Testing** (§5). |
 | `init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run `init`, then reinstall the service. (`login` no longer needs this.) |
 | Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). The service runs `watch`, which can't sign in by itself: if you've never signed in, `synckeeper service uninstall` → `synckeeper init` → reinstall. |
 | State DB lost or corrupted | Stop the daemon, then `synckeeper init` — it re-resolves the Drive folder and merges both sides. Cannot delete: the rebuilt baseline starts empty, so every file is an upload or a download. |

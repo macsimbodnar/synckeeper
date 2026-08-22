@@ -101,6 +101,16 @@ func delegateSync(confirmDeletes bool) error {
 	if !resp.OK {
 		return errors.New(resp.Error)
 	}
+	var reply struct {
+		WasBackingOff bool `json:"was_backing_off"`
+	}
+	json.Unmarshal(resp.Data, &reply) // absent field = not backing off
+	if reply.WasBackingOff {
+		// Say it, because it is the case where the user is most likely to
+		// conclude nothing happened: the daemon had a failing cycle behind it
+		// and was waiting before the next one (2026-08-22).
+		fmt.Println("The last cycle failed and the daemon was waiting before its next try; this request cuts that short.")
+	}
 	fmt.Println("Triggered a sync in the running daemon; waiting for it to finish…")
 
 	deadline := time.Now().Add(30 * time.Second)

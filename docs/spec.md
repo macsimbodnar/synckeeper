@@ -135,7 +135,7 @@ rel_paths are posix-style, never absolute, no `.`/`..` segments. Behavior adapts
 
 ### 8.1 Sync loop
 
-One serialized loop owns the engine. Triggers: (a) coalesced local-change hints from the watcher, debounced (default 500 ms); (b) a remote polling tick (`poll_interval_secs`, default 45 s); (c) an explicit `sync` command. **Every trigger runs the same full cycle** (full local scan + remote delta). Change hints only ever *wake* the loop — they never carry truth, so lost or duplicated events are harmless and dropped events are recovered within one poll interval. Cycle failures back off exponentially (capped at 10× the poll interval) without exiting; guard blocks wait loudly for the human.
+One serialized loop owns the engine. Triggers: (a) coalesced local-change hints from the watcher, debounced (default 500 ms); (b) a remote polling tick (`poll_interval_secs`, default 45 s); (c) an explicit `sync` command. **Every trigger runs the same full cycle** (full local scan + remote delta). Change hints only ever *wake* the loop — they never carry truth, so lost or duplicated events are harmless and dropped events are recovered within one poll interval. Cycle failures back off exponentially (capped at 10× the poll interval) without exiting; guard blocks wait loudly for the human. **The backoff is a wait, not a deaf sleep** (2026-08-22): an explicit `sync` ends it and runs that cycle at once, and a `reload` is serviced during it. Automatic triggers (poll tick, change hints) deliberately do not interrupt it — the backoff exists so a failing remote is not hammered, and only a human asking counts as new information.
 
 ### 8.2 Monitoring (no IPC required)
 

@@ -177,6 +177,18 @@ Skipped files (Google-native docs, symlinks, non-regular files, invalid names, D
 - **Priority:** self-contained, needs no hardware — doable on the primary platform anytime; below the platform ports (W7/W8) in importance.
 - **Acceptance:** a daemon cycle with a skipped Google-native file (or symlink) records a `skip` entry visible in `status` and `activity`; recurring identical skips don't flood the capped ring (per the settled dedupe rule). testing.md row lands with the code.
 
+### W20 — An explicit `sync` reaches a backing-off daemon (field-found, 2026-08-22) — `done (2026-08-22)`
+
+Max's token expired, the daemon's error backoff hit its 12-minute cap, and after `synckeeper login` his dashboard `sync` reported success and did nothing for 90 s until he restarted the service. Reconstructed from the journal: the loop was asleep until 21:25:44 and he restarted at 21:24:52 — **52 seconds early**. decisions.md 2026-08-22.
+
+1. **The backoff stops being a deaf sleep — `done (2026-08-22)`.** `select { case <-time.After(backoff); case <-ctx.Done() }` in the loop body owned the loop for the whole wait, while the control goroutine went on accepting `sync` requests into the cap-1 `syncNow` channel and answering `triggered: true`. Now `Watcher.waitBackoff` selects over the timer, `ctx`, `syncNow` and `reloadCh`: an explicit `sync` ends the wait and its options come back so the *next* cycle is that request, a `reload` is serviced in place without ending the wait, and automatic triggers still do not interrupt (the backoff protects a failing remote; only a human asking is news). The backoff still doubles when a request cuts it short.
+2. **The reply stops being silent about it — `done (2026-08-22)`.** `sync` answers `was_backing_off` + `retry_was_due_at`, read off the recorder rather than the loop (which is inside the wait); `synckeeper sync` prints one line when it cut a backoff short. The dashboard notice is unchanged — the request now runs, and its panels refresh with the result.
+3. **Docs, same commit — `done (2026-08-22)`.** spec §8.1 (the loop contract states the interruption rules), MANUAL §6 (the retry wait, and that `sync` cuts it short) + §5/§7 (`login` "on its next sync" now says how to make that next sync immediate), testing.md W20.1–W20.5, decisions.md. README unchanged — no package, build or layout change.
+
+**Why it jumped the queue:** same rule as W16/W17/W18/W19 — a reproduced field defect outranks features and ports. Nothing was lost or corrupted; what broke was the tool's own acknowledgement, the surface W19 had just spent three items repairing.
+
+**Acceptance:** with the remote failing and the loop in a 1-hour backoff, a control `sync` runs a cycle in well under a second and reports `was_backing_off`; the wait still ends on its timer with nobody asking, still ends on cancellation, and a `reload` during it is answered without ending it; suite + `-race` + `make audit` green.
+
 ### W19 — The dashboard survives a repeating multi-line error (field-found, 2026-08-15) — `done (2026-08-15)`
 
 Max's `status` showed **nothing but auth errors**: no header, no cycle/totals panels, no attention block — the overview had scrolled off its own screen. Diagnosed as three stacked defects, not one. decisions.md 2026-08-15.

@@ -54,7 +54,15 @@ func (w *Watcher) controlHandler(syncNow chan<- engine.Options, reloadCh chan ch
 			}
 			select {
 			case syncNow <- engine.Options{ConfirmDeletes: args.ConfirmDeletes}:
-				return okData(map[string]any{"triggered": true})
+				data := map[string]any{"triggered": true}
+				// A failing daemon is exactly when a user asks for a sync by
+				// hand, and "triggered" alone told them nothing about the
+				// wait their request was cutting short (2026-08-22).
+				if until, ok := rec.backoffUntil(); ok {
+					data["was_backing_off"] = true
+					data["retry_was_due_at"] = until.Unix()
+				}
+				return okData(data)
 			default:
 				return okData(map[string]any{"triggered": false, "note": "a sync is already queued"})
 			}

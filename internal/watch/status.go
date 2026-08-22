@@ -139,6 +139,19 @@ func (r *recorder) cycleDone(res *engine.Result, dur time.Duration, syncErr erro
 	r.persist()
 }
 
+// backoffUntil reports whether the last cycle failed and the loop is waiting
+// before it retries, and when that wait was due to end. Read off the sync loop
+// by the control handler, which answers a `sync` request while the loop is
+// still inside the wait — so it must not touch the loop's own state.
+func (r *recorder) backoffUntil() (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.s.Mode != ModeBackoff {
+		return time.Time{}, false
+	}
+	return time.Unix(r.s.NextPollAt, 0), true
+}
+
 // stop marks a clean shutdown so status reports "stopped" rather than
 // waiting for the heartbeat to go stale.
 func (r *recorder) stop() {

@@ -154,20 +154,29 @@ func (w *Watcher) Run(ctx context.Context) error {
 	// daemon was down, including local changes no event will ever fire for.
 	kick()
 
+	// pending is a control `sync` that arrived while the loop was backing off
+	// after a failure. It runs as the next cycle instead of going back through
+	// the select below, which would park it until the next tick.
+	var pending *engine.Options
+
 	for cycle := 1; ; cycle++ {
 		var opts engine.Options
 		forced := false
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-trigger:
-		case now := <-ticker.C:
-			live.noteTick(now)
-		case opts = <-syncNow: // control `sync`: run now, honor its options
-			forced = true
-		case respCh := <-reloadCh: // control `reload`: hot-swap config, no cycle
-			respCh <- w.applyReload(ticker, live)
-			continue
+		if pending != nil {
+			opts, forced, pending = *pending, true, nil
+		} else {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-trigger:
+			case now := <-ticker.C:
+				live.noteTick(now)
+			case opts = <-syncNow: // control `sync`: run now, honor its options
+				forced = true
+			case respCh := <-reloadCh: // control `reload`: hot-swap config, no cycle
+				respCh <- w.applyReload(ticker, live)
+				continue
+			}
 		}
 		// While paused, automatic triggers are skipped; only an explicit
 		// control `sync` (forced) still runs.
@@ -193,11 +202,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 			rec.cycleDone(res, dur, err, ModeBackoff, time.Now().Add(backoff), false, "")
 			rec.recordError(err)
 			slog.Error("sync cycle failed; will retry", "err", err, "backoff", backoff)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
+			var stopped bool
+			pending, stopped = w.waitBackoff(ctx, backoff, syncNow, reloadCh, ticker, live)
+			if stopped {
 				return nil
 			}
+			if pending != nil {
+				slog.Info("backoff cut short by an explicit sync request", "waited", backoff)
+			}
+			// Doubled even when a request cut the wait short: the counter
+			// tracks consecutive failures, and a forced retry is another call
+			// on the same failing remote. A success resets it.
 			if backoff < 10*w.Poll {
 				backoff *= 2
 			}
@@ -257,6 +272,40 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 			rec.cycleDone(res, dur, nil, mode, time.Now().Add(w.Poll), res.GuardBlocked, res.GuardReason)
 			rec.recordActivity(res)
+		}
+	}
+}
+
+// waitBackoff holds the loop for d after a failed cycle while staying
+// reachable over the control socket. An explicit `sync` ends the wait and its
+// options come back so the caller runs that cycle immediately; a `reload` is
+// serviced in place and the wait continues. Automatic wake-ups (the poll
+// ticker, file events) deliberately do NOT interrupt it — the backoff exists so
+// a failing remote is not hammered, and only a user asking counts as news.
+//
+// It returns (nil, false) when the wait ran out and (nil, true) when the daemon
+// is shutting down.
+//
+// This was a bare time.After until 2026-08-22. The socket accepted a `sync`,
+// answered `triggered: true`, and the request then sat in the channel for the
+// rest of the wait — up to 12 minutes — with nothing in the log, so a fix
+// applied in another terminal (`synckeeper login` after a refused refresh
+// token) looked like it had not worked. Found in the field; see decisions.md.
+func (w *Watcher) waitBackoff(ctx context.Context, d time.Duration, syncNow <-chan engine.Options,
+	reloadCh chan chan reloadResult, ticker *time.Ticker, live *liveState) (*engine.Options, bool) {
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		select {
+		case <-timer.C:
+			return nil, false
+		case <-ctx.Done():
+			return nil, true
+		case opts := <-syncNow:
+			return &opts, false
+		case respCh := <-reloadCh:
+			respCh <- w.applyReload(ticker, live)
 		}
 	}
 }

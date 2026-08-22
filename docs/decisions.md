@@ -13,6 +13,25 @@ Format:
 
 ---
 
+## 2026-08-22 — W20: a post-failure backoff is a wait, not a deaf sleep
+
+**Context:** field report from Max. The daemon's refresh token expired, cycles failed for two days, and the error backoff had grown to its 12-minute cap. He ran `synckeeper login` (21:22:56), asked the dashboard for a sync (21:23:21), saw `sync requested` and **nothing else** — no cycle, no error, not one journal line — waited ~90 s, then restarted the service (21:24:52), which synced immediately. Reconstructed from `journalctl --user -u synckeeper` and fish history: the last failure was 21:13:44 with `backoff=12m0s`, so the loop was due to wake at **21:25:44** — he was 52 seconds early, by luck, and could equally have waited 11 minutes.
+
+**The defect (`internal/watch/watch.go`):** the backoff was `select { case <-time.After(backoff): case <-ctx.Done(): }` inside the loop body. The control socket runs in its own goroutine, so it still accepted the `sync`, pushed it into the cap-1 `syncNow` channel and answered `triggered: true` — and the request then sat there until the sleep ran out. Accepted, acknowledged, deferred up to 12 minutes, invisible in the log. W19-3's token reload was working correctly; the fix simply could not be applied until the loop woke up.
+
+**Decision (agent-proposed, applied 2026-08-22, Max asked for the fix):** the wait becomes `Watcher.waitBackoff`, a select over the timer, `ctx`, `syncNow` **and** `reloadCh`.
+- An explicit `sync` ends the wait and its `engine.Options` are handed back so the *next* cycle is that request — not a return to the top-of-loop select, which would park it until the next tick anyway.
+- A `reload` is serviced in place and the wait **continues** (it previously blocked the CLI past its 30 s control timeout).
+- Automatic triggers — the poll tick and file-change hints — deliberately still do **not** interrupt. The backoff exists so a failing remote is not hammered; only a human asking counts as new information.
+- The backoff still doubles when a request cuts it short: the counter tracks consecutive failures, and a forced retry is another call on the same failing remote. A success resets it.
+- The `sync` reply gains `was_backing_off` + `retry_was_due_at`, read off the recorder (not the loop, which is inside the wait). `synckeeper sync` prints one line when it cut a backoff short — the case where a user is most likely to conclude nothing happened.
+
+**Consequences:** amends spec §8.1 (the loop contract now states the backoff's interruption rules). MANUAL §5/§6/§7 — §6 gains the retry-wait bullet, and the two places that said `login` "picks the new token up on its next sync" now say how to make that next sync immediate. testing.md W20.1–W20.5; plan.md W20. **Not changed:** the dashboard's own `sync requested` notice stays as it is — the request now actually runs, and the panels refresh straight after with the result. `README.md` unchanged (no package, build or layout change).
+
+**Why it jumped the queue:** the rule W16/W17/W18/W19 came in on — a reproduced field defect outranks features and ports. Nothing was lost or corrupted here; the cost was trust in the tool's own acknowledgement, which is the surface W19 had just spent three items repairing.
+
+---
+
 ## 2026-08-15 — W19-5: a frame is always the terminal's exact height, and carries no trailing newline
 
 **Context:** with W19 shipped, Max's dashboard drew correctly but **short**: four tracked files and one activity row left the footer a third of the way up a 58-row window, blank screen underneath. Item 1 gave the frame an upper bound and no lower one, and the two height figures disagreed — `clampBody` allowed `height-5` body rows while `bodyBudget` handed the panels `height-6`.
