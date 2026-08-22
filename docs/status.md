@@ -4,6 +4,8 @@ The single answer to "where are we?". Read this first; **rewrite it before endin
 
 **Updated:** 2026-08-22 — **W20 is done, from a field report.** Max's token expired, the daemon backed off to its 12-minute cap, and after `synckeeper login` his dashboard `sync` said `sync requested` and did **nothing** — no cycle, no error, not one journal line — until he restarted the service 90 s later. Diagnosed before anything was changed, from `journalctl` + fish history: the last failure was 21:13:44 with `backoff=12m0s`, so the loop was due to wake at **21:25:44** and he restarted at **21:24:52** — **52 seconds early, by luck**. Real bug *and* impatience, both. The backoff was `time.After` in the loop body, so the control goroutine kept accepting `sync` requests into the cap-1 channel and answering `triggered: true` while the loop slept through them. `Watcher.waitBackoff` now selects over the timer, `ctx`, `syncNow` **and** `reloadCh`: an explicit `sync` ends the wait and *is* the next cycle, a `reload` is serviced without ending it, and automatic triggers still don't interrupt (the backoff protects a failing remote; only a human asking is news). W19-3's token reload was working correctly all along — it just could not be applied until the loop woke. plan.md W20, decisions.md, testing.md W20.1–W20.5, spec §8.1, MANUAL §5/§6/§7. README unchanged (no package/build/layout change).
 
+**Updated 2026-08-23 — W21 is planned, not built, and waiting on Max's go-ahead.** He asked for the dashboard to show when the daemon is backing off; reading `internal/tui/view.go` to add it found that the dashboard **contradicts** the state rather than omitting it — `cyclePanel`'s `live.TickDue` case prints `next poll: due now` for the whole backoff, because `noteTick` only fires when the loop receives from `ticker.C` and it never does while parked in `waitBackoff`. Same honesty class as W15-U6's `polling-only (polling only)`. Five items in plan.md W21; the bug is in MANUAL §8 Known bugs until it ships fixed. **Two calls are Max's:** whether `status --plain`/`--json` are included (excluded as planned — their bytes are a pipe contract), and the go-ahead itself.
+
 **Verified live, not just offline:** red-first confirmed by observation — neutering the new `syncNow` case reproduces the reported symptom exactly (`timed out waiting for the forced sync ran instead of waiting out the backoff`). Then `make build`, `systemctl --user restart synckeeper`, and `./dist/synckeeper sync` round-tripped against real Drive on Max's machine (`Done. — 0 actions, 0 ok, 0 failed, 247ms`). **His daemon is now running this build.**
 
 **Previously (2026-08-15):**
@@ -76,6 +78,8 @@ The 2026-07-18 session (gate + A1 collapse + guard fix + rounds 2–3 analysis +
 
 ## In progress
 
+**W21 — the dashboard tells the truth while backing off (planned 2026-08-23, nothing built).** Max's request, an honesty bug found while scoping it. The plan is committed rather than held open for review, per the repo rule. Read plan.md W21 and decisions.md 2026-08-23 before touching it: the fix hinges on the daemon publishing its backoff deadline on the `stat` snapshot, because the dashboard's live path is what produces the false line — a DB-only fix would be masked by it. **W20 is its prerequisite and is done:** the planned `press \`s\` to retry now` hint is only truthful because an explicit sync now cuts the wait short.
+
 **W18 — C, A, D, B, E, G, H done; F and I remain (2026-08-01).** Order was C → A → D → B → E → G → H → F → I. **F is blocked on Max's call** (see below); **I** (the doc sweep) is otherwise the last item. The planning context below is the original entry, kept because G/H/F/I still point into it.
 
 **Awaiting Max's triage — found 2026-08-01, not fixed:** a fuzzer run at crash-probability 1.0 wedges 2 of 40 seeds (2 and 19) on a §4.5 `upload`+`download` overlap on one rel_path after a local folder rename — the R25 family. Reproduced identically at `433d41f` (W17's close), so it predates W18; it passes at the default crash probability, which is why no recorded sweep saw it. Nothing is lost (the plan is refused), but the machine stops syncing until something external changes. Recorded in decisions.md and MANUAL §8; where it lands in the order is Max's call, with the W16/W17 precedent that a reproduced correctness defect outranks features and ports.
@@ -84,7 +88,9 @@ The 2026-07-18 session (gate + A1 collapse + guard fix + rounds 2–3 analysis +
 
 ## Next
 
-**Order: ~~W14~~ → ~~W13 close-out~~ → ~~W16~~ → ~~W17~~ → ~~W15-U6~~ → **W18** → W7 → W6 → W10; W12 and W9 parked.**
+**Order: ~~W14~~ → ~~W13 close-out~~ → ~~W16~~ → ~~W17~~ → ~~W15-U6~~ → ~~W20~~ → **W21 (awaiting go-ahead)** → **W18** → W7 → W6 → W10; W12 and W9 parked.**
+
+0'. **W21 — the dashboard tells the truth while backing off** ([plan.md](plan.md) W21): **planned, not started, awaiting Max's go-ahead.** Ahead of W18 only because it is small, display-only and finishes the field report W20 opened; if Max would rather have W18, move it — nothing depends on it and no data is at risk.
 
 0. ~~**W14**~~, ~~**W13 close-out**~~, ~~**W16**~~, ~~**W17**~~, ~~**W15**~~ — all done (see Last completed).
 1. **W18 — root identity + idempotent `init`** ([plan.md](plan.md) W18): ~~C~~ → ~~A~~ → ~~D~~ → ~~B~~ → ~~E~~ → ~~G~~ → ~~H~~ → **F (needs a decision) → I**. Ahead of W7 for the reason W16 jumped the queue: a reproduced correctness defect outranks features and ports.

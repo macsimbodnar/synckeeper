@@ -132,7 +132,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 ## 8. Known bugs
 
-Confirmed and reproduced. Four groups: **found by the 2026-07-31 review** (two still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+Confirmed and reproduced. Five groups: **found by the 2026-07-31 review** (two still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), one **dashboard display bug**, and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
 
 Found by the 2026-07-31 adversarial review, all reproduced; remaining fixes planned as [plan.md](docs/plan.md) W18:
 
@@ -147,6 +147,10 @@ The directory arm — case-only names and renames for *directories and existing 
 
 - **Same-name folder in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *New* files with such names resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine. *Workaround: avoid folder names differing only in case/accents.*
 - **Renaming an existing file to differ only in case/accents (`a.txt` → `A.txt`) makes your *other* machines retry that rename every cycle** — `status` shows a repeated failure; the file stays safe on both sides, its name just doesn't update elsewhere. Same deferred root cause (the case-only-rename arm of the gate). *Workaround: also edit the file's contents when you change its case — it then converges after a transient retry instead of looping.*
+
+Found 2026-08-23 reading the dashboard code, not yet fixed (plan.md W21):
+
+- **While the daemon is retrying after a failure, the dashboard says `next poll: due now` and keeps saying it.** After a failed cycle the daemon waits before trying again (§6), up to 12 minutes; the dashboard's poll countdown does not know about that wait, so it reports a poll as due for the whole of it. The `backoff` word in the header is the only honest indicator, and it is easy to miss. **Nothing is wrong with the sync itself** — the wait is deliberate, `status --plain` reports `mode backoff` correctly, and the error is shown in the attention block. *Workaround: read the header's mode word; press `s` (or run `synckeeper sync`) to retry immediately instead of waiting.*
 
 - **Under investigation (found 2026-07-25 on Linux): a folder deleted in Drive can be *re-uploaded* by another machine instead of being removed.** Observed once on a freshly adopted Linux machine: a tracked folder moved to the Drive bin was not removed locally, and the daemon then attempted to upload part of the tree back to Drive. Every one of those uploads **failed** and nothing reached Drive (they showed as `error upload …: no such file or directory` in `activity` — the local-write gate refusing files that no longer existed). The same deletion propagated correctly on the other (macOS) machine, and the normal path is covered by a passing regression test, so the trigger is machine-state-specific and not yet identified — the suspect is a `init --adopt` that was still running when the login service first tried to start, leaving part of the tree on disk but untracked. (The mass-delete guard was investigated as part of this and found correct; it has since been narrowed — §6 — so it no longer holds recoverable deletions at all.) *Nothing was lost* (Drive's bin and the other machine's rescue copy both held the content; that machine used the quarantine, which was the destination before the system bin replaced it). *If you hit it: check `synckeeper status` on every machine before deleting a large folder, and prefer deleting it on a machine's filesystem rather than in the Drive web UI until this is fixed.*
 

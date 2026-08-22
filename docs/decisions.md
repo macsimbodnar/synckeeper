@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-08-23 — W21: the dashboard says a poll is "due now" through a whole backoff
+
+**Context:** Max asked for the dashboard to show when the daemon is backing off. Reading `internal/tui/view.go` to add it turned up that the dashboard does not merely omit the state — it **contradicts** it. `cyclePanel` prefers the live `stat` answer, and its `live.TickDue` case prints `next poll: due now`. `TickDue` comes from `lastTickAt.Add(poll)`; `liveState.noteTick` fires only when the loop *receives* from `ticker.C`, which it does not while parked in `waitBackoff` — so ~45 s into a 12-minute backoff the flag goes true and stays true. The panel promises an imminent poll for the remaining ~11 minutes. Same class as the `polling-only (polling only)` bug W15-U6 fixed: the dashboard asserting a mode the loop is not in.
+
+**Decision (agent-proposed 2026-08-23, plan recorded, awaiting Max's go-ahead):** planned as **W21**, five items — publish `backing_off` + `retry_at` on the `stat` snapshot; a backoff case ahead of the tick cases in `cyclePanel` (`retry in 11m`); the header word painted warn and an attention line naming the deadline and `s`; a DB-only fallback on `ds.Mode`; golden + a regression test that the panel never says `due now` while backing off. Full items in plan.md W21.
+
+**Two calls recorded rather than assumed.** (1) `status --plain`/`--json` are **excluded** — `render.go`'s own contract is that the pipe output does not change for interactive gains, and both already print `mode backoff`; their `next poll:` line carries the same mislabel, and relabelling it is honest but breaks parsers. Max's call. (2) The attention block's `press \`s\` to retry now` is only truthful **because of W20** — before yesterday that keystroke was accepted and deferred up to 12 minutes, so this hint would have been a second lie.
+
+**Consequences:** the defect ships **unfixed** for now, so it enters MANUAL §8 Known bugs in this commit and leaves it in the fix's commit (project rule: a bug found *or* fixed moves the list in the same commit). plan.md W21, status.md In progress / Next. Nothing in the sync path is involved — this is display only, and no data is at risk; the cost is that the one screen a user checks during a failure misreports what the daemon is doing.
+
+---
+
 ## 2026-08-22 — W20: a post-failure backoff is a wait, not a deaf sleep
 
 **Context:** field report from Max. The daemon's refresh token expired, cycles failed for two days, and the error backoff had grown to its 12-minute cap. He ran `synckeeper login` (21:22:56), asked the dashboard for a sync (21:23:21), saw `sync requested` and **nothing else** — no cycle, no error, not one journal line — waited ~90 s, then restarted the service (21:24:52), which synced immediately. Reconstructed from `journalctl --user -u synckeeper` and fish history: the last failure was 21:13:44 with `backoff=12m0s`, so the loop was due to wake at **21:25:44** — he was 52 seconds early, by luck, and could equally have waited 11 minutes.

@@ -177,6 +177,31 @@ Skipped files (Google-native docs, symlinks, non-regular files, invalid names, D
 - **Priority:** self-contained, needs no hardware — doable on the primary platform anytime; below the platform ports (W7/W8) in importance.
 - **Acceptance:** a daemon cycle with a skipped Google-native file (or symlink) records a `skip` entry visible in `status` and `activity`; recurring identical skips don't flood the capped ring (per the settled dedupe rule). testing.md row lands with the code.
 
+### W21 — The dashboard tells the truth while backing off (found 2026-08-23, planned, not built) — `not started`
+
+Found reading `internal/tui/view.go` while extending W20. **The dashboard actively lies during a backoff**, and it is the same honesty class W15-U6 fixed for `polling-only (polling only)`.
+
+**The defect.** `cyclePanel` prefers the live `stat` answer over the DB:
+
+```go
+case live.Have && live.TickDue:
+    rows = append(rows, field(t, "next poll", "due now", colW, nil))
+```
+
+`TickDue` derives from `lastTickAt.Add(poll)`, and `liveState.noteTick` fires **only** when the loop actually receives from `ticker.C`. During a backoff the loop sits in `waitBackoff` and never receives, while the ticker keeps firing into its own buffer — so ~45 s into a 12-minute backoff `TickDue` goes true and stays true. The panel prints **`next poll: due now`** for the remaining ~11 minutes while nothing is going to happen. That is Max's "nothing happened" experience rendered on screen. (`lastTickAt` zero — a daemon that failed its very first cycle — falls through to `next poll ≈ 11m`: right figure, wrong label.)
+
+**What it shows today, in full:** `backoff` as a **muted** word in the header, easy to miss among the other grey segments; the false `next poll: due now`; and `⚠ last error` with no mention that a retry is pending or when it lands.
+
+1. **The daemon publishes the deadline — `not started`.** It is only in the loop's head. `liveState` gains `backoffUntil` with `setBackoff`/`clearBackoff` called either side of `waitBackoff`; `LiveSnapshot` gains `backing_off` + `retry_at`; `cmd/synckeeper/status.go` (`fetchLive`) and `internal/tui/live.go` (`Live`) carry them through. **Note:** `recorder.backoffUntil()` already exists from W20 but serves the control `sync` reply off the recorder — the dashboard reads `stat`, so this is the live-state twin, not a duplicate.
+2. **`cyclePanel` stops lying — `not started`.** A backoff case placed **ahead of** the `WakePending`/`TickDue`/`NextTickAt` cases → `retry in 11m`, painted warn. This is the bug fix; the rest of the workstream is presentation.
+3. **The header and the attention block say it — `not started`.** Paint the `backoff` mode word warn rather than muted; add `⚠ retrying after a failure — next try in 11m; press \`s\` to retry now`. The hint is only honest **because of W20** — before it, `s` was accepted and deferred.
+4. **DB-only fallback — `not started`.** When `stat` is unavailable (daemon too old, socket down) fall back to `ds.Mode == backoff` with `≈` on the estimate, matching the existing live-vs-DB convention. Needs the mode constant shared: `internal/tui` cannot import `internal/watch`, so define `status.ModeBackoff` in `internal/status` (both packages already import it) and set `watch.ModeBackoff = status.ModeBackoff` — no call site churns.
+5. **Tests + docs — `not started`.** A `backoff` frame in `frames()` + a new `overview_backoff.golden`; an explicit regression test that the panel never says `next poll: due now` while backing off; `internal/watch/live_test.go` rows for set/clear. MANUAL §8 loses its W21 known-bug entry in the fix's commit, MANUAL §10 gains what the dashboard shows; testing.md W21.x; decisions.md.
+
+**Scope call to confirm with Max (recorded, not yet decided):** `status --plain` and `--json` are **excluded**. Their bytes are a pipe contract — `render.go`'s own comment: *"the dashboard was allowed to change how status looks interactively, never what it prints to a pipe"* — and they already print `mode backoff`. Their `next poll:` line carries the same mislabel, so relabelling it is honest but changes output scripts may parse.
+
+**Acceptance:** with the daemon in a backoff, the dashboard names the retry and its deadline in the cycle panel, never prints `next poll: due now`, and the attention block says how to retry now; the golden pins the frame; suite + `-race` + `make audit` green.
+
 ### W20 — An explicit `sync` reaches a backing-off daemon (field-found, 2026-08-22) — `done (2026-08-22)`
 
 Max's token expired, the daemon's error backoff hit its 12-minute cap, and after `synckeeper login` his dashboard `sync` reported success and did nothing for 90 s until he restarted the service. Reconstructed from the journal: the loop was asleep until 21:25:44 and he restarted at 21:24:52 — **52 seconds early**. decisions.md 2026-08-22.
