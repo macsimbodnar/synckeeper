@@ -164,7 +164,14 @@ func (m Model) header(t theme, w int) string {
 			mode += " (" + b + ")"
 		}
 		if mode != "" {
-			segs = append(segs, seg{mode, t.muted})
+			paint := t.muted
+			if ds.Mode == status.ModeBackoff && !ds.Paused {
+				// Not a grey segment among grey segments: it is the reason
+				// nothing is happening, and it was the only indicator on the
+				// screen that was even true (W21).
+				paint = t.warn
+			}
+			segs = append(segs, seg{mode, paint})
 		}
 		if ds.PID > 0 {
 			segs = append(segs, seg{fmt.Sprintf("pid %d", ds.PID), t.muted})
@@ -291,7 +298,13 @@ func (m Model) cyclePanel(t theme, colW int) []string {
 		rows = append(rows, field(t, "syncing", what+" · "+status.Dur(live.CycleElapsed), colW, t.good))
 	}
 
+	backoff, ok := m.backoffState()
 	switch {
+	case ok:
+		// First, because it outranks every deadline below it: while the loop
+		// is waiting out a failure it is not listening to the poll ticker at
+		// all, and the wake it might be holding will not be consumed either.
+		rows = append(rows, field(t, "retry", backoff.estimate+status.Until(s.Now, backoff.at), colW, t.warn))
 	case live.Have && live.WakePending:
 		// A local change is in the debounce window: the poll deadline is
 		// irrelevant, the next cycle is milliseconds away.
@@ -333,6 +346,37 @@ func (m Model) cyclePanel(t theme, colW int) []string {
 	return rows
 }
 
+// backoffView is what the frame needs to say about a daemon waiting out a
+// failed cycle: when the retry is due, and whether that instant is the daemon's
+// own answer or the database's estimate.
+type backoffView struct {
+	at       int64
+	estimate string // "≈ " when the figure came from the DB, "" when it is exact
+}
+
+// backoffState answers whether the daemon is waiting before it retries.
+//
+// The live answer wins where there is one: it is published either side of the
+// wait itself. The DB row is the fallback for a daemon too old to publish it or
+// a socket that did not answer — the mode is written at cycle end like every
+// other row there, so its deadline carries the same "≈" as the poll estimate.
+//
+// A paused daemon is never backing off, whatever either source says: pausing
+// stops the cycles that would clear the mode, so the row goes stale as
+// "backoff" and no retry is coming until the user resumes.
+func (m Model) backoffState() (backoffView, bool) {
+	live, ds := m.snap.Live, m.snap.Status.Daemon
+	switch {
+	case ds.Paused:
+		return backoffView{}, false
+	case live.Have && live.BackingOff:
+		return backoffView{at: live.RetryAt.Unix()}, true
+	case ds.Mode == status.ModeBackoff && ds.NextPollAt > 0:
+		return backoffView{at: ds.NextPollAt, estimate: "≈ "}, true
+	}
+	return backoffView{}, false
+}
+
 func (m Model) totalsPanel(t theme, colW int) []string {
 	s := m.snap.Status
 	quarantine := fmt.Sprintf("%s files", comma(s.QFiles))
@@ -369,6 +413,14 @@ func (m Model) attention(t theme, w int) []string {
 	}
 	if s.Daemon.LastError != "" {
 		out = append(out, t.bad("⚠ last error")+" — "+truncate(s.Daemon.LastError, max(0, w-18)))
+	}
+	// Directly under the error it explains: the error line says what broke,
+	// this one says the daemon has not given up and how to stop waiting. The
+	// hint is only truthful because W20 made an explicit sync cut the wait
+	// short — before it, `s` was accepted and then sat in the channel.
+	if b, ok := m.backoffState(); ok {
+		out = append(out, t.warn("⚠ retrying after a failure")+" — next try "+
+			b.estimate+status.Until(s.Now, b.at)+"; press `s` to retry now")
 	}
 	if !s.BinAvailable {
 		out = append(out, t.warn("⚠ no system bin")+" — "+truncate(status.SystemBinLine(false, s.BinDest), max(0, w-20)))

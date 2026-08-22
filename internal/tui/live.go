@@ -29,6 +29,14 @@ type Live struct {
 	// cycle began — a bound on what is about to sync, not a file list.
 	PendingChanges int
 
+	// BackingOff: the last cycle failed and the loop is waiting before it
+	// retries, until RetryAt. It outranks the poll deadline above, which is
+	// derived from the last tick and stops meaning anything during the wait —
+	// the panel used to read it anyway and promise a poll that never came
+	// (W21).
+	BackingOff bool
+	RetryAt    time.Time
+
 	CycleRunning   bool
 	CycleStartedAt time.Time
 	CycleElapsed   time.Duration

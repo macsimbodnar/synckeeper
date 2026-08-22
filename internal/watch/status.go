@@ -30,9 +30,10 @@ const HeartbeatInterval = 10 * time.Second
 const (
 	ModeWatching    = "watching"     // file watching active (whichever backend)
 	ModePollingOnly = "polling-only" // watch failed; polling covers the tree
-	ModeBackoff     = "backoff"      // last cycle errored; retrying with backoff
-	ModePaused      = "paused"       // auto-sync suspended via `pause`
-	ModeStopped     = "stopped"      // clean shutdown
+	// Shared with the dashboard, which reads it off the DB row (W21).
+	ModeBackoff = status.ModeBackoff // last cycle errored; retrying with backoff
+	ModePaused  = "paused"           // auto-sync suspended via `pause`
+	ModeStopped = "stopped"          // clean shutdown
 )
 
 // recorder maintains the daemon_status row and the activity ring. Its fields

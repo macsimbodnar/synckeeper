@@ -26,6 +26,13 @@ import (
 // show. The dashboard asks for more.
 const DefaultActivityLimit = 5
 
+// ModeBackoff is the daemon mode recorded after a failed cycle, while the loop
+// waits before retrying. It lives in the read model because two packages that
+// cannot import each other both need the word: the daemon writes it (as
+// watch.ModeBackoff, which is this constant) and the dashboard matches on it
+// when no live detail is available to say so (W21).
+const ModeBackoff = "backoff"
+
 // Daemon classifications reported as Snapshot.State.
 const (
 	StateRunning  = "running"

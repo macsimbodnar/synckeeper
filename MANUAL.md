@@ -4,7 +4,7 @@ How to *use* Synckeeper. (Build / dev / design docs → [README.md](README.md).)
 
 Keeps **one local folder** ↔ **one Google Drive folder** identical, both directions. Many machines sync against the same Drive folder (the hub + durable copy). Runs as a background daemon; **never silently loses or corrupts a file**: deletes → Drive bin + your system bin (never permanent); conflicting edits → conflict copy (never last-writer-wins); edit always beats delete.
 
-**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-08-22.
+**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-08-23.
 
 ---
 
@@ -132,7 +132,7 @@ Then run `synckeeper init` (first time — it signs in and offers the login serv
 
 ## 8. Known bugs
 
-Confirmed and reproduced. Five groups: **found by the 2026-07-31 review** (two still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), one **dashboard display bug**, and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+Confirmed and reproduced. Four groups: **found by the 2026-07-31 review** (two still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
 
 Found by the 2026-07-31 adversarial review, all reproduced; remaining fixes planned as [plan.md](docs/plan.md) W18:
 
@@ -147,10 +147,6 @@ The directory arm — case-only names and renames for *directories and existing 
 
 - **Same-name folder in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *New* files with such names resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine. *Workaround: avoid folder names differing only in case/accents.*
 - **Renaming an existing file to differ only in case/accents (`a.txt` → `A.txt`) makes your *other* machines retry that rename every cycle** — `status` shows a repeated failure; the file stays safe on both sides, its name just doesn't update elsewhere. Same deferred root cause (the case-only-rename arm of the gate). *Workaround: also edit the file's contents when you change its case — it then converges after a transient retry instead of looping.*
-
-Found 2026-08-23 reading the dashboard code, not yet fixed (plan.md W21):
-
-- **While the daemon is retrying after a failure, the dashboard says `next poll: due now` and keeps saying it.** After a failed cycle the daemon waits before trying again (§6), up to 12 minutes; the dashboard's poll countdown does not know about that wait, so it reports a poll as due for the whole of it. The `backoff` word in the header is the only honest indicator, and it is easy to miss. **Nothing is wrong with the sync itself** — the wait is deliberate, `status --plain` reports `mode backoff` correctly, and the error is shown in the attention block. *Workaround: read the header's mode word; press `s` (or run `synckeeper sync`) to retry immediately instead of waiting.*
 
 - **Under investigation (found 2026-07-25 on Linux): a folder deleted in Drive can be *re-uploaded* by another machine instead of being removed.** Observed once on a freshly adopted Linux machine: a tracked folder moved to the Drive bin was not removed locally, and the daemon then attempted to upload part of the tree back to Drive. Every one of those uploads **failed** and nothing reached Drive (they showed as `error upload …: no such file or directory` in `activity` — the local-write gate refusing files that no longer existed). The same deletion propagated correctly on the other (macOS) machine, and the normal path is covered by a passing regression test, so the trigger is machine-state-specific and not yet identified — the suspect is a `init --adopt` that was still running when the login service first tried to start, leaving part of the tree on disk but untracked. (The mass-delete guard was investigated as part of this and found correct; it has since been narrowed — §6 — so it no longer holds recoverable deletions at all.) *Nothing was lost* (Drive's bin and the other machine's rescue copy both held the content; that machine used the quarantine, which was the destination before the system bin replaced it). *If you hit it: check `synckeeper status` on every machine before deleting a large folder, and prefer deleting it on a machine's filesystem rather than in the Drive web UI until this is fixed.*
 
@@ -199,5 +195,7 @@ Aliases: `Shift-Tab` cycles views backwards, `Ctrl-F`/`Ctrl-B` page, `Home`/`End
 Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
 
 `s`/`p`/`P`/`R` are the same requests `sync`, `pause`, `resume` and `reload` send; a result line appears under the header and clears itself. **`s` never confirms a held mass deletion** — a deletion the guard is holding is released only by `synckeeper sync --confirm-deletes` on the command line (§6), never by a keystroke.
+
+**A retry is named, never disguised as a poll** *(fixed 2026-08-23)*. While the daemon is waiting after a failed cycle (§6) the cycle panel reads `retry  in 11m` instead of a poll countdown, the header's `backoff` is amber rather than grey, and the attention block adds `⚠ retrying after a failure — next try in 11m; press \`s\` to retry now`. `s` cuts the wait short and syncs at once (§6). A paused daemon is not retrying and says nothing of the sort. Until this was fixed the panel read `next poll: due now` for the whole wait — up to 12 minutes of a promise it could not keep.
 
 **The countdown is exact when the daemon can tell you.** A running daemon publishes its real poll deadline, what a running cycle is doing (`syncing  checking Drive · 45s`, or `transferring · 1,145 actions · 8s`), whether local changes are already in flight (`next sync  3 local changes — syncing` — a bound on what is about to sync, since one save can fire several events), and which watch backend is live — shown in the header, e.g. `watching (FSEvents)`; a daemon that has fallen back to polling reads `polling-only`, with no backend named because there is none. If the daemon is older than the dashboard, or not running, the figure falls back to the database and is **marked `≈`**: that number is recorded when a cycle ends, while the poll timer runs independently and any local change pre-empts it, so the real next sync is usually *sooner*.

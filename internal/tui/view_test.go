@@ -174,8 +174,27 @@ func frames(ref time.Time) map[string]Model {
 	}
 	wakeOpts.Snapshot = ws
 
+	// The backoff frame (W21): the daemon is waiting out a failed cycle, and
+	// the poll deadline it publishes has already elapsed — which is exactly the
+	// state that used to render `next poll: due now` for eleven more minutes.
+	backoffOpts := base
+	bs := testSnapshot(ref)
+	bs.Status.Daemon.Mode = "backoff"
+	bs.Status.Daemon.LastError = "refresh remote state: oauth2: \"invalid_grant\" \"Token has been expired or revoked.\""
+	bs.Status.Daemon.NextPollAt = ref.Add(11*time.Minute + 40*time.Second).Unix()
+	bs.Live = Live{
+		Have: true, Backend: "fsnotify",
+		Poll:       45 * time.Second,
+		NextTickAt: ref.Add(-31 * time.Second),
+		TickDue:    true,
+		BackingOff: true,
+		RetryAt:    ref.Add(11*time.Minute + 40*time.Second),
+	}
+	backoffOpts.Snapshot = bs
+
 	return map[string]Model{
 		"overview_live":      New(liveOpts),
+		"overview_backoff":   New(backoffOpts),
 		"overview_live_wake": New(wakeOpts),
 		"activity_scrolled":  scrolled,
 		"activity_filtered":  filtered,

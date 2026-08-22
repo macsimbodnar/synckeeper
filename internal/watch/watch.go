@@ -203,7 +203,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 			rec.recordError(err)
 			slog.Error("sync cycle failed; will retry", "err", err, "backoff", backoff)
 			var stopped bool
+			// Published either side of the wait so the dashboard can name it:
+			// inside it the poll deadline is a fiction, because the loop is not
+			// receiving from the ticker at all (W21).
+			live.setBackoff(time.Now().Add(backoff))
 			pending, stopped = w.waitBackoff(ctx, backoff, syncNow, reloadCh, ticker, live)
+			live.clearBackoff()
 			if stopped {
 				return nil
 			}

@@ -13,6 +13,22 @@ Format:
 
 ---
 
+## 2026-08-23 — W21 built: the dashboard names the retry instead of promising a poll
+
+**Context:** Max gave the go-ahead on the W21 plan below ("go ahead with the plan") — including its recorded scope call, so `status --plain`/`--json` stay **excluded** and keep printing `mode backoff` with their existing `next poll:` line. All five items are built.
+
+**Decision (Max's go-ahead, agent-implemented 2026-08-23):**
+- The daemon publishes the wait. `liveState` gains `backingOff`/`retryAt` with `setBackoff`/`clearBackoff` called **either side of** `waitBackoff` in the loop (not inside it — the wait itself is also unit-tested with a nil `liveState`), and `LiveSnapshot` gains `backing_off` + `retry_at`. Additive over protocol 1, like `stat` itself: an older daemon simply leaves them zero.
+- `cyclePanel` gets a backoff case **ahead of** the wake/tick cases, rendering `retry  in 11m` painted warn. The tick figures are not merely lower priority during a wait — they are meaningless, because the loop is not receiving from the ticker at all.
+- The header's mode word is painted warn instead of the muted grey it shared with `pid 4242`, and the attention block gains `⚠ retrying after a failure — next try in 11m; press \`s\` to retry now`, directly under the error line it explains.
+- DB-only fallback on `ds.Mode`, marked `≈` like every other DB-derived figure. It needs the word in a package both sides can import: **`status.ModeBackoff` is now the definition and `watch.ModeBackoff` is an alias of it** (`internal/tui` cannot import `internal/watch`). No call site changed.
+
+**Two implementation calls not in the plan.** (1) **A paused daemon is never reported as retrying**, from either source: pausing stops the cycles that would rewrite the mode, so the DB row goes stale as `backoff` indefinitely, and the live flag can also be set while a pause makes the retry-after-the-wait a no-op. Suppressing it there is the same honesty rule that motivated the workstream — the alternative is a countdown to a retry that will not happen. (2) The retry row **replaces** the poll row rather than joining it: a second deadline the daemon cannot honor is exactly what was being removed, and the cycle panel is one column wide.
+
+**Consequences:** display only — nothing in the sync path reads any of it, and `internal/tui`'s read-only-by-construction gate still passes. MANUAL §8 loses the known-bug entry in this commit and §10 gains what the dashboard shows; spec §8.2 gains the deadline and the honesty rule as normative; testing.md W21.1–W21.5; plan.md W21 closed. **Red-first verified by observation** on both halves: with `setBackoff` removed the daemon never publishes the wait, and with `backoffState` forced false the frame prints `next poll: due now` again — the reported symptom exactly.
+
+---
+
 ## 2026-08-23 — W21: the dashboard says a poll is "due now" through a whole backoff
 
 **Context:** Max asked for the dashboard to show when the daemon is backing off. Reading `internal/tui/view.go` to add it turned up that the dashboard does not merely omit the state — it **contradicts** it. `cyclePanel` prefers the live `stat` answer, and its `live.TickDue` case prints `next poll: due now`. `TickDue` comes from `lastTickAt.Add(poll)`; `liveState.noteTick` fires only when the loop *receives* from `ticker.C`, which it does not while parked in `waitBackoff` — so ~45 s into a 12-minute backoff the flag goes true and stays true. The panel promises an imminent poll for the remaining ~11 minutes. Same class as the `polling-only (polling only)` bug W15-U6 fixed: the dashboard asserting a mode the loop is not in.

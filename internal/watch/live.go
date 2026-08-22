@@ -40,6 +40,15 @@ type liveState struct {
 	cycleStartedAt time.Time
 	cycleNumber    int
 
+	// backingOff is set while the loop sits in waitBackoff after a failed
+	// cycle, with retryAt the instant the wait is due to end. It lives here
+	// and not only in the loop's head because the dashboard reads `stat`: with
+	// no published deadline the panel derived one from lastTickAt, which stops
+	// moving during a backoff, and promised "next poll: due now" for the whole
+	// of a 12-minute wait (W21).
+	backingOff bool
+	retryAt    time.Time
+
 	// stage is the running cycle's own reporter, owned by the engine package.
 	// Read straight through: it has its own lock, and copying the string here
 	// per cycle would only add a way for the two to disagree.
@@ -73,6 +82,12 @@ type LiveSnapshot struct {
 	WakePending    bool  `json:"wake_pending"`
 	WakeDueAt      int64 `json:"wake_due_at"`
 	PendingChanges int   `json:"pending_changes"`
+
+	// BackingOff means the last cycle failed and the loop is waiting before it
+	// retries; RetryAt is when that wait ends. While it is set the poll
+	// deadline above is meaningless — the loop is not listening to the ticker.
+	BackingOff bool  `json:"backing_off"`
+	RetryAt    int64 `json:"retry_at"`
 
 	CycleRunning   bool  `json:"cycle_running"`
 	CycleStartedAt int64 `json:"cycle_started_at"`
@@ -130,6 +145,21 @@ func (l *liveState) noteWake(at time.Time) {
 	l.pendingChanges++
 }
 
+// setBackoff records that the loop is waiting out a failure until until.
+func (l *liveState) setBackoff(until time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.backingOff, l.retryAt = true, until
+}
+
+// clearBackoff records that the wait is over — whether it ran out or an
+// explicit sync cut it short (W20).
+func (l *liveState) clearBackoff() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.backingOff, l.retryAt = false, time.Time{}
+}
+
 func (l *liveState) cycleBegin(at time.Time, number int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -158,8 +188,12 @@ func (l *liveState) snapshot(now time.Time) LiveSnapshot {
 		DebounceMS:     l.debounce.Milliseconds(),
 		WakePending:    l.wakePending,
 		PendingChanges: l.pendingChanges,
+		BackingOff:     l.backingOff,
 		CycleRunning:   l.cycleRunning,
 		CycleNumber:    l.cycleNumber,
+	}
+	if l.backingOff && !l.retryAt.IsZero() {
+		s.RetryAt = l.retryAt.Unix()
 	}
 	if !l.lastTickAt.IsZero() && l.poll > 0 {
 		next := l.lastTickAt.Add(l.poll)

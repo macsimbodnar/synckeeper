@@ -176,12 +176,16 @@ func fetchLive() (live tui.Live, haveLive, running bool) {
 		TickDue:        s.TickDue,
 		WakePending:    s.WakePending,
 		PendingChanges: s.PendingChanges,
+		BackingOff:     s.BackingOff,
 		CycleRunning:   s.CycleRunning,
 		CycleElapsed:   time.Duration(s.CycleElapsedMS) * time.Millisecond,
 		CycleNumber:    s.CycleNumber,
 	}
 	if s.NextTickAt > 0 {
 		live.NextTickAt = time.Unix(s.NextTickAt, 0)
+	}
+	if s.RetryAt > 0 {
+		live.RetryAt = time.Unix(s.RetryAt, 0)
 	}
 	if s.WakeDueAt > 0 {
 		live.WakeDueAt = time.Unix(s.WakeDueAt, 0)

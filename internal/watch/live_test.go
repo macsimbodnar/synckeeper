@@ -8,6 +8,7 @@ import (
 
 	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
+	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
 // TestLiveStateTracksTheLoop covers the transitions the dashboard depends on,
@@ -93,6 +94,27 @@ func TestLiveStateTracksTheLoop(t *testing.T) {
 		t.Errorf("a finished cycle still reports as running: %+v", s)
 	}
 
+	// A backoff is published for as long as the loop is inside it, and the
+	// deadline comes with it — the panel that used to derive one from
+	// lastTickAt promised a poll the loop was in no position to make (W21).
+	if s := l.snapshot(now.Add(34 * time.Second)); s.BackingOff || s.RetryAt != 0 {
+		t.Errorf("an idle daemon reported a backoff: %+v", s)
+	}
+	l.setBackoff(now.Add(12 * time.Minute))
+	s = l.snapshot(now.Add(35 * time.Second))
+	if !s.BackingOff {
+		t.Error("a backoff was not published")
+	}
+	if want := now.Add(12 * time.Minute).Unix(); s.RetryAt != want {
+		t.Errorf("RetryAt = %d, want %d", s.RetryAt, want)
+	}
+	// Cleared when the wait ends, whether it ran out or an explicit sync cut it
+	// short (W20) — the caller clears it either way.
+	l.clearBackoff()
+	if s := l.snapshot(now.Add(36 * time.Second)); s.BackingOff || s.RetryAt != 0 {
+		t.Errorf("the backoff outlived the wait: %+v", s)
+	}
+
 	// A reload of poll_interval_secs moves the published deadline too.
 	l.setPoll(10 * time.Second)
 	if s := l.snapshot(now.Add(34 * time.Second)); s.PollMS != 10000 {
@@ -170,6 +192,62 @@ func TestStatOverTheRealSocket(t *testing.T) {
 	resp = call(t, sock, control.CmdStat, nil)
 	if err := json.Unmarshal(resp.Data, &s); err != nil {
 		t.Fatalf("stat during a sync: %v", err)
+	}
+}
+
+// TestStatPublishesTheBackoff is W21's end-to-end row: a real daemon parked in
+// waitBackoff says so over the socket, with the deadline the dashboard prints —
+// and stops saying it once the wait is over. Before this, the loop's wait was
+// invisible to `stat`, and the dashboard filled the silence with a poll
+// countdown derived from a ticker nobody was receiving from.
+func TestStatPublishesTheBackoff(t *testing.T) {
+	fake, root := newWorld(t)
+	a := newMachine(t, "a", fake, root)
+
+	// The same break as W20's field reproduction: every cycle fails in
+	// `refresh remote state`, the loop's hard-error path.
+	if err := a.db.SetMeta(statedb.MetaPageToken, "not-a-page-token"); err != nil {
+		t.Fatal(err)
+	}
+	sock := startWatcherWithControl(t, a, time.Hour, "")
+
+	var s LiveSnapshot
+	stat := func() LiveSnapshot {
+		resp := call(t, sock, control.CmdStat, nil)
+		var got LiveSnapshot
+		if err := json.Unmarshal(resp.Data, &got); err != nil {
+			t.Fatalf("stat payload: %v", err)
+		}
+		return got
+	}
+	waitFor(t, "the daemon publishes its backoff", 10*time.Second, func() bool {
+		s = stat()
+		return s.BackingOff
+	})
+	// The first backoff is one poll interval, so the deadline is roughly an
+	// hour out: what matters is that it is a real future instant and not the
+	// zero value the panel would render as "unknown".
+	now := time.Now().Unix()
+	if s.RetryAt <= now || s.RetryAt > now+2*int64(time.Hour/time.Second) {
+		t.Errorf("retry_at = %d; want a deadline within the next couple of hours of %d", s.RetryAt, now)
+	}
+
+	// What the user does in the other terminal, then asks for a sync (W20).
+	tok, err := fake.StartPageToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetMeta(statedb.MetaPageToken, tok); err != nil {
+		t.Fatal(err)
+	}
+	call(t, sock, control.CmdSync, nil)
+
+	waitFor(t, "the backoff is withdrawn once the wait ends", 10*time.Second, func() bool {
+		s = stat()
+		return !s.BackingOff
+	})
+	if s.RetryAt != 0 {
+		t.Errorf("retry_at = %d after the wait ended, want 0", s.RetryAt)
 	}
 }
 
