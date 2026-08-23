@@ -13,6 +13,18 @@ Format:
 
 ---
 
+## 2026-08-23 — W6 closed on a field report: spec §16.10 satisfied, W12 stays parked anyway
+
+**Context:** asked what W6 was, Max answered by closing it: *"it is rolled out on mac and linux since a month now and works fine. You can close it."* W6 is the real multi-machine rollout — **spec §16.10**, and the one acceptance criterion the offline suite structurally cannot prove, since every other row runs against the in-memory Drive fake.
+
+**Decision (Max, 2026-08-23):** W6 is **done**. Two real machines (macOS + Linux `pop-os`) have run against one Drive folder under the login service for roughly a month; the criterion asks for "a day under `watch` ending in a clean `doctor`", and a month of daily use exceeds the first half by a wide margin.
+
+**Recorded as a field report, not as a check an agent ran.** testing.md **W6.1** says so explicitly, quotes Max, and names the half that is *not* separately evidenced: no `doctor` run per machine was recorded, so that part is satisfied by sustained use rather than by evidence. One `synckeeper doctor` on each machine would close the gap if it is ever wanted. Writing it this way is the point — an acceptance ledger that launders a report into a verified row stops being worth reading, which is the same failure the drift sweep found in G2 and M14.8 earlier today.
+
+**W12 stays parked, and this is the interesting part.** The parked field incident — a folder deleted in Drive answered with a re-upload — came out of **this very rollout**, on `pop-os`, 2026-07-25. A month of daily two-machine use with no recurrence is the strongest evidence W12 has ever had, and it was tempting to close it on the same sentence that closed W6. It is not closed: **the trigger was never identified** (the leading suspect remains an `init` still running when the login service first started), so non-recurrence is evidence, not proof, and the parked entry plus MANUAL §8's user-facing warning both stand. Recorded as testing.md **W6.2** so the evidence is captured without the conclusion being overstated.
+
+**Consequences:** spec §16.10 carries a dated PASSED note in item 9's existing style; plan.md W6 is `done (2026-08-23)`; the order is now **W7 → W22 → W10**, and nothing is waiting on Max — W7 is an agent task. Two stale flags were fixed in **unbuilt** plan items while here (W7-L1's `init --force`, W10's `init --adopt`, both removed by W18-B) — these matter more than the historical mentions left alone, because an unbuilt item's text is a specification someone will implement.
+
 ## 2026-08-23 — W18 closed: `doctor` stays, and the R25 wedge is scheduled after the rollout
 
 **Context:** the drift sweep left W18 with exactly two open items, both decisions rather than work. Max took them interactively.

@@ -186,6 +186,13 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 |---|---|---|
 | W7-L6 | The config dir is private and a loose `credentials.json` is flagged, not refused: `Dir()` tightens a pre-existing umask-created dir (`0755` → `0700`) and creates a fresh one `0700`; a group/world-readable `credentials.json` still resolves but warns with its mode and the `chmod 600` fix, while `0600` stays silent; `info` reports the mode in human + JSON and flags a readable file | passing (2026-07-25) — `TestDirTightensExistingConfigDir`, `TestDirCreatesPrivateConfigDir` (`internal/config`), `TestLoosePerms`, `TestResolveClientWarnsButAcceptsLoosePerms`, `TestResolveClientQuietOnTightPerms` (`internal/auth`), `TestPrintInfoCredentialsPerms`, `TestPrintInfoJSONCredentialsPerms` (`cmd/synckeeper`). Red-first: with the tightening disabled the dir stayed `0755`; with the warn disabled the log was empty |
 
+### W6 — real multi-machine rollout (spec §16.10)
+
+| ID | Case | Status |
+|---|---|---|
+| W6.1 | A real ≥2-machine rollout (macOS + Linux `pop-os`) against one Drive folder, sustained under the login service, ending healthy | **passing (2026-08-23)** — not an automated row: closed on Max's field report of roughly a month of daily use on both machines (*"it is rolled out on mac and linux since a month now and works fine"*). Exceeds the criterion's "a day under `watch`". The `doctor`-clean half is satisfied by sustained use, not by a separately recorded run — worth one `synckeeper doctor` per machine if it is ever wanted as explicit evidence |
+| W6.2 | The rollout's own field incident does not recur | **no recurrence in ~1 month (2026-08-23)** — W12 (a Drive-bin delete answered with a re-upload) came out of this rollout on `pop-os`, 2026-07-25. Stays **parked**, not closed: the trigger was never identified, so non-recurrence is evidence, not proof |
+
 ### W15 — `status` becomes a live TUI dashboard (2026-07-27 →)
 
 | ID | Case | Status |
