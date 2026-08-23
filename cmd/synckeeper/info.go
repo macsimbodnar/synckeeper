@@ -116,7 +116,9 @@ func gatherInfo() infoView {
 		v.credLoose = runtime.GOOS != "windows" && v.credMode&0o077 != 0
 	}
 
-	// OAuth client — resolvable without init (embedded default is always there).
+	// OAuth client — resolvable without init, but it can genuinely be absent:
+	// nothing is embedded, so a missing credentials.json is an error to report,
+	// not an impossible branch (spec §9).
 	if src, id, cerr := auth.CredentialInfo(configDir); cerr != nil {
 		v.oauthErr = cerr
 	} else {

@@ -28,12 +28,13 @@ var (
 	openBrowserFn = openBrowser
 )
 
-// ErrNoCredentials is returned when neither a credentials.json nor the
-// embedded client id/secret provide OAuth client credentials.
+// ErrNoCredentials is returned when neither a credentials.json nor a
+// build-time injected client provides OAuth client credentials.
 var ErrNoCredentials = errors.New("no OAuth client credentials configured")
 
-// oauthConfig builds the OAuth config from the resolved client (a BYO
-// credentials.json in configDir wins over the embedded default; spec §9).
+// oauthConfig builds the OAuth config from the resolved client (a
+// credentials.json in configDir wins over a build-time injected client;
+// spec §9).
 func oauthConfig(configDir string) (*oauth2.Config, error) {
 	id, secret, _, err := resolveClient(configDir)
 	if err != nil {

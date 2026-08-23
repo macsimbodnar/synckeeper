@@ -38,8 +38,10 @@ clean:
 # audit is the pre-publication secret-scan gate (spec §9 hygiene, plan W5.5-S4):
 # asserts no secret or sensitive runtime file (token.json, credentials.json,
 # client_secret_*.json, *.db) leaked into the git-tracked tree, and that
-# .gitignore still covers them. Self-contained (no external tool); the one
-# intentional embedded client secret is allowlisted. Also runs inside `make
-# test`, so this target is just the focused, explicit invocation.
+# .gitignore still covers them. Self-contained (no external tool). No
+# credentials are embedded (spec §9), so only internal/audit's own source is
+# allowlisted — it carries the detection patterns and the test fixtures. Also
+# runs inside `make test`, so this target is just the focused, explicit
+# invocation.
 audit:
 	go test ./internal/audit/ -count=1 -v

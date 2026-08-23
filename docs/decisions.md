@@ -13,6 +13,17 @@ Format:
 
 ---
 
+## 2026-08-23 — W18-I items D4 and D5 closed: the "embedded default" is gone from the comments too
+
+**Context:** Max asked why the project builds through `make` rather than `go build`. Answering it meant reading the Makefile, whose `audit` comment still claimed *"the one intentional embedded client secret is allowlisted"* — a model reversed 2026-07-25, when the embedded client was removed and scrubbed from all git history. `internal/audit/audit.go`'s package doc said the same, and **contradicted `secretScanAllowlist`'s own comment fifty lines below it** (`audit.go:58`: *"No embedded credentials exist anymore"*). Both were already recorded as W18-I item **D4**, with **D5** naming the two `internal/auth` comments. Max: *"yes fix your findings."*
+
+**Decision (Max, 2026-08-23; agent-found):** close D4 and D5 now rather than at W18-I. Comments only — **no behavior change, no API change**.
+- **D4:** the Makefile `audit` comment and `audit.go`'s package doc now state that nothing is embedded, date the reversal to decisions.md 2026-07-25, and point at `secretScanAllowlist` for what *is* allowlisted (this package's own source — it carries the detection patterns and fixtures).
+- **D5:** `credentials.go`'s `CredentialsFile` doc no longer calls the file "optional" — it is **required** unless a private build injected a client via `-ldflags`, which it also wins over; `resolveClient`, `ErrNoCredentials` and `oauthConfig` say "a build-time injected client" where they said "the embedded default".
+- **Two more instances found by grepping for the phrase, closed in the same commit** (beyond what was flagged): `cmd/synckeeper/info.go:119` said *"resolvable without init (embedded default is always there)"* — **comment only, the code was already correct**, routing `CredentialInfo`'s error into `v.oauthErr`; and three `info_test.go` fixtures set `oauthSource` to `"embedded default (author's client)"`, a string `CredentialSource` can no longer produce. Fixtures now use the real `CredentialBYOFile` value.
+
+**Consequences:** W18-I's remaining scope is spec §3/§4.2/§6/§7/§12/§15 and its testing.md rows; D1, D2, D3, D4, D5 are now all closed. The answer to the original question is recorded for the next reader: `make build` is not `go build` — it carries `-trimpath`, `-s -w`, and `-X main.version=$(git describe --tags --always --dirty)` against `main.go:13`'s `version = "dev"` default, and `build-all` is a four-target cross-compile matrix. **`make test` and `make vet` are pure aliases** for `go test ./...` / `go vet ./...`; only `audit` adds anything (`-count=1`, defeating the test cache for a gate meant to actually re-run). Max: *"I agree with you to keep make."*
+
 ## 2026-08-23 — README + MANUAL cut down; the credentials guide made a walkthrough
 
 **Context:** Max: *"review the readme and the manual and to clean it up. making it smaller. More text means less people reads it. also i want you to make a guide section on how to create the google project, create the credentials, insert them and make sure they are manmaged correctly and not shared."* Two pulls in one prompt — shrink the docs, and **grow** the one section a new user cannot start without. MANUAL §5 was 1.9k chars of prose for a five-step console procedure; §6/§8/§10 were 14k of it.

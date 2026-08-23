@@ -1,9 +1,11 @@
 // Package audit implements the pre-publication secret-scan gate (W5.5-S4):
 // self-contained checks — no external tool — that no secret or sensitive
 // runtime file has leaked into the git-tracked tree. Run it via `make audit`,
-// or as part of `go test ./...` (TestSecretScanGate drives Scan). The one
-// intentional embedded OAuth client secret is allowlisted (spec §9; accepted
-// as publishable, decisions.md 2026-07-24 "W5.5 item calls").
+// or as part of `go test ./...` (TestSecretScanGate drives Scan). No
+// credentials are embedded — the default was removed and scrubbed from all
+// history after GitHub push protection flagged it (spec §9; decisions.md
+// 2026-07-25) — so only this package's own source is allowlisted; see
+// secretScanAllowlist.
 package audit
 
 import (

@@ -29,7 +29,7 @@ func sampleInfoView() infoView {
 		rootID:        "root123",
 		machineName:   "max_mbp",
 		machineID:     "ab12cd",
-		oauthSource:   "embedded default (author's client)",
+		oauthSource:   "credentials.json in the config dir",
 		oauthClient:   "984-client.apps.googleusercontent.com",
 		pollSecs:      45,
 		massThreshold: 0.25,
@@ -55,7 +55,7 @@ func TestPrintInfoHuman(t *testing.T) {
 		"/cfg/credentials.json", "/cfg/control.sock", "/cfg/quarantine", "/logs/synckeeper.log",
 		"system bin   freedesktop trash at /home/max/.local/share/Trash",
 		"/home/max/Synckeeper", `"Synckeeper"`, "root123", "max_mbp", "ab12cd",
-		"embedded default (author's client)", "984-client.apps.googleusercontent.com",
+		"credentials.json in the config dir", "984-client.apps.googleusercontent.com",
 		"refresh token present", "poll interval:    45s", "mass-delete:      0.25",
 		"quarantine keep:  30d", "*.tmp .DS_Store",
 		"tracked items:    1620", "pending ops:      0", "3 files, 12345 bytes", "daemon:           running",
@@ -74,7 +74,7 @@ func TestPrintInfoHumanNotInitialized(t *testing.T) {
 		statePath: "/cfg/state.db", tokenPath: "/cfg/token.json", credPath: "/cfg/credentials.json",
 		socketPath: "/cfg/control.sock", quarantineDir: "/cfg/quarantine",
 		syncDir: "/home/max/Synckeeper", driveFolder: "Synckeeper", machineName: "max_mbp",
-		oauthSource: "embedded default (author's client)",
+		oauthSource: "credentials.json in the config dir",
 		pollSecs:    45, massThreshold: 0.25, retentionDays: 30,
 	}
 	var b bytes.Buffer

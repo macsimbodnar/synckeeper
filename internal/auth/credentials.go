@@ -26,10 +26,10 @@ var (
 	ClientSecret = ""
 )
 
-// CredentialsFile is the optional bring-your-own OAuth client the user drops
-// in the config dir to use their own Google Cloud project's quota. It is the
-// exact JSON the Cloud Console downloads for a "Desktop app" OAuth client; its
-// id/secret take precedence over the embedded default (spec §9).
+// CredentialsFile is the user's own OAuth client, dropped in the config dir.
+// It is the exact JSON the Cloud Console downloads for a "Desktop app" OAuth
+// client. Synckeeper embeds none, so this file is required unless a private
+// build injected a client via -ldflags — which it also wins over (spec §9).
 const CredentialsFile = "credentials.json"
 
 // CredentialSource names where the active OAuth client came from.
@@ -41,7 +41,7 @@ const (
 )
 
 // resolveClient returns the OAuth client id/secret and where they came from:
-// a credentials.json in the config dir wins over the embedded default.
+// a credentials.json in the config dir wins over a build-time injected client.
 func resolveClient(configDir string) (id, secret string, src CredentialSource, err error) {
 	if configDir != "" {
 		p := filepath.Join(configDir, CredentialsFile)
