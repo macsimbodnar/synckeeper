@@ -153,6 +153,8 @@ func (r *real) Upload(ctx context.Context, parentID, name string, content io.Rea
 }
 
 func (r *real) Update(ctx context.Context, fileID string, content io.Reader, size int64) (File, error) {
+	// Not wrapped in withRetry, for the same reason Upload is not: the media
+	// reader is consumed on the first attempt (spec §7).
 	call := r.svc.Files.Update(fileID, nil).Fields(fileFields).Context(ctx)
 	if size > 5*1024*1024 {
 		call = call.Media(content, googleapi.ChunkSize(uploadChunkSize))

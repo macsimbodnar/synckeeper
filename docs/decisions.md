@@ -13,6 +13,25 @@ Format:
 
 ---
 
+## 2026-08-23 — Project-wide drift sweep: W18-I closed, and testing.md's reversed criteria marked
+
+**Context:** Max: *"please fix all those findings and search for more. I would like to cleanup the project."* The remaining W18-I scope was the starting list; the sweep that followed went wider — every `spec §N` and `MANUAL §N` reference from code, every `Test*` name `testing.md` cites, the README layout table against the package tree, TODO markers, and `gofmt`.
+
+**Decision (Max, 2026-08-23; agent-found):** correct every claim to match the code. **No behavior change anywhere** — one code comment added, everything else is doc text.
+
+**W18-I, now closed.** Three of its items were already done and unrecorded (spec §3 invariant 4 and §6 were amended by W18-D; §4.2 + §11's init-merge naming by W18-E). Four were genuinely stale:
+- **§7 Uploads (review finding F3)** promised *"the next scan sees it dirty and re-uploads"*. It does not: the item Drive already stored is real, so the pair is both-new with differing md5 and §4.2 makes the newer local content a **conflict copy** beside it. The spec was promising away MANUAL §8's known bug.
+- **§7 Retries (review finding D6)** stated backoff/jitter/5-attempts unconditionally. `Upload` and `Update` have never been wrapped — their media reader is consumed by the first attempt (`internal/driveclient/real.go`), so a retry would send a truncated body.
+- **§12** credited `doctor --repair` with restoring the *"folder id by name"* — the exact defect the paragraph directly above it exists to record. It has resolved id-first through `root.Resolve` since W18-A. The same paragraph required `init --force` to rebuild the mirror; W18-B removed that flag.
+- **§15** said an idempotent `init` *"is what let `doctor` be retired"*. **`doctor` was never retired** — it is registered in `newRootCmd`, in the `surface_test.go` manifest and in MANUAL §3. W18-F is blocked precisely because `doctor --repair` is the only way to clear a journal `init` leaves alone.
+
+**testing.md carried three criteria that assert behavior deliberately removed** — the sharper find, because an acceptance ledger claiming "passing" for a reversed criterion is worse than a stale sentence:
+- **G2** (*"Empty local dir with populated DB → Hard error"*) and **M14.8** (*"a missing or empty sync dir is still a hard error no flag overrides"*) both contradict W18-D, which recreates a missing dir and **deleted the empty arm outright**. M14.8 additionally cited `TestCheckSyncDir`, a test that does not exist and never did under that name — the function is `EnsureSyncDir`.
+- The phase-4 row *"Non-empty Drive folder without `--adopt` → hard error"* pins the refusal W18-B removed. W18.6 already recorded it as replaced; the row itself still read "passing".
+All three are struck through and dated rather than deleted — a reversed criterion is history worth keeping, and silently dropping rows is how a ledger stops being one.
+
+**Consequences:** W18-I is **done**; W18's remaining open items are F (blocked on the `doctor` call) and the R25 wedge awaiting triage. A `Test*`-name cross-check of `testing.md` against the tree is worth repeating — it found what prose review did not, and the two names still cited (`TestInitializeRefusesNonEmptyWithoutAdopt`, `TestRefuseReinit`) are now correctly labeled retired. Clean: no TODO/FIXME markers anywhere, `gofmt` clean, every `spec §N`/`MANUAL §N` reference resolves, and the README layout table matches all 22 packages exactly.
+
 ## 2026-08-23 — W18-I items D4 and D5 closed: the "embedded default" is gone from the comments too
 
 **Context:** Max asked why the project builds through `make` rather than `go build`. Answering it meant reading the Makefile, whose `audit` comment still claimed *"the one intentional embedded client secret is allowlisted"* — a model reversed 2026-07-25, when the embedded client was removed and scrubbed from all git history. `internal/audit/audit.go`'s package doc said the same, and **contradicted `secretScanAllowlist`'s own comment fifty lines below it** (`audit.go:58`: *"No embedded credentials exist anymore"*). Both were already recorded as W18-I item **D4**, with **D5** naming the two `internal/auth` comments. Max: *"yes fix your findings."*

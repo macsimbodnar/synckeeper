@@ -40,16 +40,18 @@ One table-driven case per decision-table row (13 rows) plus edge cases (rel_path
 | ID | Guard | Expected | Status |
 |---|---|---|---|
 | G1 | Delete 50% of files **into an unrecoverable destination** (a machine with no system bin) | Blocked without `--confirm-deletes` (interactive one-shot aborts the cycle); with a bin the same deletion runs unblocked | passing (2026-07-08; re-targeted 2026-07-26 by W14-M1) — `TestG1MassDeleteBlocked` (engine, `bin.Unavailable`), `TestCheckMassDelete` + `TestMassDeleteUnguardedWhenRecoverable` (guards) |
-| G2 | Empty local dir with populated DB | Hard error | passing (2026-07-08, unit + scenario level) |
+| G2 | ~~Empty local dir with populated DB~~ | ~~Hard error~~ | **superseded 2026-07-31 (W18-D)** — the empty-while-baseline-non-empty arm is **removed**: emptying the sync folder is a legitimate deletion and must reach Drive's bin (spec §3 invariant 4, §6). A **missing** dir is now recreated with the baseline reset, never a deletion. Unreadable / not-a-directory stay hard errors — `TestEnsureSyncDir` (guards) |
 | G3 | Unrecoverable mass delete under the daemon (`DeferMassDelete`) | Deletes deferred, everything else synced, block surfaced in status (spec §8.1) | passing (2026-07-17; re-targeted 2026-07-26 by W14-M1) — `TestG3DaemonDefersMassDeleteButSyncsRest` (engine, `bin.Unavailable`) |
 
 ## Multi-machine matrix (phase 4)
+
+**`--adopt` was removed 2026-07-31 (W18-B)** — the union merge these rows pin is now simply what `init` does, so read `init --adopt` below as plain `init`. The engine-level tests are unchanged and still pass; only the flag that used to gate them is gone.
 
 | Case | Status |
 |---|---|
 | `init --adopt` union merge (local-only up, remote-only down, same-md5 adopt, nothing deleted) | passing (2026-07-14) — `TestAdoptUnionMerge` |
 | `init --adopt` divergent content → conflict copy, remote wins canonical | passing (2026-07-14) — `TestAdoptConflictsOnDivergentContent` |
-| Non-empty Drive folder without `--adopt` → hard error, nothing persisted | passing (2026-07-14) — `TestInitializeRefusesNonEmptyWithoutAdopt` |
+| ~~Non-empty Drive folder without `--adopt` → hard error, nothing persisted~~ | **superseded 2026-07-31 (W18-B)** — the refusal was the behavior removed: `init` joins a non-empty folder instead. Criterion replaced by **W18.6**; `TestInitializeRefusesNonEmptyWithoutAdopt` retired with the flag it pinned |
 | Offline concurrent edit, same file, 3 machines → converge, no version lost | passing (2026-07-14) — `TestThreeMachineConvergence` |
 | `init --adopt` on machine C while A/B active | passing (2026-07-14) — `TestAdoptWhileOthersActive` |
 | Delete vs edit across machines → edit survives everywhere | passing (2026-07-08) — S6 (machine-agnostic) |
@@ -104,7 +106,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 |---|---|---|
 | R1 | Remote rename to smaller path + remote edit + local edit → conflict copy survives, no data loss (was: download overwrote the moved local edit) | passing (2026-07-17) — `TestR1RemoteMoveEditVsLocalEditConflict` (engine), `TestRemoteMovePlusConflictBacksUpFromCurrentPath` (reconcile), `TestProtectedDownloadRefusedWhenBackupFails` (executor) |
 | R2 | Remote same-id dir rename + new remote subdir → converges (was: mkdir created the move destination; livelock) | passing (2026-07-17) — `TestR2RemoteDirRenameWithNewSubdir` (engine), `TestDirMoveOrdersBeforeMkdirLocal` (reconcile) |
-| R3 | `init --force` rebuilds the remote mirror (no silently missed remote changes) | passing (2026-07-17) — `TestR3ForceReinitSeesPriorRemoteChanges` (cmd) |
+| R3 | Re-running `init` over an existing DB rebuilds the remote mirror (no silently missed remote changes). *Was `init --force`; the flag went with W18-B, the behavior is now plain `init`* | passing (2026-07-17) — `TestR3ForceReinitSeesPriorRemoteChanges` (cmd; name keeps the old flag) |
 | R4 | Local edit landing between scan and download is not overwritten (requeued) | passing (2026-07-17) — `TestR4MidCycleEditBecomesConflictNotLoss` (engine), `TestR4DownloadRefusedWhenTargetDriftsMidCycle` + `TestR4DownloadRefusedWhenTargetAppearsMidCycle` (executor) |
 | R5 | Read-only commands neither migrate nor break on schema mismatch | passing (2026-07-17) — `TestR5OpenReadNeverMigrates` (statedb) |
 | R6 | Cross-rename swap (a↔b same cycle) converges to the correct state within bounded cycles (transient move failures accepted; no lying records) | passing (2026-07-17) — `TestR6RemoteFileSwapConverges` (engine); found + fixed silent divergence via unprotected Record |
@@ -240,7 +242,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | M14.5 | W14-M4: a locally-deleted folder is **one** `TrashRemote` — one Drive API call, one restorable entry in Drive's bin, `SubtreeFiles` set — and the other machine still removes its copy; a Drive item the plan never accounted for refuses the collapse | passing (2026-07-26) — `TestM14LocalWholeTreeDeletionTrashesTheFolderInOneCall` (asserts `fake.TrashCount()` == 1 and machine b converging), `TestM14RemoteCollapseRefusedWhenDriveHoldsAStranger` (engine), `TestCollapseAbsorbsRemoteTrashSubtree` / `TestCollapseRefusedWhenDriveHoldsAnUnplannedItem` / `TestCollapseRemoteAllowsForgottenRows` / `TestCollapseKeepsTheTwoDirectionsApart` (reconcile, pure) |
 | M14.6 | Counting stays honest through both collapses: the guard reads `SubtreeFiles` in the case that still guards, and the deletion report counts files, not actions | passing (2026-07-26) — `TestT13GuardCountsACollapsedSubtreesFiles` (guards), `TestT13CollapseKeepsTheMassDeleteGuardCounting` (engine), `TestActivityReportsALargeDeletion` (watch) |
 | M14.7 | W14-M3: a large deletion that ran is reported — count and destination — for both directions | passing (2026-07-26) — `TestActivityReportsALargeDeletion` (watch), `res.LargeDeletion`/`DeletedLocal`/`DeletedRemote` asserted in the engine rows above |
-| M14.8 | `CheckSyncDir` is untouched by all of this: a missing or empty sync dir is still a hard error no flag overrides | passing (unchanged) — `TestCheckSyncDir` (guards), G2/F5 (engine) |
+| M14.8 | ~~`CheckSyncDir` is untouched by all of this: a missing or empty sync dir is still a hard error no flag overrides~~ | **superseded 2026-07-31 (W18-D)**, and the name was wrong even then — the function is `EnsureSyncDir`. A **missing** sync dir is **recreated** (baseline reset in the same cycle, never a deletion); the **empty** arm is gone entirely. Unreadable / not-a-directory remain hard errors that no flag overrides — `TestEnsureSyncDir` (guards), spec §3 invariant 4 + §6 |
 
 ### W13 — remote deletions go to the OS trash (2026-07-25 →)
 

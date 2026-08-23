@@ -1,8 +1,10 @@
 package engine
 
-// Phase 4: init --adopt merges a non-empty Drive folder with a non-empty
-// local dir. Adoption is just the first sync over an empty baseline, so these
-// tests drive the engine the same way `init --adopt` does.
+// Phase 4: the merge of a non-empty Drive folder with a non-empty local dir.
+// Adoption is just the first sync over an empty baseline, so these tests drive
+// the engine the same way `init` does. (Written when this was gated behind
+// `init --adopt`; W18-B removed the flag and made the merge what `init`
+// always does — the engine behavior these tests pin is unchanged.)
 
 import (
 	"os"
