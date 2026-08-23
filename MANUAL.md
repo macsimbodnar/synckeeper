@@ -1,68 +1,86 @@
 # Synckeeper — User Manual
 
-How to *use* Synckeeper. (Build / dev / design docs → [README.md](README.md).)
+One local folder ↔ one Google Drive folder, both directions, on any number of machines. Runs as a background daemon. Build/dev docs → [README.md](README.md).
 
-Keeps **one local folder** ↔ **one Google Drive folder** identical, both directions. Many machines sync against the same Drive folder (the hub + durable copy). Runs as a background daemon; **never silently loses or corrupts a file**: deletes → Drive bin + your system bin (never permanent); conflicting edits → conflict copy (never last-writer-wins); edit always beats delete.
+**Never silently loses or corrupts a file.** Deletes go to Drive's bin *and* your system bin, never permanent. Conflicting edits make a conflict copy, never last-writer-wins. An edit always beats a delete.
 
-**Repo rule: updated in the same commit as any change to commands, config, user-visible behavior, or known bugs.** Last updated: 2026-08-23.
+**Setup, in order:**
+
+1. **Google credentials** — [§5](#5-google-credentials-required). One time, ~5 min. Nothing works without it.
+2. `synckeeper init` — [§1](#1-install-and-first-sync).
+3. Done. It syncs in the background.
 
 ---
 
 ## 1. Install and first sync
 
-Needs a binary for your machine (README — `make build`, Go 1.26+; macOS primary today) **and your own Google OAuth `credentials.json`** in the config dir — set that up **first** (§5).
+Needs a binary for your machine (README → `make build`) and your own `credentials.json` in place (§5).
 
 ```sh
-synckeeper init          # signs you in via the browser, creates the Drive folder
-                         # ("Synckeeper") and the local one (~/Synckeeper),
-                         # then offers to keep syncing at login
+synckeeper init
 ```
 
-`init` is **idempotent** — re-run it any time. It never deletes: it merges both sides (local-only → upload, remote-only → download, identical → paired up, different → conflict copy). At `init` only, a differing pair gives the plain name to whichever side was **edited more recently**; the other is the conflict copy. Both survive everywhere.
+Signs you in via the browser, creates the Drive folder (`Synckeeper`) and the local one (`~/Synckeeper`), merges both sides, then asks **`Start Synckeeper automatically at login? [Y/n]`**. `--service` / `--no-service` skip the prompt; scripts and pipes never get it.
 
-`init` ends with **`Start Synckeeper automatically at login? [Y/n]`** — yes installs the login service (background sync from now on). `--service` / `--no-service` skip the prompt (scripts/pipes get no prompt; it prints how to install later).
+**`init` never deletes, and is safe to re-run.** Union merge: local-only → upload, remote-only → download, identical → paired up, different → conflict copy. At `init` only, a differing pair gives the plain name to the side edited more recently; the other becomes the conflict copy. Both survive everywhere.
 
-Done. Files in `~/Synckeeper` appear in Drive and on your other machines; changes anywhere converge everywhere.
+Declined the service? Install it later with `synckeeper service install`, or run `synckeeper watch` (foreground, same behavior) or `synckeeper sync` (one-shot).
 
-Declined? Install later with `synckeeper service install`, or run `synckeeper watch` (foreground, same behavior), or `synckeeper sync` for a one-shot.
-
-First sign-in on your own unpublished client shows Google's **"unverified app" warning** — expected. Continue past it, or publish your client to Production (§5).
+First sign-in shows Google's **"unverified app" warning** — expected, continue past it (§5).
 
 ## 2. Adding another machine
 
-Second machine, after installing the binary:
+Install the binary, copy your `credentials.json` (§5), then:
 
 ```sh
-synckeeper init      # joins the existing Drive folder and merges both sides
+synckeeper init
 ```
 
-Same command as the first machine — there is no separate "join" mode. The union merge is local-only → upload, remote-only → download, identical → pair up, differ on both → conflict copy. **Joining never deletes**, so re-running it is always safe.
+Same command as the first machine — there is no separate "join" mode. It merges both sides and never deletes, so re-running is always safe.
+
+Copy `credentials.json` between your machines. **Never copy `token.json`** — each machine signs in for itself (§5).
 
 ## 3. Command reference
 
-Global flags: `-v` / `--verbose` — debug logging; `--version` — print version; `-h` / `--help` — usage help.
+Global flags: `-v` / `--verbose` (debug logging), `--version`, `-h` / `--help`.
 
 | Command | What it does |
 |---|---|
-| `init [--service\|--no-service]` | Set up this machine, or re-sync it: signs in if needed, resolves the Drive folder, merges both sides (union — nothing deleted), then offers the login service (§1). **Safe to re-run** — it is also the fix for a lost state DB (§7). Takes the instance lock — stop the login service first if it's running (§7). `--service`/`--no-service`: install/skip the login service without prompting. |
-| `login` | Re-authenticate with Google (fresh browser flow, replaces the stored token). Runs beside a live daemon — no instance lock, no restart: the daemon re-reads `token.json` when Google refuses a refresh. |
-| `sync [--dry-run] [--confirm-deletes]` | One-shot sync. If the daemon runs, delegated to it and awaited. `--dry-run`: print the plan, change nothing (needs daemon stopped). `--confirm-deletes`: §6. |
-| `watch` | Run continuously, foreground: local changes picked up under a second, remote within the poll interval. |
-| `status [--plain] [--json] [--interval D]` | **Human:** on a terminal, the live dashboard (§10). **Scriptable:** piped/redirected it prints the one-shot report — daemon state, last sync, config, guard blocks, where deletions from Drive land (system bin or quarantine), recent activity; `--plain` forces that report on a terminal, `--json` emits it for scripts. Works daemon up or down. `--interval` sets how often the dashboard re-reads state (default 1s; it redraws ~4×/s regardless). |
-| `activity [-n N]` | **Scriptable.** Last N (default 20) synced items with direction (local→drive / drive→local / conflict). The dashboard's activity view (§10) is the interactive equivalent. |
-| `pause` / `resume` | Suspend / resume automatic syncing in the running daemon. Explicit `sync` still works while paused. Pause doesn't survive a daemon restart. |
-| `reload` | Re-read `config.toml` in the running daemon. Hot fields apply live; identity fields reported as needing a restart (§4). |
-| `config` | Print the effective config and the file it's read from. |
-| `account` | Token status, which OAuth client is active (your `credentials.json`, or one compiled in by a private `-ldflags` build — nothing is bundled, §5) with its client **id** only, and the signed-in Google account (email via one `about.get`; online only, skipped offline). |
-| `info [--json]` | **Scriptable** (and the pre-`init` dump). One-shot static snapshot: version; every config-file path (config dir, `config.toml`, `state.db`, `token.json`, `credentials.json` — both with their permission mode, flagged when other users can read them; `control.sock`, quarantine, system bin, log); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; local state (tracked items, pending ops, quarantine). Read-only, offline (email → `account`), works before `init`. `--json` for scripts. |
-| `doctor [--repair]` | Cross-check state DB vs disk vs Drive; reports the system-bin destination, and names any Drive folder holding **the same name twice** (Drive allows it, a filesystem doesn't — only the first is synced; fix it in the Drive web UI). Takes the instance lock — stop the login service first (§7). `--repair` rebuilds lost metadata and re-adopts matching files — only ever *adds*; never deletes, quarantines, or overwrites, so it leaves both copies of a duplicated name alone. |
-| `service install\|uninstall\|status` | Manage the login service running `watch` (launchd on macOS; logs to `~/Library/Logs/synckeeper.log`, kept owner-only `0600` since it records synced file names). `install` then checks whether the daemon actually started and names the likely cause (e.g. missing `credentials.json`) if not. |
-| `help [command]` | Usage help for Synckeeper or a specific command (built-in). |
-| `completion <bash\|zsh\|fish\|powershell>` | Print a shell autocompletion script (built-in); `synckeeper completion <shell> --help` shows how to install it. |
+| `init [--service\|--no-service]` | Set up or re-sync this machine: sign in, resolve the Drive folder, merge both sides (nothing deleted), offer the login service (§1). Safe to re-run — also the fix for a lost state DB (§7). Takes the instance lock: stop the service first (§7). |
+| `login` | Fresh browser sign-in, replacing the stored token. No lock, no restart — a running daemon adopts the new token on its next sync. |
+| `sync [--dry-run] [--confirm-deletes]` | One-shot sync; delegated to the daemon and awaited if one runs. `--dry-run` prints the plan and changes nothing (needs the daemon stopped). `--confirm-deletes`: §6. |
+| `watch` | Run continuously in the foreground. |
+| `status [--plain] [--json] [--interval D]` | On a terminal, the live dashboard (§10). Piped or with `--plain`, a one-shot report — daemon state, last sync, config, guard blocks, bin destination, recent activity; `--json` for scripts. Works daemon up or down. `--interval` sets the state re-read period (default 1s). |
+| `activity [-n\|--number N]` | Last N (default 20) synced items with direction: local→drive / drive→local / conflict. |
+| `pause` / `resume` | Suspend / resume automatic syncing. Explicit `sync` still works while paused. Not persisted across a daemon restart. |
+| `reload` | Re-read `config.toml` in the running daemon; identity fields are reported as needing a restart (§4). |
+| `config` | Print the effective config and the file it came from. |
+| `account` | Which OAuth client is active and its client **id**, token status, and the signed-in Google account (needs network; skipped offline). |
+| `info [--json]` | Static snapshot: version; every path with its permission mode (flagged when other users can read it); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; tracked / pending / quarantine counts. Read-only, offline, works before `init`. |
+| `doctor [--repair]` | Cross-check state DB vs disk vs Drive. Names any Drive folder holding **the same name twice** — Drive allows it, a filesystem doesn't, so only the first is synced; fix it in the Drive web UI. Takes the instance lock (§7). `--repair` only ever *adds*: rebuilds lost metadata, re-adopts matching files; never deletes, quarantines, or overwrites. |
+| `service install\|uninstall\|status` | Manage the login service running `watch` — **launchd** on macOS, a **systemd user unit** on Linux, Task Scheduler on Windows (§4). `install` checks the daemon actually started and names the likely cause if not. |
+| `help [command]` | Usage help. |
+| `completion <bash\|zsh\|fish\|powershell>` | Shell completion script; `synckeeper completion <shell> --help` shows how to install it. |
 
 ## 4. Configuration
 
-`config.toml` lives in the per-OS config dir — macOS `~/Library/Application Support/synckeeper/`, Linux `~/.config/synckeeper/`, Windows `%AppData%\synckeeper\` — alongside `state.db`, `token.json`, the quarantine folder, the control socket, and the optional `credentials.json` (§5). Unknown keys rejected (typo protection); missing keys use the defaults shown.
+`config.toml` lives in the per-OS config dir, alongside `state.db`, `token.json`, `credentials.json` (§5), the quarantine folder and the control socket:
+
+| OS | Config dir |
+|---|---|
+| macOS | `~/Library/Application Support/synckeeper/` |
+| Linux | `~/.config/synckeeper/` |
+| Windows | `%AppData%\synckeeper\` |
+
+The login service and its log live outside it:
+
+| OS | Service | Log |
+|---|---|---|
+| macOS | launchd, `~/Library/LaunchAgents/com.mazerfaker.synckeeper.plist` | `~/Library/Logs/synckeeper.log`, kept `0600` — it records file names |
+| Linux | systemd user unit, `~/.config/systemd/user/synckeeper.service` | `journalctl --user -u synckeeper` |
+| Windows | Task Scheduler | not redirected |
+
+Unknown keys are rejected (typo protection); missing keys use these defaults.
 
 ```toml
 [drive]
@@ -79,123 +97,140 @@ quarantine_retention_days = 30   # rescue copies kept this long — hot
 ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # hot
 ```
 
-**Hot** fields apply live via `synckeeper reload`; **restart** fields need a daemon restart. Ignore patterns match the file *name* only (not the path), both directions; ignored files don't sync.
+**Hot** fields apply live via `synckeeper reload`; **restart** fields need a daemon restart. Ignore patterns match the file *name* only (not the path), in both directions.
 
 ## 5. Google credentials (required)
 
-Synckeeper ships with **no credentials** — you supply your own Google Cloud "Desktop app" OAuth client. One-time setup, **before** `synckeeper init`:
+Synckeeper bundles no credentials — you use your own Google OAuth client. Do this **before** `synckeeper init`.
 
-1. Create a Google Cloud project, enable the **Drive API**.
-2. Add an OAuth client of type **Desktop app** ([Google guide](https://developers.google.com/workspace/guides/create-credentials#oauth-client-id)).
-3. Publish the consent screen to **Production** — unverified is fine, but **Testing** status expires refresh tokens after 7 days (kills the daemon).
-4. Download the client JSON, place it in the config dir (§4) as `credentials.json`, exactly as downloaded — no editing:
+### Create the client
+
+1. **Project** — [console.cloud.google.com](https://console.cloud.google.com/) → create a project (any name).
+2. **Enable the API** — *APIs & Services* → *Library* → **Google Drive API** → *Enable*.
+3. **Consent screen** — *APIs & Services* → *OAuth consent screen*. User type **External**, fill in app name and your own email.
+4. **Publish it** — set the publishing status to **In production**. Not optional: a client left in **Testing** expires its refresh tokens after **7 days**, which kills the daemon weekly.
+5. **Create the client** — *Credentials* → *Create credentials* → *OAuth client ID* → application type **Desktop app** → *Create* → **Download JSON**. ([Google's guide](https://developers.google.com/workspace/guides/create-credentials#oauth-client-id).) It must be an OAuth client — not an API key, not a service-account key.
+
+### Install it
+
+Save the file **exactly as downloaded**, no editing, as `credentials.json` in your config dir (§4):
 
 ```sh
 cp ~/Downloads/client_secret_*.json "$HOME/Library/Application Support/synckeeper/credentials.json"
 chmod 600 "$HOME/Library/Application Support/synckeeper/credentials.json"
 ```
 
-The `chmod` is step 5, not a nicety: a downloaded file arrives `0644`, readable by every local user. Synckeeper tightens the config dir itself (`0700`) on every run, and `info` plus the daemon log flag a readable `credentials.json` — they warn rather than refuse, since the file is yours.
+The `chmod` is a step, not a nicety: downloads arrive `0644`, readable by every user on the machine.
 
-Then run `synckeeper init` (first time — it signs in and offers the login service) or `synckeeper login` (re-point an existing install). **Don't `service install` before signing in** — the service runs `watch`, which can't sign in by itself, so it will just crash-loop until you've authenticated. Re-authenticating later needs no stopping and no restart: run `synckeeper login` with the daemon running, and it adopts the new token on its next sync — `synckeeper sync` right after makes that next sync immediate (§6). Lookup order: `credentials.json` → optional build-time `-ldflags` injection → else a "no OAuth client credentials" error. `synckeeper account` shows the active client. `credentials.json` is yours — it stays gitignored, never committed.
+Check it, then sign in:
+
+```sh
+synckeeper account      # → oauth client: credentials.json in the config dir
+synckeeper init         # first machine; `synckeeper login` re-points an existing install
+```
+
+`synckeeper info` shows the file's path and mode, and flags it when others can read it.
+
+### Expect the "unverified app" warning
+
+Publishing to production does **not** remove it. Synckeeper asks for Google's full `drive` scope, which is *restricted*, so the warning is gated on Google verification (an annual paid third-party security assessment) rather than on publishing. Continue past it. The practical cost of staying unverified is a 100-user cap per project — irrelevant for personal use.
+
+### Keep them yours
+
+- **`token.json` is the sensitive file**, not `credentials.json`. It grants access to your Drive. Never copy it off the machine, never share it. Each machine signs in for itself.
+- **`credentials.json` is safe to copy to your own machines** and nowhere else. A desktop-app client secret is not a real secret (it ships inside every desktop app; [RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252)), but sharing yours means sharing your project's quota and one revocation blast radius.
+- **Never commit either.** Both are gitignored here (`credentials.json`, `client_secret_*.json`, `token.json`); GitHub push protection will also block a client secret.
+- Synckeeper forces the config dir to `0700` on every run. Keep `sync_dir` well away from it (§9).
+- **Revoke:** [myaccount.google.com/permissions](https://myaccount.google.com/permissions) drops the app's access to your account. Deleting the OAuth client in the console invalidates `credentials.json` on every machine.
+
+### Notes
+
+- The daemon can't sign in by itself — don't `service install` before your first `init`.
+- Re-authenticating later needs no stop and no restart: `synckeeper login` with the daemon running, then `synckeeper sync` to apply it immediately instead of after the retry wait (§6).
+- Lookup order: `credentials.json` → an optional build-time `-ldflags` client → otherwise a "no OAuth client credentials" error.
 
 ## 6. How syncing behaves
 
-- **Conflicts.** Same file changed both sides → remote keeps the name, your local version kept beside it as `name (conflict <machine> <date_time>).ext` — and uploaded too, so every machine sees both. Nothing lost.
-- **Except at `init`, where the newer edit keeps the name.** Joining a machine compares your file's modification time against Drive's; the later one takes the plain name, the other becomes the conflict copy (renamed on Drive too, so both machines see the same pair). Ordinary syncing after that is remote-keeps-the-name, which needs no agreement between your machines' clocks. Badly skewed clocks can therefore misname a pair at `init` — never lose one.
-- **Deletes never permanent.** Deleted in Drive → the local copy goes to **your system bin** (macOS Trash / Linux desktop trash), where you can restore it like anything else you deleted; deleted locally → the Drive file goes to Drive's bin (restorable ~30 days).
-- **A deleted folder is one bin entry, both ways.** A folder deleted in Drive arrives in your bin as that folder, contents inside, restorable in one go — not as one entry per file. A folder you delete locally likewise goes into Drive's bin as one folder. If anything inside it changed since the scan, or a file the sync never saw is in there, the folder is removed file by file instead and the stranger is left alone.
-- **No system bin? Quarantine.** Where the OS offers no trash (unsupported platform, a build without it, a bin that refuses the move), the copy goes to the dated quarantine folder (`<config dir>/quarantine/<date>/…`, kept `quarantine_retention_days` days) exactly as before. `activity` names the one that was used (`trash` vs `quarantine`); `info` shows the bin destination.
-- **Edit beats delete, always.** Deleted one side, edited the other → the edit survives and comes back.
-- **A folder Synckeeper can't read is skipped, not fatal.** The rest of the tree keeps syncing; everything inside that folder is left alone on **both** sides — never treated as deleted, so nothing of yours goes to a bin because of a permission. Reported in `sync` output, and the daemon logs one warning per folder. Fix the permissions and it picks up again by itself.
-- **Renaming the Drive folder is safe.** Synckeeper tracks it by Drive id, not by name, so renaming it in the web UI changes nothing — the new name is picked up and shown by `status`/`info`. `folder_name` in the config keeps one job: naming the folder if Synckeeper ever has to create it.
-- **Moves/renames synced as moves**, files and folders alike: the Drive file/folder keeps its identity and history; a folder rename travels as one operation. (Exception: renaming an *empty* folder syncs as delete + recreate — no contents as evidence — costing only the folder's Drive-side id.)
-- **Mass-delete guard — only when a deletion can't be undone.** Deleting a lot is not held back: everything you delete is one restore away, in Drive's bin or your own. The guard fires only where that isn't true — **a machine with no system bin**, where the local copies fall back to the quarantine folder — and then only past >25% of your files and >10 absolute. There, a one-shot `sync` stops and asks for `--confirm-deletes`, the daemon keeps syncing everything else and shows the block in `status` until you confirm, and it never self-confirms. `status`/`doctor` say plainly when your machine has no bin. **A large deletion that *did* run is reported**, not hidden: a `deleted` line in `activity` with the count and where to restore from.
-- **Deleting the sync folder itself is never a deletion.** If `~/Synckeeper` is gone, Synckeeper recreates it and downloads your files back — it never reads a missing folder as "delete everything on Drive". Deleting the *contents* is different and is a real deletion: it propagates to Drive's bin like any other.
-- **Sanity guard (not confirmable).** A sync folder that is unreadable, or is not a directory → syncing stops with an error. No flag overrides it.
-- **Not synced (skipped — reported in `sync` output, not `status`):** Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, filesystem-invalid names, Drive same-name duplicates in one folder (first wins, rest skipped). Listed by a one-shot `synckeeper sync` (and `init --adopt`); the daemon doesn't surface them in `status`. Ignored patterns skipped silently.
-- **A failed cycle is retried with a growing wait**, doubling from the poll interval to 10× it (45 s → 12 min at the defaults); `status` shows mode `backoff` and the error. **An explicit `sync` cuts the wait short** and runs at once — daemon keeps waiting only for its automatic triggers, so fixing the cause (e.g. `synckeeper login`) then asking for a sync applies it immediately instead of up to 12 minutes later. `reload` also works during the wait.
-- **A repeating entry is counted, not repeated.** The same event in a row (typically an error the daemon retries) is kept as one entry with a repeat count and the time it last happened — in `status`, `activity` and the dashboard alike. Without it a fault lasting a couple of days would fill the 500-entry ring and evict every real sync from it.
-- **Crash safe.** Interrupt at any point (crash, kill, power loss) → recovered next run; partial transfers discarded and replanned.
+- **Conflicts.** Changed on both sides → remote keeps the name, your version is kept beside it as `name (conflict <machine> <date_time>).ext` and uploaded too, so every machine sees both. Nothing lost.
+- **Except at `init`**, where the more recently edited side takes the plain name and the other becomes the conflict copy (renamed on Drive too). Badly skewed clocks can misname a pair at `init` — never lose one.
+- **Deletes are never permanent.** Deleted in Drive → your local copy goes to **your system bin** (macOS Trash, Linux desktop trash), restorable like anything else. Deleted locally → the Drive file goes to Drive's bin (~30 days).
+- **A deleted folder is one bin entry, both ways** — contents inside, restorable in one go. If something inside changed since the scan, or holds a file the sync never saw, the folder is removed file by file instead and the stranger is left alone.
+- **No system bin? Quarantine.** Where the OS offers none (unsupported platform, a build without it, a bin that refuses the move), the copy goes to `<config dir>/quarantine/<date>/`, kept `quarantine_retention_days`. `activity` names which was used; `info` shows the destination.
+- **An edit always beats a delete.** Deleted one side, edited the other → the edit survives and comes back.
+- **A folder Synckeeper can't read is skipped, not fatal.** The rest of the tree keeps syncing; its contents are left alone on **both** sides, never treated as deleted. Reported in `sync` output, one daemon warning per folder. Fix the permissions and it resumes by itself.
+- **Renaming the Drive folder is safe** — it's tracked by Drive id. `folder_name` only names the folder if Synckeeper has to create one.
+- **Moves and renames sync as moves**, files and folders alike; a folder rename travels as one operation. Exception: renaming an *empty* folder syncs as delete + recreate, costing only that folder's Drive id.
+- **Mass-delete guard — only where a deletion can't be undone.** Deleting a lot is not held back; everything is one restore away. The guard fires only on a machine with **no system bin**, where local copies fall back to quarantine, and then only past **>25% of your files and >10 absolute**. There, one-shot `sync` stops and asks for `--confirm-deletes`; the daemon keeps syncing everything else and shows the block in `status` until you confirm. It never self-confirms. `status` and `doctor` say plainly when a machine has no bin. A large deletion that *did* run leaves a `deleted` line in `activity` with the count and where to restore from.
+- **Deleting the sync folder itself is never a deletion** — it's recreated and your files downloaded back. Deleting its *contents* is a real deletion and propagates to Drive's bin.
+- **Sanity guard (not confirmable).** A sync folder that is unreadable or is not a directory stops syncing with an error. No flag overrides it.
+- **Not synced** (reported by a one-shot `sync` and by `init`, not by `status`): Google-native files (Docs/Sheets/Slides), symlinks, non-regular files, filesystem-invalid names, and Drive same-name duplicates in one folder (first wins). Ignored patterns are skipped silently.
+- **A failed cycle is retried with a growing wait**, doubling from the poll interval to 10× it (45 s → 12 min at the defaults). `status` shows mode `backoff` and the error. **An explicit `sync` cuts the wait short** — fix the cause (e.g. `synckeeper login`), ask for a sync, and it applies at once. `reload` also works during the wait.
+- **A repeating entry is counted, not repeated** — the same event in a row becomes one entry with a repeat count and the time it last happened, so a persistent fault can't evict your history from the 500-entry ring.
+- **Crash safe.** Interrupt at any point → recovered next run; partial transfers discarded and replanned.
 
 ## 7. Recovery
 
 | Problem | Fix |
 |---|---|
-| Auth failures / token expired or revoked (`status` says `token: present but REJECTED`, the dashboard says `credentials expired`) | `synckeeper login`, daemon running or not — it picks the new token up on its next sync. Follow it with `synckeeper sync` (or `s` in the dashboard) to apply it now rather than after the retry wait (§6). Recurs weekly while the consent screen is in **Testing** (§5). |
-| `init` says "another instance is running" | The running service daemon holds the instance lock. `synckeeper service uninstall` (or Ctrl-C a `watch` terminal), run `init`, then reinstall the service. (`login` no longer needs this.) |
-| Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). The service runs `watch`, which can't sign in by itself: if you've never signed in, `synckeeper service uninstall` → `synckeeper init` → reinstall. |
-| State DB lost or corrupted | Stop the daemon, then `synckeeper init` — it re-resolves the Drive folder and merges both sides. Cannot delete: the rebuilt baseline starts empty, so every file is an upload or a download. |
-| Need a deleted file back | Check your system bin (a folder comes back whole), then Drive's bin. On a platform with no system bin, the quarantine folder (`<config dir>/quarantine/<date>/…`). Bins are not forever — Drive's empties after ~30 days, and your desktop's may too. |
-| Deleted a lot and want to see what went | `synckeeper activity` — a large deletion leaves a `deleted` line with the count and the destination. |
-| Something looks off | `synckeeper status -v`, then stop the daemon and run `synckeeper doctor` (read-only cross-check; it takes the instance lock). |
+| Token expired or revoked (`status`: `token: present but REJECTED`; dashboard: `credentials expired`) | `synckeeper login`, daemon running or not. Follow with `synckeeper sync` (or `s` in the dashboard) to apply it now instead of after the retry wait (§6). Recurring weekly means the client is still in **Testing** (§5). |
+| `init` says "another instance is running" | The service daemon holds the instance lock: `synckeeper service uninstall` (or Ctrl-C a `watch`), run `init`, reinstall. `login` doesn't need this. |
+| Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). If you've never signed in: `service uninstall` → `init` → reinstall. |
+| State DB lost or corrupted | Stop the daemon, run `synckeeper init`. It can't delete: the rebuilt baseline starts empty, so every file is an upload or a download. |
+| Need a deleted file back | Your system bin (a folder comes back whole), then Drive's bin, then `<config dir>/quarantine/<date>/` on a machine with no system bin. Bins expire — Drive's after ~30 days, yours possibly too. |
+| Deleted a lot, want to see what went | `synckeeper activity` — a large deletion leaves a `deleted` line with the count and destination. |
+| Something looks off | `synckeeper status -v`, then stop the daemon and run `synckeeper doctor`. |
 
 ## 8. Known bugs
 
-Confirmed and reproduced. Four groups: **found by the 2026-07-31 review** (two still open), one **repeated-crash wedge**, the deferred **"directory arm"** of the local-write gate (two facets), and one **under investigation**. Details in [docs/decisions.md](docs/decisions.md).
+All confirmed and reproduced; details in [docs/decisions.md](docs/decisions.md). None of them loses data.
 
-Found by the 2026-07-31 adversarial review, all reproduced; remaining fixes planned as [plan.md](docs/plan.md) W18:
-
-- **A crash can leave the daemon syncing nothing** *(narrowed 2026-08-01)*. If a crash interrupted a file being created in a Drive folder, and that folder afterwards keeps refusing to be listed — for any reason **other than being deleted**, which is now handled — every cycle stops in crash recovery before anything syncs. Not silent: `synckeeper status` shows it as a repeating `last error`. *Workaround: `doctor --repair` clears the journal (mind the entry above).*
-- **An edit landing mid-upload leaves a conflict copy** instead of simply re-uploading: the interrupted upload keeps the canonical name and your newer content becomes the conflict copy beside it. Nothing lost; tidy it by hand.
-
-Found 2026-08-01 by a fuzzer run configured to crash before *every* cycle:
-
-- **Repeated crashes around a folder rename can stop one machine syncing.** After a local folder rename, that machine's plan can end up wanting to upload *and* download the same file in one cycle; the engine refuses the whole plan rather than risk it, and refusing changes nothing, so it refuses again next cycle. **Nothing is lost or corrupted** — the refusal is the safety check working — but that machine stops syncing until something changes. Needs a crash mid-cycle repeatedly, so it is unlikely in normal use. *Symptom: every cycle logs `plan violates §4.5: upload and download both act on …`. Workaround: edit or touch the named file, which changes the plan.*
-
-The directory arm — case-only names and renames for *directories and existing files*, a recorded follow-up:
-
-- **Same-name folder in different case/accents on two machines can mint a duplicate folder in Drive** (W1.9.1 follow-up). *New* files with such names resolve as ordinary conflicts or adopts, and a name collision can no longer send anything to quarantine. *Workaround: avoid folder names differing only in case/accents.*
-- **Renaming an existing file to differ only in case/accents (`a.txt` → `A.txt`) makes your *other* machines retry that rename every cycle** — `status` shows a repeated failure; the file stays safe on both sides, its name just doesn't update elsewhere. Same deferred root cause (the case-only-rename arm of the gate). *Workaround: also edit the file's contents when you change its case — it then converges after a transient retry instead of looping.*
-
-- **Under investigation (found 2026-07-25 on Linux): a folder deleted in Drive can be *re-uploaded* by another machine instead of being removed.** Observed once on a freshly adopted Linux machine: a tracked folder moved to the Drive bin was not removed locally, and the daemon then attempted to upload part of the tree back to Drive. Every one of those uploads **failed** and nothing reached Drive (they showed as `error upload …: no such file or directory` in `activity` — the local-write gate refusing files that no longer existed). The same deletion propagated correctly on the other (macOS) machine, and the normal path is covered by a passing regression test, so the trigger is machine-state-specific and not yet identified — the suspect is a `init --adopt` that was still running when the login service first tried to start, leaving part of the tree on disk but untracked. (The mass-delete guard was investigated as part of this and found correct; it has since been narrowed — §6 — so it no longer holds recoverable deletions at all.) *Nothing was lost* (Drive's bin and the other machine's rescue copy both held the content; that machine used the quarantine, which was the destination before the system bin replaced it). *If you hit it: check `synckeeper status` on every machine before deleting a large folder, and prefer deleting it on a machine's filesystem rather than in the Drive web UI until this is fixed.*
+| Symptom | What to do |
+|---|---|
+| After a crash, nothing syncs at all — `status` shows a repeating `last error`. Happens when the crash interrupted a file being created in a Drive folder that afterwards keeps refusing to be listed (for any reason other than having been deleted). | `doctor --repair` clears the journal. |
+| You edit a file while it's uploading → the interrupted upload keeps the name and your newer content lands as the conflict copy beside it. | Nothing lost; tidy it by hand. |
+| Repeated crashes around a folder rename wedge one machine: every cycle logs `plan violates §4.5: upload and download both act on …` and refuses. The refusal is the safety check working, so it repeats forever. | Edit or touch the named file — that changes the plan. Needs crashes mid-cycle repeatedly; unlikely in normal use. |
+| Two machines with folder names differing only in case or accents can mint a duplicate folder in Drive. | Avoid folder names that differ only in case/accents. |
+| Renaming a file to differ only in case (`a.txt` → `A.txt`) makes your *other* machines retry that rename every cycle. The file is safe on both sides; the name just doesn't update elsewhere. | Change the contents too — it then converges after a transient retry. |
+| **Under investigation.** A folder deleted in Drive can be *re-uploaded* by another machine instead of removed. Seen once, on a freshly adopted Linux machine; every upload failed and nothing reached Drive. Trigger not yet identified. | Check `synckeeper status` on every machine before deleting a large folder, and prefer deleting on a machine's filesystem over the Drive web UI. |
 
 ## 9. Known limitations (by design)
 
-- One folder, one Google account, one Drive folder. No selective sync, no bandwidth limits, no shared drives.
-- Whole-file transfers (Drive has no delta API): a 1-byte change re-transfers the file.
-- Remote changes arrive within the poll interval (default 45 s); local changes sync under a second while the daemon runs. If file watching is unavailable (e.g. out of file descriptors), the daemon runs polling-only — everything still syncs, local changes just wait for the next poll — and restores watching automatically; `status` shows the mode.
-- Requires your own Google OAuth client (§5) — no credentials are bundled. Your client's consent screen: use **Production** (Testing expires refresh tokens in 7 days); an unpublished client shows a one-time "unverified app" warning.
-- **Full-Drive access scope.** Authorizes with Google's full `drive` scope, not folder-limited — Google has no folder-scoped OAuth scope, and the only narrower option (`drive.file`) would silently stop syncing files added to the Drive folder from *outside* Synckeeper (Drive web UI, other apps). So the stored token can reach your whole Drive; kept at `token.json` `0600`, only ever sent to Google over HTTPS. May be revisited.
-- **`sync_dir` is not checked against the config dir.** Point it at a folder that contains the config dir (e.g. `sync_dir = "~"` on Linux) and `token.json` / `credentials.json` upload to Drive like any other file. Keep the two separate (§4).
-- **Mounting *only* the sync folder from a separate volume is unsupported.** An unmounted mountpoint looks exactly like a folder whose contents you deleted — an empty directory — so those deletions would propagate to Drive's bin. Keep the sync folder on a normally-mounted filesystem. (If the folder itself disappears when the volume unmounts, that is safe: a missing folder is recreated, never propagated.)
-- All files kept on disk (no online-only placeholders).
-- macOS primary; Linux and Windows planned (code written portably, not yet validated there).
+- One folder, one Google account, one Drive folder. No selective sync, bandwidth limits, or shared drives.
+- Whole-file transfers — Drive has no delta API, so a 1-byte change re-transfers the file.
+- Remote changes arrive within the poll interval (default 45 s); local changes sync under a second while the daemon runs. If file watching is unavailable (e.g. out of file descriptors) the daemon runs polling-only — everything still syncs, just at poll speed — and restores watching by itself. `status` shows the mode.
+- Requires your own Google OAuth client (§5), with a one-time "unverified app" warning.
+- **Full-Drive access scope.** Google offers no folder-scoped scope, and the narrower `drive.file` would silently stop syncing files added to the folder from *outside* Synckeeper (Drive web UI, other apps). So the stored token can reach your whole Drive; it's kept at `token.json` `0600` and only ever sent to Google over HTTPS. May be revisited.
+- **`sync_dir` is not checked against the config dir.** Point it at a folder containing the config dir (e.g. `sync_dir = "~"` on Linux) and `token.json` / `credentials.json` upload to Drive like any other file. Keep the two apart (§4).
+- **Mounting *only* the sync folder from a separate volume is unsupported.** An unmounted mountpoint looks exactly like a folder whose contents you deleted, and those deletions would propagate. (The folder itself disappearing is safe — a missing folder is recreated, never propagated.)
+- All files kept on disk; no online-only placeholders.
+- **macOS and Linux** are validated on hardware. **Windows is not** — it also has no recycle-bin backend yet, so local rescue copies there fall back to quarantine (§6).
 
 ## 10. Live dashboard (`synckeeper status`)
 
-`synckeeper status` on a terminal is a live, read-only dashboard — it holds no lock, never writes the database, and does no syncing. Piped or with `--plain` you get the one-shot report instead; `--json` is unchanged for scripts.
-
-Three views, switched with number keys or Tab:
+On a terminal, `status` is a live dashboard: read-only by construction — no lock, no database writes, no syncing. Piped or with `--plain` you get the one-shot report instead; `--json` is unchanged for scripts.
 
 | View | Shows |
 |---|---|
-| **1 overview** | next poll (an estimate — see below), last sync + cycle summary, tracked/pending/quarantine counts, where deletions from Drive land, and an **attention** block that appears only when something needs it (guard block + how to release it, **expired credentials + `synckeeper login`**, last error, no system bin, dead daemon, missing credentials, autostart not installed), then recent activity |
-| **2 activity** | the recorded history, newest first, with direction and file count — the most recent 200 entries of the daemon's 500-entry ring (`activity -n` reads further back). An entry repeating in a row is **one row with a count** (`×288`), so a failing cycle can't push your history out of the ring. Scroll it, filter (`f`), or search paths/details/kinds (`/`) — the heading reports `N of M` and what is filtering |
-| **3 info** | the static picture — version, every path with permission modes, sync target + Drive folder id, machine name + id, OAuth client, token status, effective config. Same data `info` prints |
+| **1 overview** | next poll or retry, last sync + cycle summary, tracked/pending/quarantine counts, bin destination, recent activity — plus an **attention** block that appears only when something needs it (guard block and how to release it, expired credentials, last error, no system bin, dead daemon, missing credentials, autostart not installed) |
+| **2 activity** | history, newest first, with direction and file count — the most recent 200 of the daemon's 500-entry ring (`activity -n` reads further back). Repeats collapse to one row with a count (`×288`). Scroll, filter (`f`), or search paths/details/kinds (`/`); the heading reports `N of M` |
+| **3 info** | the static picture — version, paths with permission modes, sync target + Drive folder id, machine name + id, OAuth client, token status, effective config. Same data `info` prints |
 
 | Keys | |
 |---|---|
-| `1` `2` `3` · `Tab` · `←` `→` | select / cycle views |
+| `1` `2` `3` · `Tab` · `←` `→` | select / cycle views (`Shift-Tab` cycles back) |
 | `j` `k` · `↑` `↓` | scroll the activity list |
-| `PgUp` `PgDn` · `Space` | scroll a page |
-| `g` `G` | jump to newest / oldest |
-| `f` | filter activity: all → local→drive → drive→local → conflict → errors |
+| `PgUp` `PgDn` · `Space` · `Ctrl-F`/`Ctrl-B` | scroll a page |
+| `g` `G` · `Home`/`End` | jump to newest / oldest |
+| `f` | filter: all → local→drive → drive→local → conflict → errors |
 | `/` | search paths, details and kinds — `Enter` keeps it, `Esc` cancels |
 | `c` | clear filter and search |
-| `s` | sync now (asks the running daemon) |
+| `s` | sync now |
 | `p` / `P` | pause / resume automatic syncing |
-| `R` | reload `config.toml` in the daemon |
-| `?` · `q`/`Ctrl-C` | help · quit |
+| `R` | reload `config.toml` |
+| `?` · `q`/`Ctrl-C`/`Esc` | help · quit |
 
-Aliases: `Shift-Tab` cycles views backwards, `Ctrl-F`/`Ctrl-B` page, `Home`/`End` jump to newest/oldest, and `Esc` quits (except while a search line is open, where it cancels the search).
-
-**One entry, one line.** An error can arrive many lines long (a Drive auth failure carries its whole HTTP response); it is stored and shown flattened to one line, cut at the window width — from the **right** for a message, so you keep the sentence, and from the **left** for a file path, so you keep the file name. The frame is always exactly the height of the terminal — never more lines than it has, and padded when there's little to show, so the tab bar stays on the last line.
-
-Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets how often state is re-read (default 1s); the frame redraws ~4×/s regardless, so counters keep ticking between reads even at a long interval.
-
-`s`/`p`/`P`/`R` are the same requests `sync`, `pause`, `resume` and `reload` send; a result line appears under the header and clears itself. **`s` never confirms a held mass deletion** — a deletion the guard is holding is released only by `synckeeper sync --confirm-deletes` on the command line (§6), never by a keystroke.
-
-**A retry is named, never disguised as a poll** *(fixed 2026-08-23)*. While the daemon is waiting after a failed cycle (§6) the cycle panel reads `retry  in 11m` instead of a poll countdown, the header's `backoff` is amber rather than grey, and the attention block adds `⚠ retrying after a failure — next try in 11m; press \`s\` to retry now`. `s` cuts the wait short and syncs at once (§6). A paused daemon is not retrying and says nothing of the sort. Until this was fixed the panel read `next poll: due now` for the whole wait — up to 12 minutes of a promise it could not keep.
-
-**The countdown is exact when the daemon can tell you.** A running daemon publishes its real poll deadline, what a running cycle is doing (`syncing  checking Drive · 45s`, or `transferring · 1,145 actions · 8s`), whether local changes are already in flight (`next sync  3 local changes — syncing` — a bound on what is about to sync, since one save can fire several events), and which watch backend is live — shown in the header, e.g. `watching (FSEvents)`; a daemon that has fallen back to polling reads `polling-only`, with no backend named because there is none. If the daemon is older than the dashboard, or not running, the figure falls back to the database and is **marked `≈`**: that number is recorded when a cycle ends, while the poll timer runs independently and any local change pre-empts it, so the real next sync is usually *sooner*.
+- `s` `p` `P` `R` send the same requests as the matching commands; a result line appears under the header and clears itself. **`s` never confirms a held mass deletion** — only `synckeeper sync --confirm-deletes` does (§6).
+- **A retry is named, never disguised as a poll.** While the daemon waits after a failed cycle (§6) the panel reads `retry  in 11m`, the header's `backoff` turns amber, and the attention block adds ``⚠ retrying after a failure — next try in 11m; press `s` to retry now``. `s` cuts the wait short. A paused daemon is never reported as retrying.
+- **The countdown is exact when the daemon can tell you** — a running daemon publishes its real poll deadline, what a cycle is doing (`syncing  checking Drive · 45s`, `transferring · 1,145 actions · 8s`), local changes already in flight, and the live watch backend (`watching (FSEvents)`, or `polling-only` with no backend named). Falling back to the database marks the figure `≈`; the real next sync is then usually *sooner*, since any local change pre-empts the poll timer.
+- **One entry, one line.** A multi-line error (a Drive auth failure carries its whole HTTP response) is flattened and cut at the window width — from the **right** for a message, so you keep the sentence; from the **left** for a path, so you keep the file name. The frame is always exactly the terminal's height.
+- Colour follows `NO_COLOR` and `TERM=dumb`. `--interval` sets the state re-read period (default 1s); the frame redraws ~4×/s regardless.
