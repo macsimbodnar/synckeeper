@@ -13,6 +13,22 @@ Format:
 
 ---
 
+## 2026-08-23 — W18 closed: `doctor` stays, and the R25 wedge is scheduled after the rollout
+
+**Context:** the drift sweep left W18 with exactly two open items, both decisions rather than work. Max took them interactively.
+
+**Decision 1 (Max, 2026-08-23) — W18-F is closed as won't-do; `doctor` stays registered.**
+F was written on the premise that W18-B's idempotent `init` made `doctor` redundant: `init` union-merges over an empty baseline, cannot delete (§11), and is a complete recovery for a lost DB. **W18-H disproved the premise.** `doctor --repair` is the only way to clear stale `pending_ops` — `init` does not, since `ResetBaseline` fires only when root identity changes — so H's residual (a crashed create whose Drive parent keeps refusing to be listed for a reason other than 404) would be stranded with no user-facing escape. F also never accounted for what `doctor`'s **read-only** half does: it is the only thing that reports a Drive folder holding the same name twice, which Drive permits and a filesystem does not, and which silently means only the first item syncs.
+The clean alternative was priced and rejected for now: land W17's recorded not-taken fix — stamp the created Drive id into `pending_ops` so recovery is an exact `Get(id)` that never lists a parent — and *then* unregister. That removes H's residual entirely, but it is a schema change plus a recovery rewrite spent to delete a working diagnostic. It stays available if the CLI surface ever needs cutting.
+**Consequences:** MANUAL §3's `doctor` row and §7's recovery rows stay as they are; the DOC1 guard is not tripped; spec §15's "which was to have let `doctor` be retired" was already corrected earlier today. F is recorded as a **reversed** decision with its reason so it is not re-proposed on the original premise.
+
+**Decision 2 (Max, 2026-08-23) — the R25 crash-rename wedge is scheduled as W22, after W7 and W6.**
+The competing precedent was explicit: W16, W17 and W18 each jumped the queue, and the project rule says a reproduced correctness defect outranks features and ports. **The distinction drawn, and the reason it does not apply here:** those three threatened *data*. This one is an **availability** defect — `ValidateTransferStage` refusing the plan *is* the safety check working, nothing is lost or corrupted — and it reproduces only at `SYNCKEEPER_FUZZ_CRASH=1`, a crash before every cycle, which is not the sweep this project has ever run (default 0.12, green). It is pre-existing (identical failure at `433d41f`), documented in MANUAL §8, and has a workaround that changes the plan (touch the named file).
+Weighed against it: W6 is real-world multi-machine validation, blocked on nothing but Max performing it, and it surfaces faults that actually fire in normal use — better value per hour, and it may inform the R25 fix. W7 closes the Linux port that is already field-validated.
+**Consequences:** plan.md gains **W22** with the reasoning recorded inline so the ordering is not re-litigated; the order line becomes W7 → W6 → W22 → W10. Two calls are deliberately left open inside W22: whether the fix belongs in reconcile pass 1 as another special case or as a general "a plan refused identically twice is a reportable standstill", and that is Max's call at implementation time. W22 item 3 makes crash-probability-1.0 a **recorded** sweep — the class went unseen precisely because no sweep used that setting.
+
+**W18 is now closed** (A, B, C, D, E, G, H, I done; F won't-do). Its header no longer reads `not started`, which it had said since 2026-07-31 while eight of nine items landed.
+
 ## 2026-08-23 — Project-wide drift sweep: W18-I closed, and testing.md's reversed criteria marked
 
 **Context:** Max: *"please fix all those findings and search for more. I would like to cleanup the project."* The remaining W18-I scope was the starting list; the sweep that followed went wider — every `spec §N` and `MANUAL §N` reference from code, every `Test*` name `testing.md` cites, the README layout table against the package tree, TODO markers, and `gofmt`.
