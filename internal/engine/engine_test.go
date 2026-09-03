@@ -1,6 +1,6 @@
 package engine
 
-// Scenario tests S1–S8 (docs/testing.md): N simulated machines, each with
+// Scenario tests S1–S8 (adocs/testing.md): N simulated machines, each with
 // its own sync dir and state DB, against one shared fake Drive.
 
 import (

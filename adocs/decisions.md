@@ -1,5 +1,27 @@
 # Synckeeper — Decision Log
 
+Ids stable, never reused. Decisions belong to Max; agents propose. Record a decision before or alongside the change it covers, never after.
+
+This file has two halves, because the project kept 1233 lines of decisions before it adopted the moltke workflow on 2026-09-03:
+
+- **`DEC-<nnn>` entries** — everything from the adoption onward. Index first, newest entry **last**, appended just above the pre-adoption block.
+- **Pre-adoption entries** — every decision from 2026-07-07 to 2026-09-03, verbatim, in their original dated format, **newest first**. They have no ids and are never renumbered; cite them by date and title.
+
+## Index
+
+- DEC-001 2026-09-03 — adopt the moltke document workflow; docs/ becomes adocs/
+
+## DEC-001  2026-09-03  adopt the moltke document workflow; docs/ becomes adocs/
+Tags: process, docs, workflow
+Decision: Max, interactively, through `/moltke:init`. The repository adopts the moltke workflow: `AGENTS.md` holds the ruleset, `CLAUDE.md` points at it, and the project's memory moves from `docs/` to `adocs/` — one memory, not two. Rules recorded, one per topic: GIT commit-freely-never-push; AGENTS subagents only for reviews and read-only exploration; TESTS green before done (`make test`) with a failing test before any defect fix; PLAN one active step per agent; DOCS README **and** MANUAL checked at every step completion; REVIEW a fast check after each completed step; AUDIT on demand only; DEPS never without asking; COMMITS at each completed step and at any plan change. Rejected: scaffolding `adocs/` alongside `docs/` and migrating later — two parallel memories drift, which is the failure this file exists to prevent.
+Migration shape, chosen to lose nothing: every `docs/` file moved with `git mv` and kept verbatim. `spec.md` became `specs.md` and gained the Prime directive and INV-1..INV-9 above its existing text (§3 stays the binding wording; the INV list is the handle). `plan.md` became `plan_history.md` and a new `plan.md` holds only the description, the ordered Open list, Parked, and Done. Workstreams W1–W21 were **not** back-converted into `plan_done/` step files — adopting a repository with work already finished is a manual exercise the workflow does not require, and rewriting 21 closed workstreams risks losing facts for no gain. `plan_done/` therefore starts empty and holds everything from S001 onward.
+Kept, not replaced: `testing.md` (the acceptance ledger the TESTS rule points at), `worklog.md`, `ideas.md`, and `history/` all moved into `adocs/` unchanged. `CLAUDE.md` was not overwritten — it gained `@AGENTS.md` and had its doc-map paths repointed at `adocs/`.
+Why: the project already ran a document-driven workflow with the same shape; adopting moltke made the rules explicit and machine-readable to any agent, and the migration was the price of having one memory instead of two.
+
+---
+
+# Pre-adoption decisions (2026-07-07 → 2026-09-03, newest first)
+
 Dated record of scope changes, spec deviations, and non-obvious technical choices. Newest first. Add an entry *before or alongside* the change it describes.
 
 Format:

@@ -1,6 +1,8 @@
 # Synckeeper — Implementation Plan
 
-Master tracking document. The spec in [spec.md](spec.md) is the contract; this file tracks how and in what order the delta between spec and code gets built. Rewritten 2026-07-17 against the revised spec: the phase system (0–7) is retired as history; new work is organized in workstreams.
+**Retired 2026-09-03.** Read-only archive of workstreams W1–W21, the structure that preceded the `plan_todo/`/`plan_current/`/`plan_done/` step files. Active work is [plan.md](plan.md); nothing here is resumed. Original preamble follows.
+
+Master tracking document. The spec in [specs.md](specs.md) is the contract; this file tracks how and in what order the delta between spec and code gets built. Rewritten 2026-07-17 against the revised spec: the phase system (0–7) is retired as history; new work is organized in workstreams.
 
 ## Phase history (done, kept for reference)
 

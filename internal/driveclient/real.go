@@ -12,7 +12,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-// fileFields is the metadata set the engine needs, per docs/spec.md.
+// fileFields is the metadata set the engine needs, per adocs/specs.md.
 const fileFields = "id, name, mimeType, md5Checksum, size, version, parents, trashed, modifiedTime"
 
 const uploadChunkSize = 8 * 1024 * 1024

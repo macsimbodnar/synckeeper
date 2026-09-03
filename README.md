@@ -2,29 +2,30 @@
 
 Personal bidirectional sync: one local folder (`~/Synckeeper`) ↔ one Google Drive folder. Go, daemon-first. Many machines sync independently against Drive as the hub.
 
-Built for one user, durability first: three-way reconcile against a local SQLite baseline, atomic writes, Drive bin + system trash instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable ops. Non-negotiable invariants: [spec §3](docs/spec.md).
+Built for one user, durability first: three-way reconcile against a local SQLite baseline, atomic writes, Drive bin + system trash instead of permanent deletes, mass-delete guard, conflict copies (never last-writer-wins), crash-resumable ops. Non-negotiable invariants: [specs §3](adocs/specs.md), summarized as INV-1..INV-9 at the top of that file.
 
 **Installing and using it → [MANUAL.md](MANUAL.md).** This file is developer-facing and carries no usage instructions.
 
-**Status:** build-out phases (0–7) retired; daily-usable on macOS and Linux. Current: W18 (remaining correctness items), then W7 (Linux port close-out) and W6 (multi-machine rollout) — [docs/status.md](docs/status.md).
+**Status:** build-out phases (0–7) retired; daily-usable on macOS and Linux. Current: S001 (Linux port close-out), then S002 (the R25 rename wedge) and S003 (daemon surfaces skips) — [adocs/status.md](adocs/status.md).
 
 ## Docs
 
-Start with [CLAUDE.md](CLAUDE.md) — read order, doc map, rules for agents and humans.
+Start with [AGENTS.md](AGENTS.md) — the operating ruleset, read order, and project rules for agents and humans. [CLAUDE.md](CLAUDE.md) points at it and adds this project's technical rules.
 
 | Doc | Purpose |
 |---|---|
 | [MANUAL.md](MANUAL.md) | End-user manual: setup, commands, config, behavior, known bugs |
-| [docs/status.md](docs/status.md) | Live state: last / current / next |
-| [docs/spec.md](docs/spec.md) | Design doc & implementation contract (authoritative) |
-| [docs/plan.md](docs/plan.md) | Workstream backlog + retired phase history |
-| [docs/testing.md](docs/testing.md) | Acceptance ledger |
-| [docs/decisions.md](docs/decisions.md) | Decision log: what, when, who, why |
-| [docs/history/](docs/history/) | Archived per-phase checklists (read-only) |
+| [adocs/status.md](adocs/status.md) | Live state: last done / in progress / next / blocked / parked |
+| [adocs/plan.md](adocs/plan.md) | Step order; detail in `adocs/plan_todo,_current,_done/` |
+| [adocs/specs.md](adocs/specs.md) | Design doc & implementation contract (authoritative) |
+| [adocs/testing.md](adocs/testing.md) | Acceptance ledger |
+| [adocs/decisions.md](adocs/decisions.md) | Decision log: what, when, who, why |
+| [adocs/plan_history.md](adocs/plan_history.md) | Retired workstreams W1–W21 (read-only) |
+| [adocs/history/](adocs/history/) | Archived per-phase checklists (read-only) |
 
 ## Layout
 
-The daemon is the product; the CLI (and any future UI) are thin clients of it. One serialized loop owns the engine; `reconcile` is a pure function. Details: [spec.md](docs/spec.md).
+The daemon is the product; the CLI (and any future UI) are thin clients of it. One serialized loop owns the engine; `reconcile` is a pure function. Details: [specs.md](adocs/specs.md).
 
 | Path | Role |
 |---|---|
@@ -53,7 +54,7 @@ The daemon is the product; the CLI (and any future UI) are thin clients of it. O
 
 ## Build & test
 
-Go 1.26+ (see `go.mod`). Built **natively per platform** — no cross-compile requirement; cgo permitted for OS-native integrations ([spec §10](docs/spec.md)).
+Go 1.26+ (see `go.mod`). Built **natively per platform** — no cross-compile requirement; cgo permitted for OS-native integrations ([specs §10](adocs/specs.md)).
 
 ```sh
 make build        # native host binary → dist/ (cgo on → FSEvents on macOS)

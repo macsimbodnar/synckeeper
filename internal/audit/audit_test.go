@@ -52,7 +52,7 @@ func TestSensitiveTrackedClassifier(t *testing.T) {
 			t.Errorf("%q should be flagged sensitive", p)
 		}
 	}
-	for _, p := range []string{"main.go", "README.md", "internal/auth/credentials.go", "docs/status.md"} {
+	for _, p := range []string{"main.go", "README.md", "internal/auth/credentials.go", "adocs/status.md"} {
 		if isSensitiveTracked(p) {
 			t.Errorf("%q should NOT be flagged sensitive", p)
 		}

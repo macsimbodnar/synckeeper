@@ -1,4 +1,4 @@
-// Command synckeeper is the CLI entry point; see docs/spec.md.
+// Command synckeeper is the CLI entry point; see adocs/specs.md.
 package main
 
 import (

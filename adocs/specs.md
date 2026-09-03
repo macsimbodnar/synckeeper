@@ -1,8 +1,26 @@
 # Synckeeper — Design Document & Implementation Contract
 
-This is the authoritative specification: scope, detailed behavior, and acceptance criteria. The execution plan in [plan.md](plan.md) breaks it into work; when the two disagree, this file wins. Changes to scope or invariants are recorded in [decisions.md](decisions.md).
+This is the authoritative specification: scope, detailed behavior, and acceptance criteria. The execution plan in [plan.md](plan.md) breaks it into work; when the two disagree, this file wins. Changes to scope or invariants are recorded in [decisions.md](decisions.md). Precedence: **specs > plan > status**.
 
 Revised 2026-07-17: rewritten platform-agnostically (behavior is defined by filesystem/OS *capabilities*, never by OS name), daemon-first, with an explicit OS-integration module contract and a Dropbox reference appendix. Platform order lives only in the [roadmap](#roadmap); it is not part of the feature definition.
+
+## Prime directive
+
+The engine must never silently lose or corrupt a file.
+
+## Invariants
+
+Testable properties, referenced by number from code comments, test names, and commit messages. Numbers are never reused; a retired one stays listed as retired. Each restates §3's full wording in one checkable line — **§3 is the binding text**; this list is the handle.
+
+- **INV-1** — every reconcile is three-way against the persistent baseline DB; local is never diffed against remote directly. (§3.1)
+- **INV-2** — a local write lands as temp file in the destination dir → checksum verified → fsync → atomic rename → DB row committed, in that order, never DB first. (§3.2)
+- **INV-3** — no delete is permanent: remote deletes go to Drive's bin, local deletes to the OS bin, and to the dated quarantine only where no usable bin exists; a folder arrives as one restorable entry, and a rescue copy never overwrites an occupied destination. (§3.3)
+- **INV-4** — a deletion is held for confirmation only when it is *unrecoverable* (over the configured fraction of tracked files **and** landing outside a bin the user can restore from); a large-but-recoverable deletion is reported, never silent; a missing sync dir is recreated, never read as a deletion. (§3.4)
+- **INV-5** — a conflict yields a conflicted copy stamped with machine name and timestamp; never last-writer-wins, never overwrite. (§3.5)
+- **INV-6** — every operation is idempotent and crash-resumable: killing the process at any point leaves a state a fresh run repairs. (§3.6)
+- **INV-7** — plan ordering is dependency-aware: an action that overwrites, moves away, or removes content is ordered after every action preserving that content, and does not execute at all if a protective action it depends on failed. (§3.7)
+- **INV-8** — no credential is embedded in the source or in git history; the tool requires a user-supplied `credentials.json`, and `make audit` gates it. (§9)
+- **INV-9** — there is exactly one sync implementation: the daemon and the one-shot `sync` share the same engine path. (§1)
 
 ## 1. What Synckeeper is
 

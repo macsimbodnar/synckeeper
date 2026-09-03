@@ -13,7 +13,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Config mirrors config.toml. See docs/spec.md for the reference file.
+// Config mirrors config.toml. See adocs/specs.md for the reference file.
 type Config struct {
 	Drive  DriveConfig  `toml:"drive"`
 	Local  LocalConfig  `toml:"local"`

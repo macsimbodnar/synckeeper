@@ -182,7 +182,7 @@ Publishing to production does **not** remove it. Synckeeper asks for Google's fu
 
 ## 8. Known bugs
 
-All confirmed and reproduced; details in [docs/decisions.md](docs/decisions.md). None of them loses data.
+All confirmed and reproduced; details in [adocs/decisions.md](adocs/decisions.md). None of them loses data.
 
 | Symptom | What to do |
 |---|---|

@@ -1,7 +1,7 @@
 package engine
 
 // Fault tests F1–F3, F5 and scenario-level guard tests G1–G2
-// (docs/testing.md). Crashes are simulated by executor.FaultHook aborting an
+// (adocs/testing.md). Crashes are simulated by executor.FaultHook aborting an
 // op mid-flight: side effects up to the checkpoint remain, the DB commit
 // never happens, and the next sync must repair. F4 (lost DB) lives in
 // internal/doctor tests.

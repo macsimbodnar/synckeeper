@@ -42,7 +42,7 @@ type DB struct {
 // migrations[i] upgrades the schema from version i to i+1. The current
 // schema version is len(migrations).
 var migrations = []string{
-	// v0 -> v1: initial schema, per docs/spec.md.
+	// v0 -> v1: initial schema, per adocs/specs.md.
 	`
 	create table items (
 	  drive_file_id   text primary key,
