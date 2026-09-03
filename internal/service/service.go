@@ -82,19 +82,25 @@ func Status() (State, error) {
 }
 
 // LogPath returns the daemon's log file for the current platform, or "" when
-// logs don't go to a file we own (Linux → journald, Windows → no redirect).
+// logs don't go to a file we own (Windows → no redirect).
 func LogPath() string {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		if _, log, err := launchdPaths(); err == nil {
+			return log
+		}
+	case "linux":
+		if log, err := linuxLogPath(); err == nil {
 			return log
 		}
 	}
 	return ""
 }
 
-// RestrictLogToOwner tightens the daemon log file to 0600. launchd creates it
-// 0644 (world-readable), and the log records synced file *names* (never
-// contents) — so on a shared machine another local user could read them.
+// RestrictLogToOwner tightens the daemon log file to 0600. Both launchd and
+// systemd create it with the service's umask (typically 0644, world-readable),
+// and the log records synced file *names* (never contents) — so on a shared
+// machine another local user could read them.
 // Best-effort and idempotent: a missing file (a foreground `watch`, or a
 // platform whose logs aren't file-based) is not an error.
 func RestrictLogToOwner() error {
@@ -209,7 +215,12 @@ func launchdRunning(out string) bool {
 
 // --- Linux: systemd user unit --------------------------------------------
 
-func systemdUnit(binPath string) string {
+// systemdUnit builds the user unit. The log path is baked in at install time,
+// exactly as launchdPlist bakes it into the plist: stdout/stderr go to a file
+// we own rather than the user journal, which is readable by root and by
+// adm/systemd-journal members (the log records synced file names).
+// append: needs systemd >= 240.
+func systemdUnit(binPath, logPath string) string {
 	return fmt.Sprintf(`[Unit]
 Description=Synckeeper continuous sync
 After=network-online.target
@@ -218,10 +229,12 @@ After=network-online.target
 ExecStart=%s watch
 Restart=on-failure
 RestartSec=10
+StandardOutput=append:%s
+StandardError=append:%s
 
 [Install]
 WantedBy=default.target
-`, binPath)
+`, binPath, logPath, logPath)
 }
 
 func systemdUnitPath() (string, error) {
@@ -232,15 +245,39 @@ func systemdUnitPath() (string, error) {
 	return filepath.Join(home, ".config", "systemd", "user", "synckeeper.service"), nil
 }
 
+// linuxLogPath resolves $XDG_STATE_HOME/synckeeper/synckeeper.log. Per the XDG
+// basedir spec a relative XDG_STATE_HOME is invalid and treated as unset, which
+// also covers the empty value.
+func linuxLogPath() (string, error) {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if !filepath.IsAbs(dir) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(dir, "synckeeper", "synckeeper.log"), nil
+}
+
 func installSystemd(binPath string) (string, error) {
 	unitPath, err := systemdUnitPath()
+	if err != nil {
+		return "", err
+	}
+	logPath, err := linuxLogPath()
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(unitPath, []byte(systemdUnit(binPath)), 0o644); err != nil {
+	// 0700: systemd creates the log file itself under the service umask, so the
+	// directory is what keeps it unreadable until `watch` chmods the file 0600.
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(unitPath, []byte(systemdUnit(binPath, logPath)), 0o644); err != nil {
 		return "", err
 	}
 	if err := run("systemctl", "--user", "daemon-reload"); err != nil {
@@ -249,7 +286,7 @@ func installSystemd(binPath string) (string, error) {
 	if err := run("systemctl", "--user", "enable", "--now", "synckeeper"); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("systemd user unit installed and started.\n  unit: %s\n  logs: journalctl --user -u synckeeper", unitPath), nil
+	return fmt.Sprintf("systemd user unit installed and started.\n  unit: %s\n  logs: %s\n        (journalctl --user -u synckeeper carries unit lifecycle only)", unitPath, logPath), nil
 }
 
 func uninstallSystemd() (string, error) {

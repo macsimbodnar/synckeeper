@@ -79,8 +79,10 @@ The login service and its log live outside it:
 | OS | Service | Log |
 |---|---|---|
 | macOS | launchd, `~/Library/LaunchAgents/com.mazerfaker.synckeeper.plist` | `~/Library/Logs/synckeeper.log`, kept `0600` — it records file names |
-| Linux | systemd user unit, `~/.config/systemd/user/synckeeper.service` | `journalctl --user -u synckeeper` |
+| Linux | systemd user unit, `~/.config/systemd/user/synckeeper.service` | `$XDG_STATE_HOME/synckeeper/synckeeper.log`, default `~/.local/state/synckeeper/synckeeper.log`, kept `0600` — it records file names. `journalctl --user -u synckeeper`: unit lifecycle only |
 | Windows | Task Scheduler | not redirected |
+
+Neither log is rotated or capped.
 
 Unknown keys are rejected (typo protection); missing keys use these defaults.
 

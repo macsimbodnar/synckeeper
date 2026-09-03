@@ -21,14 +21,25 @@ func TestLaunchdPlist(t *testing.T) {
 }
 
 func TestSystemdUnit(t *testing.T) {
-	u := systemdUnit("/home/max/bin/synckeeper")
+	u := systemdUnit("/home/max/bin/synckeeper", "/home/max/.local/state/synckeeper/synckeeper.log")
 	for _, want := range []string{
 		"ExecStart=/home/max/bin/synckeeper watch",
 		"Restart=on-failure",
 		"WantedBy=default.target",
+		// W7-L2: daemon output goes to a file we own, not the user journal.
+		"StandardOutput=append:/home/max/.local/state/synckeeper/synckeeper.log",
+		"StandardError=append:/home/max/.local/state/synckeeper/synckeeper.log",
 	} {
 		if !strings.Contains(u, want) {
 			t.Errorf("unit missing %q", want)
+		}
+	}
+	// The baked path must be absolute: systemd rejects a relative append: target.
+	for _, line := range strings.Split(u, "\n") {
+		for _, key := range []string{"StandardOutput=append:", "StandardError=append:"} {
+			if v, ok := strings.CutPrefix(line, key); ok && !strings.HasPrefix(v, "/") {
+				t.Errorf("%s%s is not an absolute path", key, v)
+			}
 		}
 	}
 }

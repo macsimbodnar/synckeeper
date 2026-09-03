@@ -61,7 +61,7 @@ type infoView struct {
 	socketPath    string
 	quarantineDir string
 	trashDest     string // where remote deletions go (W13); quarantine is the fallback
-	logPath       string // "" when logs aren't file-based (Linux/Windows)
+	logPath       string // "" when logs aren't file-based (Windows)
 
 	syncDir     string
 	driveFolder string
