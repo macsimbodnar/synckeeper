@@ -14,5 +14,5 @@ excludes:   Windows (S006); the log-rotation question L2b, which is flagged but 
             (one inotify watch per directory, no watch budget, no config knob).
 closes:
 paused_by:
-author:
+author:     Claude (agent), started 2026-09-03 at Max's direction
 done:
