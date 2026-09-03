@@ -25,7 +25,7 @@ func TestFSEventsBackendWakesOnChange(t *testing.T) {
 		}
 	}
 
-	b, failed, err := newFSEventsBackend(context.Background(), root, ignore, wake)
+	b, failed, err := newFSEventsBackend(context.Background(), root, ignore, backendHooks{wake: wake})
 	if err != nil {
 		t.Fatalf("newFSEventsBackend: %v", err)
 	}
@@ -95,12 +95,12 @@ func TestFSEventsScaleNoFDExhaustion(t *testing.T) {
 	woke := make(chan struct{}, 16)
 	b, failed, err := newFSEventsBackend(context.Background(), root,
 		func() []string { return nil },
-		func() {
+		backendHooks{wake: func() {
 			select {
 			case woke <- struct{}{}:
 			default:
 			}
-		})
+		}})
 	if err != nil {
 		t.Fatalf("newFSEventsBackend over %d files: %v", n, err)
 	}
@@ -131,7 +131,7 @@ func TestFSEventsScaleNoFDExhaustion(t *testing.T) {
 // fseventsRootDev seam so the test needs no real mount/unmount.
 func TestFSEventsRefreshDetectsRemount(t *testing.T) {
 	root := t.TempDir()
-	b, _, err := newFSEventsBackend(context.Background(), root, func() []string { return nil }, func() {})
+	b, _, err := newFSEventsBackend(context.Background(), root, func() []string { return nil }, backendHooks{})
 	if err != nil {
 		t.Fatalf("newFSEventsBackend: %v", err)
 	}

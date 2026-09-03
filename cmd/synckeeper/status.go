@@ -176,6 +176,7 @@ func fetchLive() (live tui.Live, haveLive, running bool) {
 		TickDue:        s.TickDue,
 		WakePending:    s.WakePending,
 		PendingChanges: s.PendingChanges,
+		EventOverflows: s.EventOverflows,
 		BackingOff:     s.BackingOff,
 		CycleRunning:   s.CycleRunning,
 		CycleElapsed:   time.Duration(s.CycleElapsedMS) * time.Millisecond,

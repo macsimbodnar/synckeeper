@@ -95,7 +95,7 @@ func TestScale(t *testing.T) {
 	// that the failure latch trips.
 	fdLimitOnce.Do(raiseFDLimit)
 	fb, failed, err := newFSNotifyBackend(context.Background(), m.dir,
-		func() []string { return nil }, func() {})
+		func() []string { return nil }, backendHooks{})
 	if err != nil {
 		t.Fatalf("fsnotify backend over %d files: %v", n, err)
 	}

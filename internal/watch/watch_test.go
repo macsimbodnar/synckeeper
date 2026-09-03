@@ -232,8 +232,8 @@ func TestR15WatcherRebuildFailureDegradesToPolling(t *testing.T) {
 	// needsRebuild=false and the loop would never reach the injected failure.
 	// Force the kqueue answer so the degrade-and-recover path is exercised on
 	// every platform; everything else stays the real fsnotify backend.
-	newBackend = func(ctx context.Context, root string, ignore func() []string, wake func()) (fsWatcher, int, error) {
-		b, failed, err := newFSNotifyBackend(ctx, root, ignore, wake)
+	newBackend = func(ctx context.Context, root string, ignore func() []string, hooks backendHooks) (fsWatcher, int, error) {
+		b, failed, err := newFSNotifyBackend(ctx, root, ignore, hooks)
 		if err != nil {
 			return nil, failed, err
 		}

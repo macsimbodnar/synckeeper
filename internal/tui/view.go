@@ -343,6 +343,18 @@ func (m Model) cyclePanel(t theme, colW int) []string {
 	} else {
 		rows = append(rows, field(t, "last cycle", "none recorded", colW, t.muted))
 	}
+	// Only once it has happened: a kernel event queue that overflowed dropped
+	// local changes the watcher will never report, and the daemon answered by
+	// rescanning at once instead of waiting out the poll (S001-L4b). A
+	// permanently visible "0" would spend a line of a height-budgeted frame
+	// saying nothing.
+	if live.Have && live.EventOverflows > 0 {
+		// The label column is 11 wide (see field): "overflows" fits, the
+		// value carries the meaning, and a narrow frame truncates the value
+		// like every other row rather than pushing the line past the column.
+		rows = append(rows, field(t, "overflows",
+			fmt.Sprintf("%s since start — events dropped, rescanned", comma(live.EventOverflows)), colW, t.warn))
+	}
 	return rows
 }
 

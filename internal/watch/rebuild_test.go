@@ -42,7 +42,7 @@ func TestRebuildIsPerBackend(t *testing.T) {
 			a.write(t, "anchor.txt", "keep the dir non-empty")
 
 			var created, closed, refreshes atomic.Int32
-			newBackend = func(context.Context, string, func() []string, func()) (fsWatcher, int, error) {
+			newBackend = func(context.Context, string, func() []string, backendHooks) (fsWatcher, int, error) {
 				created.Add(1)
 				return &countingBackend{rebuild: tc.rebuild, closed: &closed, refreshes: &refreshes}, 0, nil
 			}
@@ -125,7 +125,7 @@ func TestRebuildIsPerPlatform(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	b, _, err := newFSNotifyBackend(ctx, t.TempDir(), func() []string { return nil }, func() {})
+	b, _, err := newFSNotifyBackend(ctx, t.TempDir(), func() []string { return nil }, backendHooks{})
 	if err != nil {
 		t.Fatalf("newFSNotifyBackend: %v", err)
 	}

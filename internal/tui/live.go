@@ -29,6 +29,12 @@ type Live struct {
 	// cycle began — a bound on what is about to sync, not a file list.
 	PendingChanges int
 
+	// EventOverflows is how many times the kernel's event queue overflowed
+	// since the daemon started, dropping events (S001-L4b). In-memory in the
+	// daemon: it starts again at zero on restart, and the state DB never
+	// carries it, so it is shown only while a daemon answers `stat`.
+	EventOverflows int
+
 	// BackingOff: the last cycle failed and the loop is waiting before it
 	// retries, until RetryAt. It outranks the poll deadline above, which is
 	// derived from the last tick and stops meaning anything during the wait —

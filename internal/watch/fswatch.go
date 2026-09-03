@@ -5,10 +5,12 @@ package watch
 // later without touching the sync loop. Correctness never depends on any event
 // arriving (spec §8.1 — events are wake-ups only; the poll tick covers
 // everything a backend misses, drops, or coalesces), so a backend is free to
-// fail at creation (→ pure polling) or under fd pressure (→ the failure latch).
+// fail at creation (→ pure polling) or under fd / kernel-watch-slot pressure
+// (→ the failure latch).
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -24,7 +26,8 @@ import (
 // relevant local changes and holds whatever OS resources watching needs.
 type fsWatcher interface {
 	// refresh makes the watch set cover root and returns how many directories
-	// could not be watched (fd pressure → the failure latch). A whole-tree
+	// could not be watched (fd or kernel watch-slot pressure → the failure
+	// latch; a backend reports which through backendHooks). A whole-tree
 	// backend (FSEvents) watches root in one call and returns 0.
 	refresh(root string) int
 	// close releases every descriptor/stream the backend holds; its event
@@ -42,6 +45,41 @@ type fsWatcher interface {
 	name() string
 }
 
+// backendHooks is everything a running backend reports back to the sync loop.
+// Every hook is optional — a nil one is a no-op — so a backend never has to
+// check before calling, and a test can supply only the hook it asserts on.
+type backendHooks struct {
+	// wake asks for a sync cycle: something under the root may have changed.
+	// It is only ever a hint (spec §8.1); the cycle's full scan is the truth.
+	wake func()
+	// overflow: the kernel's event queue overflowed and events were dropped
+	// (inotify's IN_Q_OVERFLOW; fsnotify raises the same error for the
+	// ReadDirectoryChangesW buffer). Reporting only — a wake is what recovers.
+	overflow func()
+	// watchLimit: a watch registration failed for want of kernel watch slots
+	// rather than for want of file descriptors — on Linux the per-user
+	// fs.inotify.max_user_watches budget (S001-L4a).
+	watchLimit func()
+}
+
+func (h backendHooks) noteWake() {
+	if h.wake != nil {
+		h.wake()
+	}
+}
+
+func (h backendHooks) noteOverflow() {
+	if h.overflow != nil {
+		h.overflow()
+	}
+}
+
+func (h backendHooks) noteWatchLimit() {
+	if h.watchLimit != nil {
+		h.watchLimit()
+	}
+}
+
 // newNotifyWatcher creates the raw fsnotify watcher — a test seam so R15 can
 // inject the fd-pressure creation failure without exhausting real descriptors.
 // Tests swap it only while no watcher goroutine is running.
@@ -49,9 +87,10 @@ var newNotifyWatcher = fsnotify.NewWatcher
 
 // newBackend is the sole place a concrete backend is chosen (and a seam for
 // tests). It creates the backend over root, performs the initial watch, and
-// starts the event pump bound to ctx; `wake` fires on every relevant local
-// change and `ignore` supplies the current ignore globs. Returns the count of
-// directories that could not be watched (fd pressure → the latch).
+// starts the event pump bound to ctx; `hooks.wake` fires on every relevant
+// local change and `ignore` supplies the current ignore globs. Returns the
+// count of directories that could not be watched (fd or watch pressure → the
+// latch).
 var newBackend = newFSNotifyBackend
 
 // fsnotifyBackend watches one directory at a time, refreshed by re-walking the
@@ -61,15 +100,15 @@ var newBackend = newFSNotifyBackend
 type fsnotifyBackend struct {
 	fw     *fsnotify.Watcher
 	ignore func() []string
-	wake   func()
+	hooks  backendHooks
 }
 
-func newFSNotifyBackend(ctx context.Context, root string, ignore func() []string, wake func()) (fsWatcher, int, error) {
+func newFSNotifyBackend(ctx context.Context, root string, ignore func() []string, hooks backendHooks) (fsWatcher, int, error) {
 	fw, err := newNotifyWatcher()
 	if err != nil {
 		return nil, 0, err
 	}
-	b := &fsnotifyBackend{fw: fw, ignore: ignore, wake: wake}
+	b := &fsnotifyBackend{fw: fw, ignore: ignore, hooks: hooks}
 	failed := b.refresh(root)
 	go b.pump(ctx)
 	return b, failed, nil
@@ -119,6 +158,12 @@ func (b *fsnotifyBackend) refresh(root string) int {
 		}
 		if err := b.fw.Add(p); err != nil {
 			failed++
+			// Why it failed decides what the latch is allowed to blame it on
+			// (S001-L4a): ENOSPC is the kernel's watch budget, not this
+			// process's descriptors, and only one of the two has a sysctl fix.
+			if isWatchLimit(err) {
+				b.hooks.noteWatchLimit()
+			}
 		}
 		return nil
 	})
@@ -149,12 +194,31 @@ func (b *fsnotifyBackend) pump(ctx context.Context) {
 					b.refresh(ev.Name)
 				}
 			}
-			b.wake()
+			b.hooks.noteWake()
 		case err, ok := <-b.fw.Errors:
 			if !ok {
 				return
 			}
-			slog.Warn("fsnotify error", "err", err)
+			b.noteError(err)
 		}
 	}
+}
+
+// noteError handles one error from the backend's error channel.
+//
+// A queue overflow is not an ordinary error: the kernel dropped events (inotify
+// keeps 16384 of them, which a `git checkout` or an untar inside the sync dir
+// can outrun), so real local changes are now invisible to the watcher. It is
+// therefore treated as a wake — the next cycle's full scan is what finds them —
+// instead of being left to the poll tick a whole interval away (S001-L4b).
+// Platform-neutral on purpose: fsnotify reports the same error for Windows'
+// ReadDirectoryChangesW buffer, and no correctness rests on which OS it is.
+func (b *fsnotifyBackend) noteError(err error) {
+	if errors.Is(err, fsnotify.ErrEventOverflow) {
+		slog.Warn("file-watch event queue overflowed; events were dropped, syncing now to catch up")
+		b.hooks.noteOverflow()
+		b.hooks.noteWake()
+		return
+	}
+	slog.Warn("fsnotify error", "err", err)
 }

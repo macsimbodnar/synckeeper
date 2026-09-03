@@ -35,6 +35,13 @@ type liveState struct {
 	// no per-event work at all — the increment rides inside the mutex noteWake
 	// already takes (Max, 2026-07-28, decisions.md).
 	pendingChanges int
+	// eventOverflows counts kernel event-queue overflows since this daemon
+	// started (inotify's IN_Q_OVERFLOW, and the same fsnotify error for
+	// Windows' ReadDirectoryChangesW buffer). Each one dropped events, so it is
+	// a running total for the process's lifetime rather than a pending count —
+	// it is deliberately not persisted (spec §8.2 keeps per-event rates out of
+	// the DB) and starts again at zero on restart.
+	eventOverflows int
 
 	cycleRunning   bool
 	cycleStartedAt time.Time
@@ -82,6 +89,14 @@ type LiveSnapshot struct {
 	WakePending    bool  `json:"wake_pending"`
 	WakeDueAt      int64 `json:"wake_due_at"`
 	PendingChanges int   `json:"pending_changes"`
+
+	// EventOverflows is how many times the kernel's event queue has overflowed
+	// since this daemon started — each one dropped events the watcher will
+	// never see. Additive on the wire: an older client ignores the field, so
+	// ProtocolVersion stays 1 (§8.3). Nothing is lost when it is nonzero — an
+	// overflow wakes the loop and the cycle's full scan finds the changes — so
+	// it is a note about the machine, not an error.
+	EventOverflows int `json:"event_overflows"`
 
 	// BackingOff means the last cycle failed and the loop is waiting before it
 	// retries; RetryAt is when that wait ends. While it is set the poll
@@ -145,6 +160,14 @@ func (l *liveState) noteWake(at time.Time) {
 	l.pendingChanges++
 }
 
+// noteOverflow records that the kernel dropped events. The wake that recovers
+// them is the backend's own, fired alongside this; the count is reporting only.
+func (l *liveState) noteOverflow() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.eventOverflows++
+}
+
 // setBackoff records that the loop is waiting out a failure until until.
 func (l *liveState) setBackoff(until time.Time) {
 	l.mu.Lock()
@@ -188,6 +211,7 @@ func (l *liveState) snapshot(now time.Time) LiveSnapshot {
 		DebounceMS:     l.debounce.Milliseconds(),
 		WakePending:    l.wakePending,
 		PendingChanges: l.pendingChanges,
+		EventOverflows: l.eventOverflows,
 		BackingOff:     l.backingOff,
 		CycleRunning:   l.cycleRunning,
 		CycleNumber:    l.cycleNumber,

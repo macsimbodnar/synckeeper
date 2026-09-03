@@ -271,3 +271,42 @@ func TestRunningCycleNamesItsStage(t *testing.T) {
 		}
 	}
 }
+
+// W7-L4 (S001-L4b): a kernel event-queue overflow dropped local changes, and
+// the daemon answered by rescanning at once. The dashboard says so once it has
+// happened — and stays silent otherwise, because a permanent "0" spends a line
+// of a height-budgeted frame saying nothing.
+func TestEventOverflowsAreShownOnlyOnceTheyHappen(t *testing.T) {
+	quiet := liveModel(func(s *Snapshot) {
+		s.Live = Live{Have: true, Backend: "fsevents"}
+	}).View()
+	if strings.Contains(quiet, "overflows") {
+		t.Errorf("a daemon that never overflowed spends a row on it:\n%s", firstLines(quiet, 12))
+	}
+
+	noisy := liveModel(func(s *Snapshot) {
+		s.Live = Live{Have: true, Backend: "fsnotify", EventOverflows: 3}
+	}).View()
+	if !strings.Contains(noisy, "overflows") || !strings.Contains(noisy, "3 since start — events dropped") {
+		t.Errorf("the overflow count is not reported:\n%s", firstLines(noisy, 12))
+	}
+
+	// Without live detail there is no count to report: the state DB never
+	// carries it, so the row must not appear from a stale snapshot.
+	dbOnly := liveModel(func(s *Snapshot) { s.Live = Live{EventOverflows: 9} }).View()
+	if strings.Contains(dbOnly, "overflows") {
+		t.Errorf("reported an overflow count with no daemon answering `stat`:\n%s", firstLines(dbOnly, 12))
+	}
+
+	// A storm must not break the column.
+	for _, w := range []int{40, 60, 80, 100} {
+		s := testSnapshot(testRef())
+		s.Live = Live{Have: true, Backend: "fsnotify", EventOverflows: 148_921}
+		m := New(Options{Snapshot: s, Width: w, Height: 24, Clock: testRef})
+		for _, line := range strings.Split(m.View(), "\n") {
+			if got := len([]rune(strings.TrimRight(line, " "))); got > w {
+				t.Errorf("at width %d a line of %d runes: %q", w, got, line)
+			}
+		}
+	}
+}

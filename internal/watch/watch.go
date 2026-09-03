@@ -36,6 +36,13 @@ type Watcher struct {
 	// reach the rebuild path without driving 500 cycles.
 	rebuildCadence int
 
+	// watchLimitHit records that a watch registration failed for want of kernel
+	// watch slots (ENOSPC), not descriptors — on Linux the per-user
+	// fs.inotify.max_user_watches budget. Written from the backend's event-pump
+	// goroutine as well as from the sync loop (refresh runs on both), so it is
+	// atomic; read once, when the failure latch trips, to name the cause.
+	watchLimitHit atomic.Bool
+
 	// ignore is the published ignore-glob snapshot (spec §8.3, R14). The
 	// sync loop owns the config, but the watcher backend's event pump reads
 	// the globs on every event from its own goroutine — so a `reload` must
@@ -243,6 +250,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 					break
 				}
 				fw, pollingOnly, latch = nfw, false, failureLatch{}
+				w.watchLimitHit.Store(false)
 				noteBackend(live, fw, pollingOnly)
 				slog.Info("file watching restored; back to event-driven sync")
 			case cycle%cadence == 0 && fw.needsRebuild():
@@ -254,6 +262,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 					// optimization, never a dependency, and the rebuild
 					// cadence retries creation.
 					fw, pollingOnly, latch = nil, true, failureLatch{}
+					w.watchLimitHit.Store(false)
 					noteBackend(live, fw, pollingOnly)
 					slog.Warn("watcher rebuild failed; relying on polling and retrying periodically",
 						"err", err, "poll_interval", w.Poll)
@@ -330,9 +339,28 @@ func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw *fsWatcher) 
 	}
 	(*fw).close()
 	*fw = nil
-	slog.Warn("file watching disabled after repeated failures (out of file descriptors?); "+
-		"relying on polling and retrying periodically", "poll_interval", w.Poll)
+	// The cause is named once, here — not per failed directory and not per
+	// cycle (S001-L4a). Where the kernel said ENOSPC the guess about
+	// descriptors is simply wrong: on Linux that is the per-user inotify watch
+	// budget, and it has a one-line fix the old message never pointed at.
+	if cause := w.latchCause(); cause != "" {
+		slog.Warn("file watching disabled after repeated failures; relying on polling "+
+			"and retrying periodically", "poll_interval", w.Poll, "cause", cause)
+	} else {
+		slog.Warn("file watching disabled after repeated failures (out of file descriptors?); "+
+			"relying on polling and retrying periodically", "poll_interval", w.Poll)
+	}
 	return true
+}
+
+// latchCause explains a latch that tripped on exhausted kernel watch slots, or
+// "" when nothing was observed to say so — in which case the descriptor guess
+// stands, which is what it is on kqueue and Windows.
+func (w *Watcher) latchCause() string {
+	if !w.watchLimitHit.Load() {
+		return ""
+	}
+	return watchLimitHint()
 }
 
 // startNotifier creates the file-watching backend over the whole tree and
@@ -340,14 +368,28 @@ func (w *Watcher) latchIfNeeded(latch *failureLatch, failed int, fw *fsWatcher) 
 // closes. It also returns how many directories could not be watched. The
 // backend is chosen behind the fsWatcher interface (W3), so the loop below is
 // unchanged when an FSEvents backend replaces fsnotify.
+//
+// The hooks handed over are the backend's only channel back to the loop:
+// wake-ups, dropped-event overflows, and exhausted kernel watch slots.
 func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer, live *liveState) (fsWatcher, int, error) {
-	wake := func() {
-		if live != nil {
-			live.noteWake(time.Now())
-		}
-		debounce.Reset(w.Debounce)
+	hooks := backendHooks{
+		wake: func() {
+			if live != nil {
+				live.noteWake(time.Now())
+			}
+			debounce.Reset(w.Debounce)
+		},
+		// An overflow dropped events, so it is reported and — through the wake
+		// above, which the backend fires alongside it — recovered by the next
+		// cycle's full scan rather than by the poll tick (S001-L4b).
+		overflow: func() {
+			if live != nil {
+				live.noteOverflow()
+			}
+		},
+		watchLimit: func() { w.watchLimitHit.Store(true) },
 	}
-	return newBackend(ctx, w.Eng.SyncDir, w.ignoreGlobs, wake)
+	return newBackend(ctx, w.Eng.SyncDir, w.ignoreGlobs, hooks)
 }
 
 // fdLimitOnce: the rlimit is process-wide; one raise is enough.
@@ -355,9 +397,11 @@ var fdLimitOnce sync.Once
 
 // watchFailureLatch: consecutive cycles with watch-registration failures
 // after which fsnotify is shut down in favor of pure polling. Failures here
-// mean fd pressure (the tree needs more descriptors than the process has);
-// keeping the watcher would starve the sync itself, and retrying every
-// cycle just spams the log. Polling alone is slower but fully correct.
+// mean the tree needs more of a bounded resource than is available — file
+// descriptors on kqueue, kernel watch slots (ENOSPC against the per-user
+// fs.inotify.max_user_watches) on inotify. Keeping the watcher would starve the
+// sync itself, and retrying every cycle just spams the log. Polling alone is
+// slower but fully correct.
 const watchFailureLatch = 3
 
 // failureLatch counts consecutive failing watch refreshes.

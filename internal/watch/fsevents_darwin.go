@@ -86,7 +86,11 @@ type fseventsBackend struct {
 	rootDev   uint64 // device id of root's volume at stream creation
 	rootDevOK bool   // whether rootDev was successfully captured
 	ignore    func() []string
-	wake      func()
+	// hooks: only wake is ever fired here. FSEvents has no per-directory
+	// registration to run out of watch slots on, and coalesces rather than
+	// overflowing a queue — its `refresh` failure is a volume remount, which
+	// the latch already handles as fd pressure does.
+	hooks backendHooks
 }
 
 // fseventsRootDev returns the device id of path's filesystem. A per-volume
@@ -118,14 +122,14 @@ var (
 // newFSEventsBackend starts a recursive FSEvents stream over root. ctx is
 // unused: FSEvents delivers on its own dispatch queue, and the sync loop always
 // calls close() (deferred at shutdown, and on each rebuild), which stops it.
-func newFSEventsBackend(_ context.Context, root string, ignore func() []string, wake func()) (fsWatcher, int, error) {
+func newFSEventsBackend(_ context.Context, root string, ignore func() []string, hooks backendHooks) (fsWatcher, int, error) {
 	// Resolve symlinks once (macOS /tmp and /var live under /private) and
 	// register the stream on the resolved path, so the callback's paths and
 	// b.root agree and the per-component ignore filter can relate them.
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
-	b := &fseventsBackend{root: root, ignore: ignore, wake: wake}
+	b := &fseventsBackend{root: root, ignore: ignore, hooks: hooks}
 	b.rootDev, b.rootDevOK = fseventsRootDev(root)
 
 	fseventsMu.Lock()
@@ -208,7 +212,7 @@ func goFSEventsCallback(info C.uintptr_t, n C.size_t, paths **C.char) {
 		changed[i] = C.GoString(cp)
 	}
 	if shouldWake(b.root, changed, b.ignore()) {
-		b.wake()
+		b.hooks.noteWake()
 	}
 }
 
