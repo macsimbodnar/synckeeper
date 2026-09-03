@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -73,13 +74,25 @@ func tightenDir(dir string) {
 	slog.Debug("tightened config dir permissions", "dir", dir, "was", fmt.Sprintf("%04o", info.Mode().Perm()))
 }
 
+// DefaultMachineName returns the sanitized OS hostname and whether it is
+// usable. ok is false when the hostname is unavailable, empty, or sanitizes to
+// nothing — the cases where the name would silently become "unknown_machine";
+// the caller (`init`, W7-L1) needs to tell those apart so it can prompt without
+// a misleading default and say what happened.
+func DefaultMachineName() (string, bool) {
+	h, err := os.Hostname()
+	if err != nil {
+		return unknownMachineName, false
+	}
+	if s := sanitizeName(h); s != "" {
+		return s, true
+	}
+	return unknownMachineName, false
+}
+
 // Default returns a Config populated with the documented defaults.
 func Default() Config {
-	machine, err := os.Hostname()
-	if err != nil || machine == "" {
-		machine = "unknown_machine"
-	}
-	machine = sanitizeMachineName(machine)
+	machine, _ := DefaultMachineName()
 	return Config{
 		Drive: DriveConfig{FolderName: "Synckeeper"},
 		Local: LocalConfig{SyncDir: "~/Synckeeper"},
@@ -131,6 +144,39 @@ func WriteDefault(dir string) (string, bool, error) {
 	return path, true, nil
 }
 
+// SetMachineName rewrites <dir>/config.toml with engine.machine_name set to
+// name, atomically and 0600 like the original. `init` prompts for the name
+// (W7-L1) and needs somewhere to put the answer; WriteDefault only ever writes
+// a file that does not exist yet.
+//
+// Re-encoding drops comments from a hand-edited config.toml. Accepted: the
+// file WriteDefault produces is machine-generated and has none, and on a
+// re-run the caller only writes when the user actually changed the name.
+func SetMachineName(dir string, name string) error {
+	cfg, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "config.toml")
+	cfg.Engine.MachineName = name
+	if err := cfg.validate(); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
+		return fmt.Errorf("encode %s: %w", path, err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
 // SyncDir returns the sync directory with ~ expanded to the user home,
 // as an absolute path.
 func (c Config) SyncDir() (string, error) {
@@ -164,15 +210,31 @@ func (c Config) validate() error {
 	if c.Engine.MachineName == "" {
 		return fmt.Errorf("engine.machine_name must not be empty")
 	}
-	if c.Engine.MachineName != sanitizeMachineName(c.Engine.MachineName) {
+	if c.Engine.MachineName != SanitizeMachineName(c.Engine.MachineName) {
 		return fmt.Errorf("engine.machine_name %q contains characters unsafe in filenames", c.Engine.MachineName)
 	}
 	return nil
 }
 
-// sanitizeMachineName keeps only characters safe in filenames on all
+// unknownMachineName is the name used when nothing better is available. It is
+// a real, valid name: conflict copies must always be attributable to *some*
+// machine, even a badly configured one.
+const unknownMachineName = "unknown_machine"
+
+// SanitizeMachineName keeps only characters safe in filenames on all
 // supported platforms; the machine name is embedded in conflict filenames.
-func sanitizeMachineName(name string) string {
+// A name that sanitizes to nothing becomes unknownMachineName. Idempotent, so
+// a sanitized name always passes validate().
+func SanitizeMachineName(name string) string {
+	if s := sanitizeName(name); s != "" {
+		return s
+	}
+	return unknownMachineName
+}
+
+// sanitizeName is SanitizeMachineName without the fallback, so callers that
+// must know "there was nothing usable here" can see the empty result.
+func sanitizeName(name string) string {
 	var b strings.Builder
 	for _, r := range name {
 		switch {
@@ -181,9 +243,6 @@ func sanitizeMachineName(name string) string {
 		case r == '.', r == ' ':
 			b.WriteRune('_')
 		}
-	}
-	if b.Len() == 0 {
-		return "unknown_machine"
 	}
 	return b.String()
 }

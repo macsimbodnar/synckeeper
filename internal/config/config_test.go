@@ -195,3 +195,108 @@ func TestDirCreatesPrivateConfigDir(t *testing.T) {
 		t.Errorf("fresh config dir is %04o, want 0700", perm)
 	}
 }
+
+// W7-L1: `init` prompts for the machine name and must be able to persist the
+// answer — WriteDefault only ever writes a file that does not exist yet. The
+// rewrite must not lose the rest of the config.
+func TestSetMachineNameRoundTripsAndPreservesFields(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `
+[drive]
+folder_name = "Stuff"
+
+[local]
+sync_dir = "~/Elsewhere"
+
+[engine]
+poll_interval_secs = 10
+mass_delete_threshold = 0.5
+machine_name = "old_box"
+quarantine_retention_days = 7
+ignore = ["*.bak"]
+`)
+	if err := SetMachineName(dir, "new_box"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Engine.MachineName != "new_box" {
+		t.Errorf("machine_name = %q, want new_box", cfg.Engine.MachineName)
+	}
+	if cfg.Drive.FolderName != "Stuff" {
+		t.Errorf("folder_name = %q, want Stuff (clobbered by the rewrite)", cfg.Drive.FolderName)
+	}
+	if cfg.Local.SyncDir != "~/Elsewhere" {
+		t.Errorf("sync_dir = %q, want ~/Elsewhere", cfg.Local.SyncDir)
+	}
+	if cfg.Engine.PollIntervalSecs != 10 || cfg.Engine.MassDeleteThreshold != 0.5 || cfg.Engine.QuarantineRetentionDays != 7 {
+		t.Errorf("engine numbers not preserved: %+v", cfg.Engine)
+	}
+	if len(cfg.Engine.Ignore) != 1 || cfg.Engine.Ignore[0] != "*.bak" {
+		t.Errorf("ignore = %v, want [*.bak]", cfg.Engine.Ignore)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(dir, "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("config.toml is %04o after the rewrite, want 0600", perm)
+		}
+	}
+}
+
+// An unusable name is refused rather than written: a broken config.toml would
+// then fail every later command.
+func TestSetMachineNameRejectsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "[engine]\nmachine_name = \"good\"\n")
+	if err := SetMachineName(dir, "a/b"); err == nil {
+		t.Fatal("want a validation error for an unsanitized name, got nil")
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Engine.MachineName != "good" {
+		t.Errorf("machine_name = %q, want the file left untouched at \"good\"", cfg.Engine.MachineName)
+	}
+}
+
+// DefaultMachineName must say whether the OS gave a usable name; Default()
+// keeps producing exactly what it did before.
+func TestDefaultMachineName(t *testing.T) {
+	name, ok := DefaultMachineName()
+	if name == "" {
+		t.Error("DefaultMachineName returned an empty name")
+	}
+	if name != SanitizeMachineName(name) {
+		t.Errorf("DefaultMachineName = %q, which config.validate() rejects", name)
+	}
+	if !ok && name != "unknown_machine" {
+		t.Errorf("not-ok name = %q, want unknown_machine", name)
+	}
+	if Default().Engine.MachineName != name {
+		t.Errorf("Default() machine name = %q, want %q", Default().Engine.MachineName, name)
+	}
+}
+
+func TestSanitizeMachineName(t *testing.T) {
+	cases := map[string]string{
+		"pop-os":          "pop-os",
+		"Max's MBP":       "Maxs_MBP",
+		"host.local":      "host_local",
+		"a/b\\c:d":        "abcd",
+		"":                "unknown_machine",
+		"///":             "unknown_machine",
+		"日本":              "unknown_machine",
+		"unknown_machine": "unknown_machine",
+	}
+	for in, want := range cases {
+		if got := SanitizeMachineName(in); got != want {
+			t.Errorf("SanitizeMachineName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

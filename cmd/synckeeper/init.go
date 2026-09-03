@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 
 func newInitCmd() *cobra.Command {
 	var installService, noService bool
+	var machineName string
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Set up (or re-sync) this machine against the Drive folder; safe to re-run",
@@ -55,6 +57,18 @@ func newInitCmd() *cobra.Command {
 			cfg, err := config.Load(configDir)
 			if err != nil {
 				return err
+			}
+
+			// Settle the machine name before anything can mint a conflict copy
+			// below: the name is baked into those filenames on every machine
+			// that sees them, so a later correction never reaches them (W7-L1).
+			interactive := isTerminal(os.Stdin) && isTerminal(os.Stdout)
+			name := resolveMachineName(os.Stdin, os.Stdout, cfg.Engine.MachineName, created, machineName, interactive)
+			if name != cfg.Engine.MachineName {
+				if err := config.SetMachineName(configDir, name); err != nil {
+					return err
+				}
+				cfg.Engine.MachineName = name
 			}
 
 			db, err := statedb.Open(statedb.Path(configDir))
@@ -126,7 +140,6 @@ func newInitCmd() *cobra.Command {
 			// service so syncing continues in the background. The lock is still
 			// held here; the just-started daemon acquires it once init exits
 			// (launchd/systemd restart it), so no init flow is needed.
-			interactive := isTerminal(os.Stdin) && isTerminal(os.Stdout)
 			offerServiceInstall(os.Stdin, os.Stdout, installService, noService, interactive, func() (string, error) {
 				bin, err := os.Executable()
 				if err != nil {
@@ -142,7 +155,47 @@ func newInitCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&installService, "service", false, "install the login service after init without prompting")
 	cmd.Flags().BoolVar(&noService, "no-service", false, "skip the login-service offer (wins over --service)")
+	cmd.Flags().StringVar(&machineName, "machine-name", "", "name for this machine in conflict-copy filenames; skips the prompt")
 	return cmd
+}
+
+// osMachineName is config.DefaultMachineName behind a seam, so the
+// no-usable-hostname branch below is reachable in a test on a machine that has
+// a perfectly good hostname.
+var osMachineName = config.DefaultMachineName
+
+// resolveMachineName decides the name this machine syncs under, which conflict
+// copies carry on every other machine (spec §4.2). Order: the --machine-name
+// flag, else a prompt whose default is the name already in config.toml on a
+// re-run and the sanitized OS hostname on a first run. Without a terminal the
+// default is taken silently, and with no default at all the documented
+// fallback is used and named, so the field is never invisible (W7-L1).
+//
+// Pure and injected — no terminal, no filesystem — so the order above is
+// testable; the caller persists the answer.
+func resolveMachineName(in io.Reader, out io.Writer, current string, created bool, flag string, interactive bool) string {
+	if flag != "" {
+		return config.SanitizeMachineName(flag)
+	}
+	def := ""
+	if !created {
+		// A re-run must not silently rename a machine back to its hostname:
+		// the existing name is already printed on conflict copies elsewhere.
+		def = current
+	} else if hostname, ok := osMachineName(); ok {
+		def = hostname
+	}
+	name := def
+	if interactive {
+		if answer := promptLine(in, out, "Machine name", def); answer != "" {
+			name = config.SanitizeMachineName(answer)
+		}
+	}
+	if name == "" {
+		name = config.SanitizeMachineName("")
+		fmt.Fprintf(out, "Could not determine a machine name; using %q. Set engine.machine_name in config.toml to change it.\n", name)
+	}
+	return name
 }
 
 // printMergeResult summarizes init's merge: what came down, what went up,

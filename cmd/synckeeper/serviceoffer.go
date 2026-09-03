@@ -74,3 +74,20 @@ func isTerminal(f *os.File) bool {
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
 }
+
+// promptLine asks a free-text question and reads one line, trimmed. def is the
+// answer for an empty line; an EOF or read error falls back to def too, so a
+// piped or closed stdin never blocks. An empty def is shown as no default at
+// all and an empty answer comes back empty — the caller decides what that means.
+func promptLine(in io.Reader, out io.Writer, question, def string) string {
+	if def == "" {
+		fmt.Fprint(out, question+": ")
+	} else {
+		fmt.Fprint(out, question+" ["+def+"]: ")
+	}
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	if s := strings.TrimSpace(line); s != "" {
+		return s
+	}
+	return def
+}

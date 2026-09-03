@@ -219,3 +219,107 @@ type brokenClient struct{ driveclient.Client }
 func (brokenClient) List(context.Context, string) ([]driveclient.File, error) {
 	return nil, errors.New("boom")
 }
+
+// W7-L1: the machine name is asked for on every `init`, because it is baked
+// into conflict-copy filenames on every other machine and was previously
+// invisible. Precedence: --machine-name > the existing config name on a re-run
+// > the sanitized OS hostname > the named "unknown_machine" fallback.
+func TestResolveMachineName(t *testing.T) {
+	tests := []struct {
+		name        string
+		current     string
+		created     bool
+		flag        string
+		interactive bool
+		input       string
+		hostname    string // "" means the OS has no usable name
+		want        string
+		wantOut     string // substring; "" means "nothing printed"
+	}{
+		{
+			name: "flag wins over the prompt", current: "old_box", created: false,
+			flag: "from_flag", interactive: true, input: "typed\n", hostname: "pop-os",
+			want: "from_flag",
+		},
+		{
+			name: "flag wins over the hostname without a terminal", created: true,
+			flag: "from_flag", hostname: "pop-os", want: "from_flag",
+		},
+		{
+			name: "flag is sanitized", created: true, flag: "my box/2", hostname: "pop-os",
+			want: "my_box2",
+		},
+		{
+			name: "first run defaults to the hostname", created: true,
+			interactive: true, input: "\n", hostname: "pop-os",
+			want: "pop-os", wantOut: "Machine name [pop-os]: ",
+		},
+		{
+			name:    "re-run defaults to the existing name, not the hostname",
+			current: "max_mbp", created: false, interactive: true, input: "\n", hostname: "pop-os",
+			want: "max_mbp", wantOut: "Machine name [max_mbp]: ",
+		},
+		{
+			name: "a typed answer is sanitized", current: "max_mbp", created: false,
+			interactive: true, input: "Max's Laptop\n", hostname: "pop-os",
+			want: "Maxs_Laptop", wantOut: "Machine name [max_mbp]: ",
+		},
+		{
+			name: "non-interactive takes the default without prompting", created: true,
+			interactive: false, input: "typed\n", hostname: "pop-os",
+			want: "pop-os", wantOut: "",
+		},
+		{
+			name: "no hostname, no terminal: named fallback", created: true,
+			interactive: false, hostname: "",
+			want: "unknown_machine", wantOut: "engine.machine_name",
+		},
+		{
+			name: "no hostname: the prompt shows no default", created: true,
+			interactive: true, input: "chosen\n", hostname: "",
+			want: "chosen", wantOut: "Machine name: ",
+		},
+		{
+			name: "no hostname, empty answer: named fallback", created: true,
+			interactive: true, input: "\n", hostname: "",
+			want: "unknown_machine", wantOut: "engine.machine_name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			saved := osMachineName
+			osMachineName = func() (string, bool) {
+				if tt.hostname == "" {
+					return "unknown_machine", false
+				}
+				return tt.hostname, true
+			}
+			t.Cleanup(func() { osMachineName = saved })
+
+			var out strings.Builder
+			got := resolveMachineName(strings.NewReader(tt.input), &out, tt.current, tt.created, tt.flag, tt.interactive)
+			if got != tt.want {
+				t.Errorf("resolveMachineName() = %q, want %q", got, tt.want)
+			}
+			if tt.wantOut == "" {
+				if out.String() != "" {
+					t.Errorf("want nothing printed, got %q", out.String())
+				}
+			} else if !strings.Contains(out.String(), tt.wantOut) {
+				t.Errorf("output %q missing %q", out.String(), tt.wantOut)
+			}
+		})
+	}
+}
+
+// The resolved name must always satisfy the config validator, whatever the
+// user types — it is written straight back into config.toml.
+func TestResolveMachineNameAlwaysValid(t *testing.T) {
+	for _, answer := range []string{"a/b\n", "///\n", "  \n", "..\n", "ok-1\n"} {
+		var out strings.Builder
+		got := resolveMachineName(strings.NewReader(answer), &out, "", true, "", true)
+		if got == "" || got != config.SanitizeMachineName(got) {
+			t.Errorf("answer %q resolved to %q, which config.validate() rejects", answer, got)
+		}
+	}
+}

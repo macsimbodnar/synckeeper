@@ -20,7 +20,9 @@ Needs a binary for your machine (README → `make build`) and your own `credenti
 synckeeper init
 ```
 
-Signs you in via the browser, creates the Drive folder (`Synckeeper`) and the local one (`~/Synckeeper`), merges both sides, then asks **`Start Synckeeper automatically at login? [Y/n]`**. `--service` / `--no-service` skip the prompt; scripts and pipes never get it.
+Asks **`Machine name [<hostname>]:`** — the label conflict copies carry on every machine (§4); empty accepts the default, `--machine-name N` skips the prompt. Then signs you in via the browser, creates the Drive folder (`Synckeeper`) and the local one (`~/Synckeeper`), merges both sides, and asks **`Start Synckeeper automatically at login? [Y/n]`**; `--service` / `--no-service` skip that prompt.
+
+Scripts and pipes are never prompted: the machine name takes its default, the service is not installed (a hint is printed). Re-running `init` defaults to the machine name already in `config.toml`, not the hostname. No usable hostname on a first run → `unknown_machine`, printed with the fix (`engine.machine_name`, §4).
 
 **`init` never deletes, and is safe to re-run.** Union merge: local-only → upload, remote-only → download, identical → paired up, different → conflict copy. At `init` only, a differing pair gives the plain name to the side edited more recently; the other becomes the conflict copy. Both survive everywhere.
 
@@ -46,7 +48,7 @@ Global flags: `-v` / `--verbose` (debug logging), `--version`, `-h` / `--help`.
 
 | Command | What it does |
 |---|---|
-| `init [--service\|--no-service]` | Set up or re-sync this machine: sign in, resolve the Drive folder, merge both sides (nothing deleted), offer the login service (§1). Safe to re-run — also the fix for a lost state DB (§7). Takes the instance lock: stop the service first (§7). |
+| `init [--machine-name N] [--service\|--no-service]` | Set up or re-sync this machine: ask the machine name (§1), sign in, resolve the Drive folder, merge both sides (nothing deleted), offer the login service (§1). `--machine-name` skips that prompt. Safe to re-run — also the fix for a lost state DB (§7). Takes the instance lock: stop the service first (§7). |
 | `login` | Fresh browser sign-in, replacing the stored token. No lock, no restart — a running daemon adopts the new token on its next sync. |
 | `sync [--dry-run] [--confirm-deletes]` | One-shot sync; delegated to the daemon and awaited if one runs. `--dry-run` prints the plan and changes nothing (needs the daemon stopped). `--confirm-deletes`: §6. |
 | `watch` | Run continuously in the foreground. |
@@ -92,7 +94,7 @@ sync_dir = "~/Synckeeper"        # the synced folder — restart
 [engine]
 poll_interval_secs = 45          # how often remote changes are polled — hot
 mass_delete_threshold = 0.25     # only where deletions are unrecoverable, see §6 — hot
-machine_name = "max_mbp"         # appears in conflict-copy names — restart
+machine_name = "max_mbp"         # conflict-copy names; asked by init — restart
 quarantine_retention_days = 30   # rescue copies kept this long — hot
 ignore = ["*.tmp", "~$*", ".DS_Store", "Thumbs.db", "*.swp", ".synckeeper*"]  # hot
 ```

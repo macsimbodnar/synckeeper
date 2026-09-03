@@ -89,3 +89,31 @@ func TestPromptYesNo(t *testing.T) {
 		}
 	}
 }
+
+// W7-L1: promptLine backs the machine-name question. Empty line or EOF takes
+// the default; a typed answer comes back trimmed; an empty default prints no
+// bracket and lets an empty answer through.
+func TestPromptLine(t *testing.T) {
+	tests := []struct {
+		input, def, want, wantPrompt string
+	}{
+		{"pop-os\n", "", "pop-os", "Machine name: "},
+		{"typed\n", "def", "typed", "Machine name [def]: "},
+		{"  spaced  \n", "def", "spaced", "Machine name [def]: "},
+		{"\n", "def", "def", "Machine name [def]: "}, // empty line → default
+		{"", "def", "def", "Machine name [def]: "},   // EOF / closed stdin → default
+		{"", "", "", "Machine name: "},               // EOF with no default → empty
+		{"\n", "", "", "Machine name: "},             // empty line, no default → empty
+		{"no newline", "def", "no newline", "Machine name [def]: "},
+	}
+	for _, tt := range tests {
+		var out strings.Builder
+		got := promptLine(strings.NewReader(tt.input), &out, "Machine name", tt.def)
+		if got != tt.want {
+			t.Errorf("promptLine(%q, def=%q) = %q, want %q", tt.input, tt.def, got, tt.want)
+		}
+		if out.String() != tt.wantPrompt {
+			t.Errorf("prompt = %q, want %q", out.String(), tt.wantPrompt)
+		}
+	}
+}
