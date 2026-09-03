@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/fsnotify/fsnotify"
 
@@ -30,10 +31,10 @@ type fsWatcher interface {
 	// pump stops.
 	close() error
 	// needsRebuild reports whether the sync loop should periodically tear the
-	// backend down and recreate it to bound a descriptor leak (W3.4). fsnotify's
-	// kqueue leaks an fd when a watched file is deleted faster than its event is
-	// processed, so it does; FSEvents holds no per-file descriptors and is left
-	// running.
+	// backend down and recreate it to bound a descriptor leak (W3.4). Only a
+	// backend that owns a descriptor per watched *file* has anything to leak:
+	// fsnotify's kqueue does (darwin/BSD), fsnotify's inotify does not (Linux),
+	// and FSEvents holds none at all and is left running.
 	needsRebuild() bool
 
 	// name identifies the backend for reporting ("fsnotify", "fsevents"). It is
@@ -76,9 +77,28 @@ func newFSNotifyBackend(ctx context.Context, root string, ignore func() []string
 
 func (b *fsnotifyBackend) close() error { return b.fw.Close() }
 
-// needsRebuild is true: kqueue can leak a descriptor per watched file, so the
-// loop periodically closes and recreates the watcher to release them.
-func (b *fsnotifyBackend) needsRebuild() bool { return true }
+// needsRebuild is per platform, not per backend name (S001-L3): "fsnotify" is a
+// different kernel API on each OS, and only some of them own a descriptor per
+// watched file.
+func (b *fsnotifyBackend) needsRebuild() bool { return rebuildNeededOn(runtime.GOOS) }
+
+// rebuildNeededOn answers it for one GOOS. darwin/BSD: fsnotify is kqueue, which
+// holds one fd per watched *file* and leaks it when the file is deleted faster
+// than its event is processed — closing the watcher is the only way to get those
+// fds back (W3.4). Linux: fsnotify is inotify, one fd per *instance* plus one
+// watch descriptor per *directory*, so nothing accumulates per file and the
+// teardown would buy nothing while costing a blind window each time.
+//
+// Windows (ReadDirectoryChangesW, one handle per directory) stays on the
+// conservative arm until the Windows port measures it (S006).
+func rebuildNeededOn(goos string) bool {
+	switch goos {
+	case "linux":
+		return false
+	default:
+		return true
+	}
+}
 
 func (b *fsnotifyBackend) name() string { return "fsnotify" }
 

@@ -211,6 +211,13 @@ func TestWatcherPollsRemote(t *testing.T) {
 	})
 }
 
+// alwaysRebuild pins a real backend's rebuild answer to the kqueue one, so a
+// test of the rebuild branch stays meaningful where the platform's fsnotify
+// does not need rebuilding (Linux/inotify, S001-L3).
+type alwaysRebuild struct{ fsWatcher }
+
+func (alwaysRebuild) needsRebuild() bool { return true }
+
 // R15 (A6, spec §8.1/§10): a watcher rebuild failure — fsnotify.NewWatcher
 // failing under fd pressure — must degrade the daemon to polling-only and
 // keep syncing, never exit Run (was: `return err` killed the daemon; the
@@ -219,6 +226,20 @@ func TestWatcherPollsRemote(t *testing.T) {
 func TestR15WatcherRebuildFailureDegradesToPolling(t *testing.T) {
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
+
+	// The branch under test is the periodic rebuild, which the real backend
+	// only takes where fsnotify is kqueue (S001-L3) — on Linux it reports
+	// needsRebuild=false and the loop would never reach the injected failure.
+	// Force the kqueue answer so the degrade-and-recover path is exercised on
+	// every platform; everything else stays the real fsnotify backend.
+	newBackend = func(ctx context.Context, root string, ignore func() []string, wake func()) (fsWatcher, int, error) {
+		b, failed, err := newFSNotifyBackend(ctx, root, ignore, wake)
+		if err != nil {
+			return nil, failed, err
+		}
+		return alwaysRebuild{b}, failed, nil
+	}
+	t.Cleanup(func() { newBackend = newFSNotifyBackend })
 
 	// Call 1 (startup) succeeds; call 2 (the rebuild) fails like fd
 	// exhaustion; call 3+ (the periodic retry) succeeds again.

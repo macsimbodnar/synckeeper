@@ -2,14 +2,16 @@ package watch
 
 // W3.4: the periodic watcher rebuild is a per-backend decision. A backend that
 // reports needsRebuild=false (FSEvents — no per-file descriptors) is left
-// running; one that reports true (fsnotify — kqueue fd leak) is torn down and
-// recreated at the cadence. The existing R15 rebuild test already covers the
+// running; one that reports true (fsnotify on kqueue — the per-file fd leak) is
+// torn down and recreated at the cadence. Which of the two fsnotify itself is
+// depends on the OS — see TestRebuildIsPerPlatform. The R15 rebuild test covers the
 // fsnotify rebuild path end to end; here a fake backend injected through the
 // newBackend seam isolates the loop's rebuild-vs-keep decision from any real OS
 // watcher.
 
 import (
 	"context"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -83,5 +85,52 @@ func TestRebuildIsPerBackend(t *testing.T) {
 				t.Errorf("backend never closed on shutdown")
 			}
 		})
+	}
+}
+
+// W7-L3 (S001): the rebuild answer is per platform, not per backend name. The
+// periodic teardown exists only to release kqueue's per-file descriptors, which
+// inotify never allocates — so the one `fsnotifyBackend` must answer differently
+// on darwin and on Linux. The table below executes on every platform; the second
+// half then pins the *live* backend to the row for the OS the suite runs on, so
+// the darwin answer is proved on darwin and the Linux answer on Linux.
+func TestRebuildIsPerPlatform(t *testing.T) {
+	table := []struct {
+		goos string
+		want bool
+		why  string
+	}{
+		{"darwin", true, "kqueue: one fd per watched file, leaked on delete"},
+		{"freebsd", true, "kqueue"},
+		{"openbsd", true, "kqueue"},
+		{"netbsd", true, "kqueue"},
+		{"linux", false, "inotify: one fd per instance, one watch descriptor per directory"},
+		{"windows", true, "ReadDirectoryChangesW: conservative until S006 measures it"},
+	}
+	for _, tc := range table {
+		if got := rebuildNeededOn(tc.goos); got != tc.want {
+			t.Errorf("rebuildNeededOn(%q) = %v, want %v (%s)", tc.goos, got, tc.want, tc.why)
+		}
+	}
+
+	want, found := false, false
+	for _, tc := range table {
+		if tc.goos == runtime.GOOS {
+			want, found = tc.want, true
+		}
+	}
+	if !found {
+		t.Fatalf("no expected rebuild answer recorded for GOOS=%s", runtime.GOOS)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b, _, err := newFSNotifyBackend(ctx, t.TempDir(), func() []string { return nil }, func() {})
+	if err != nil {
+		t.Fatalf("newFSNotifyBackend: %v", err)
+	}
+	defer b.close()
+	if got := b.needsRebuild(); got != want {
+		t.Errorf("live %s backend on %s reports needsRebuild=%v, want %v", b.name(), runtime.GOOS, got, want)
 	}
 }

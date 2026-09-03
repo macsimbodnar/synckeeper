@@ -59,12 +59,14 @@ func (w *Watcher) ignoreGlobs() []string {
 }
 
 // rebuildEvery: sync cycles between watcher rebuilds, for backends that report
-// needsRebuild (fsnotify). On kqueue a descriptor can leak when a watched file
-// is deleted faster than its event is processed; closing the watcher releases
-// every fd it holds, and the full-scan poll covers the swap window. ~500 cycles
-// ≈ 6 h at the default 45 s poll, minutes under event storms — either way the
-// leak stays bounded. A backend that holds no per-file descriptors (FSEvents)
-// reports needsRebuild=false and is left running instead (W3.4).
+// needsRebuild (fsnotify on kqueue). There a descriptor can leak when a watched
+// file is deleted faster than its event is processed; closing the watcher
+// releases every fd it holds, and the full-scan poll covers the swap window.
+// ~500 cycles ≈ 6 h at the default 45 s poll, minutes under event storms —
+// either way the leak stays bounded. A backend that holds no per-file
+// descriptors — FSEvents, and fsnotify on Linux, where it is inotify — reports
+// needsRebuild=false and is left running instead (W3.4, S001-L3). The cadence
+// still drives the polling-only recovery retry, which is not backend-specific.
 const rebuildEvery = 500
 
 // Run blocks until ctx is cancelled. Sync failures are logged and retried
