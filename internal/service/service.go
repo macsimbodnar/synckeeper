@@ -220,10 +220,13 @@ func launchdRunning(out string) bool {
 // we own rather than the user journal, which is readable by root and by
 // adm/systemd-journal members (the log records synced file names).
 // append: needs systemd >= 240.
+// No ordering directive: a user unit cannot order against a system target, so
+// After=network-online.target was a no-op — and the engine already retries
+// offline. Restart=on-failure + RestartSec=10 stay: a crash-looping daemon
+// (no credentials) reads as not-active, which `service install` reports.
 func systemdUnit(binPath, logPath string) string {
 	return fmt.Sprintf(`[Unit]
 Description=Synckeeper continuous sync
-After=network-online.target
 
 [Service]
 ExecStart=%s watch

@@ -60,7 +60,7 @@ Global flags: `-v` / `--verbose` (debug logging), `--version`, `-h` / `--help`.
 | `account` | Which OAuth client is active and its client **id**, token status, and the signed-in Google account (needs network; skipped offline). |
 | `info [--json]` | Static snapshot: version; every path with its permission mode (flagged when other users can read it); sync dir; Drive folder + id; machine name + id; OAuth client; token status; effective config; tracked / pending / quarantine counts. Read-only, offline, works before `init`. |
 | `doctor [--repair]` | Cross-check state DB vs disk vs Drive. Names any Drive folder holding **the same name twice** — Drive allows it, a filesystem doesn't, so only the first is synced; fix it in the Drive web UI. Takes the instance lock (§7). `--repair` only ever *adds*: rebuilds lost metadata, re-adopts matching files; never deletes, quarantines, or overwrites. |
-| `service install\|uninstall\|status` | Manage the login service running `watch` — **launchd** on macOS, a **systemd user unit** on Linux, Task Scheduler on Windows (§4). `install` checks the daemon actually started and names the likely cause if not. |
+| `service install\|uninstall\|status` | Manage the login service running `watch` — **launchd** on macOS, a **systemd user unit** on Linux, Task Scheduler on Windows (§4). `install` checks the daemon actually started and names the likely cause if not. On Linux it syncs **while you are logged in** and stops at logout (§9). |
 | `help [command]` | Usage help. |
 | `completion <bash\|zsh\|fish\|powershell>` | Shell completion script; `synckeeper completion <shell> --help` shows how to install it. |
 
@@ -206,6 +206,7 @@ All confirmed and reproduced; details in [adocs/decisions.md](adocs/decisions.md
 - **Full-Drive access scope.** Google offers no folder-scoped scope, and the narrower `drive.file` would silently stop syncing files added to the folder from *outside* Synckeeper (Drive web UI, other apps). So the stored token can reach your whole Drive; it's kept at `token.json` `0600` and only ever sent to Google over HTTPS. May be revisited.
 - **`sync_dir` is not checked against the config dir.** Point it at a folder containing the config dir (e.g. `sync_dir = "~"` on Linux) and `token.json` / `credentials.json` upload to Drive like any other file. Keep the two apart (§4).
 - **Mounting *only* the sync folder from a separate volume is unsupported.** An unmounted mountpoint looks exactly like a folder whose contents you deleted, and those deletions would propagate. (The folder itself disappearing is safe — a missing folder is recreated, never propagated.)
+- **Linux syncs only while you are logged in.** The systemd user unit dies with your last session; nothing syncs until you log in again. `service install` neither enables nor offers *linger*. Want it running logged-out: `loginctl enable-linger`. macOS launchd runs whenever the machine is on.
 - All files kept on disk; no online-only placeholders.
 - **macOS and Linux** are validated on hardware. **Windows is not** — it also has no recycle-bin backend yet, so local rescue copies there fall back to quarantine (§6).
 

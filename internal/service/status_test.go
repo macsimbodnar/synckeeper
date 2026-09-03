@@ -31,6 +31,10 @@ func TestParseSystemctl(t *testing.T) {
 		{"enabled\n", "active\n", true, true},
 		{"disabled\n", "inactive\n", false, false},
 		{"enabled\n", "failed\n", true, false},
+		// W7-L5: a unit crash-looping under Restart=on-failure reads
+		// "activating" (sub-state auto-restart) for the RestartSec hold-off
+		// and "failed" once the start limit trips — never running.
+		{"enabled\n", "activating\n", true, false},
 		{"", "", false, false},
 	}
 	for _, c := range cases {

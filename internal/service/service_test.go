@@ -34,6 +34,16 @@ func TestSystemdUnit(t *testing.T) {
 			t.Errorf("unit missing %q", want)
 		}
 	}
+	// W7-L5: a user unit cannot order against a system target, so the unit
+	// carries no After= at all; the restart pair must survive that removal.
+	for _, unwanted := range []string{"After=", "network-online.target"} {
+		if strings.Contains(u, unwanted) {
+			t.Errorf("unit should not contain %q", unwanted)
+		}
+	}
+	if !strings.Contains(u, "RestartSec=10") {
+		t.Error("unit missing RestartSec=10")
+	}
 	// The baked path must be absolute: systemd rejects a relative append: target.
 	for _, line := range strings.Split(u, "\n") {
 		for _, key := range []string{"StandardOutput=append:", "StandardError=append:"} {
