@@ -32,6 +32,16 @@ func TestRemoteMutationsPinTheirPlannedDriveState(t *testing.T) {
 			want: RemoteExpect{ParentID: "d1", Name: "a.txt", MD5: "m1"},
 		},
 		{
+			name: "UpdateRemote: both sides renamed, local edit (S023)",
+			in: Input{
+				Base:   map[string]BaseItem{"a.txt": baseFile("f1", "m1", 3)},
+				Local:  map[string]LocalItem{"d": locDir(), "d/b.txt": locFile("m2", 4)},
+				Remote: map[string]RemoteItem{"d": remIn(remDir("d1", 1), "root"), "d/b.txt": remIn(remFile("f1", "m1", 3, 2), "d1")},
+			},
+			typ: UpdateRemote, rel: "d/b.txt",
+			want: RemoteExpect{ParentID: "d1", Name: "b.txt", MD5: "m1"},
+		},
+		{
 			name: "TrashRemote: local file delete",
 			in: Input{
 				Base:   map[string]BaseItem{"a.txt": baseFile("f1", "m1", 3)},

@@ -436,17 +436,38 @@ func Plan(in Input) ([]Action, []Skip) {
 		if !locOK && remoteMoved && !pathNowIsBase {
 			if ln, ok := in.Local[pathNow]; ok && !ln.IsDir {
 				resolvedLocal[pathNow] = true
-				if ln.MD5 == ra.item.MD5 {
+				// A double rename is not by itself a conflict: the baseline
+				// still says which side changed the content (§4.2, S023). Each
+				// transfer below commits its row keyed on the file id, which
+				// re-homes it here and drops the old path, as the Record does.
+				localChanged := ln.MD5 != b.MD5
+				remoteContentChanged := ra.item.MD5 != b.DriveMD5
+				switch {
+				case ln.MD5 == ra.item.MD5:
 					// Same content on both sides: the move is done end to end,
 					// only the baseline path is stale. Record re-homes the row
 					// (UpsertItem is keyed on the file id, dropping the old path).
 					transfers = append(transfers, Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
 						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
 						LocalExists: true, LocalSize: ln.Size, LocalMtimeNS: ln.MtimeNS})
-				} else {
-					// Contents diverged at the shared destination: keep the
+				case localChanged && !remoteContentChanged:
+					// Drive only renamed it: a conflict here would give Drive's
+					// older bytes the name — after S011, a partial upload of
+					// this very file.
+					transfers = append(transfers, Action{Type: UpdateRemote, RelPath: pathNow, FileID: b.FileID,
+						RemoteWant: pinRemote(ra.path, ra.item)})
+				case !localChanged && remoteContentChanged:
+					// Only Drive's content changed; the local file is the
+					// baseline's, so the download replaces it — pinned to the
+					// scanned stat, so an edit landing meanwhile wins (§7).
+					transfers = append(transfers, Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
+						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
+						LocalExists: true, LocalSize: ln.Size, LocalMtimeNS: ln.MtimeNS})
+				default:
+					// Both sides changed the content, differently: keep the
 					// local bytes as a conflict copy, let the remote win the
-					// canonical path.
+					// canonical path. Also taken by a row whose two md5s
+					// disagree with neither side changed — no side to trust.
 					cp := conflicts.Path(pathNow, in.Machine, in.Now)
 					moves = append(moves, Action{Type: ConflictBackup, RelPath: pathNow, NewRelPath: cp})
 					transfers = append(transfers,

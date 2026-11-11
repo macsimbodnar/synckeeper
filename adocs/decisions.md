@@ -11,6 +11,7 @@ This file has two halves, because the project kept 1233 lines of decisions befor
 
 - DEC-001 2026-09-03 — adopt the moltke document workflow; docs/ becomes adocs/
 - DEC-002 2026-11-11 — audit bugs first, distribution deferred; fixes implemented by Opus subagents
+- DEC-003 2026-11-11 — a file renamed the same way on both sides and edited on one is an update, not a conflict
 
 ## DEC-001  2026-09-03  adopt the moltke document workflow; docs/ becomes adocs/
 Tags: process, docs, workflow
@@ -23,6 +24,11 @@ Why: the project already ran a document-driven workflow with the same shape; ado
 Tags: plan, process, audit, agents, distribution
 Decision: Max, in chat, after reading audit `2026-11-11_adversarial`: *"concentrati più sui bug ora. La parte di distribuzione la facciamo dopo se mi va, non sono nemmeno certo di farlo. Per la parte di implementazione usa agenti opus 5.5 non fable 5.2 per evitare eccessivo uso di token. Coordina i fix."* Three things follow. (1) **Order:** every audit bug step runs before anything else — S007, S008, S009, S010, S011, S013, S014, S002, S015, S016 — ahead of S001; this replaces the agent-proposed order of the audit commit. (2) **Distribution is deferred and may never happen:** S012 (LICENSE, F06) goes last in Open, and the OAuth-client question (unverified injected client / restricted-scope verification / `drive.file`) stays undecided and unplanned. (3) **Implementation is done by Opus 5.5 subagents, one per step, run sequentially; the main session coordinates** — briefs, reads each diff, runs the suite, the REVIEW fast check, plan moves and commits. This overrides the recorded AGENTS rule ("subagents only for reviews and read-only exploration") **for this fix campaign only**; the rule text in `AGENTS.md` is unchanged, and making it permanent is `/moltke:rules`. Agent-added bookkeeping, for Max to reverse: S001 stays in `plan_current/` waiting on Max's hardware gates (L8) and is not counted against PLAN's one-active-step limit while the fix steps run.
 Why: correctness outranks features and ports; and an implementing agent on the cheaper model, checked by the coordinator, costs fewer tokens than the coordinator writing every fix.
+
+## DEC-003  2026-11-11  a file renamed the same way on both sides and edited on one is an update, not a conflict
+Tags: reconcile, conflicts, renames, R25, tests
+Decision: Max, in chat, asked to choose between the new rule (A) and the recorded conflict (B): *"opzione A, tieni anche il caso speculare"*. In pass 1's coincident-move branch (R25, W4 2026-07-23: the baseline row's remote item sits at a new path and a local file is already there), the outcome now follows §4.2's ordinary notions instead of "any md5 difference conflicts": local content changed and Drive's still equals the baseline's Drive md5 → `UpdateRemote` on the same id; Drive's changed and the local file is unchanged → `Download` over it (the mirror case, added by the implementer beyond S023's text and kept by Max); both changed → the conflict as before; equal → `Record` as before. The acceptance test that pinned the old outcome, `TestR25CoincidentMoveDivergentContentConflicts`, is **re-targeted, not deleted**: its Drive content changes from the baseline's `X` to `Z`, so it still proves what its name says — divergent content conflicts — on a shape that is divergent under the new rule; testing.md row R25 says so. Rejected (B): keeping the conflict left S011's symptom alive in this shape — both machines rename a partially uploaded file the same way and the truncated copy wins the name.
+Why: with Drive's content unchanged since the baseline there is no second edit to protect; a conflict there demotes the only real edit to a conflict copy and lets stale bytes keep the name.
 
 ---
 

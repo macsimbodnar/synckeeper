@@ -28,11 +28,14 @@ func TestR25CoincidentMoveRecordsInPlace(t *testing.T) {
 func TestR25CoincidentMoveDivergentContentConflicts(t *testing.T) {
 	in := Input{
 		Base:   map[string]BaseItem{"old/p.txt": baseFile("F", "X", 3)},
-		Local:  map[string]LocalItem{"new/q.txt": locFile("Y", 3)}, // edited at the new path
-		Remote: map[string]RemoteItem{"new/q.txt": remFile("F", "X", 3, 2)},
+		Local:  map[string]LocalItem{"new/q.txt": locFile("Y", 3)},          // edited at the new path
+		Remote: map[string]RemoteItem{"new/q.txt": remFile("F", "Z", 3, 2)}, // and edited on Drive too
 	}
-	// Diverged at the shared destination: the local bytes are preserved as a
-	// conflict copy, the remote wins the canonical path. The conflict copy
+	// Diverged at the shared destination — both sides edited: the local bytes
+	// are preserved as a conflict copy, the remote wins the canonical path.
+	// Until S023 (DEC-003, 2026-11-11) this test had Drive still at the baseline
+	// content X, i.e. an edit on one side only; that shape is now an update (or
+	// a download), not a conflict — see doublerename_test.go. The conflict copy
 	// sorts before "new/q.txt" (space < dot), so the two transfers act on
 	// distinct paths and §4.5 is satisfied.
 	cp := "new/q (conflict test_box 2026-07-08_103000).txt"
