@@ -18,21 +18,21 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 3. S009  An interrupted mirror rebuild is read as mass deletion on Drive (audit F03, High)
 4. S010  Remote-write gate — an upload overwrites a concurrent remote edit (audit F04, High)
 5. S011  A file written during its upload lands truncated under its real name (audit F05, High)
-6. S001  Finish the Linux port (remaining L-items, then the hardware gates)
-7. S002  Fix the R25 crash-rename wedge — a refused plan repeats forever (audit F09)
-8. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
-9. S014  One unreadable file wedges every cycle (audit F08, Medium)
-10. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
-11. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
+6. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
+7. S014  One unreadable file wedges every cycle (audit F08, Medium)
+8. S002  Fix the R25 crash-rename wedge — a refused plan repeats forever (audit F09; shape decided with Max first)
+9. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
+10. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
+11. S001  Finish the Linux port (remaining L-items, then the hardware gates)
 12. S003  Daemon surfaces skips in `activity`
 13. S004  Stored error details keep the URL and lose the cause
 14. S005  "N local changes" counts wake-ups, not files
-15. S012  Add a LICENSE (audit F06, publication blocker — license is Max's pick)
-16. S006  Third platform: Windows
+15. S006  Third platform: Windows
+16. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
 
-S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). **Their positions are agent-proposed, 2026-11-11, on "correctness outranks features and ports": Critical and High ahead of S001, Mediums behind S002 — Max reorders with a one-line edit.** F09 also reports that S002's recorded premise (reproduces only at `SYNCKEEPER_FUZZ_CRASH=1`) is false, which is what placed it behind S001; its position is left as Max set it.
+**Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Three steps cannot simply be run: S002 needs its shape decided with Max, S015 needs a live-Drive measurement, S016 needs Linux hardware.
 
-The relative order S001 → S002 → S003 is Max's, recorded 2026-08-23 (W7 → W22 → W10). S004 and S005 were found 2026-09-03 and appended rather than inserted: both are cheap, self-contained, and independent of everything above them, so they are candidates to jump — that is Max's call, and a one-line edit here.
+Behind the audit steps the earlier order stands: S001 → S003 is Max's, recorded 2026-08-23 (W7 → W22 → W10; S002, then W22, now runs with the audit bugs). S004 and S005 were found 2026-09-03 and appended rather than inserted: both are cheap, self-contained, and independent, so they are candidates to jump — Max's call, a one-line edit here.
 
 ## Parked
 

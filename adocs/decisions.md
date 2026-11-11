@@ -10,6 +10,7 @@ This file has two halves, because the project kept 1233 lines of decisions befor
 ## Index
 
 - DEC-001 2026-09-03 — adopt the moltke document workflow; docs/ becomes adocs/
+- DEC-002 2026-11-11 — audit bugs first, distribution deferred; fixes implemented by Opus subagents
 
 ## DEC-001  2026-09-03  adopt the moltke document workflow; docs/ becomes adocs/
 Tags: process, docs, workflow
@@ -17,6 +18,11 @@ Decision: Max, interactively, through `/moltke:init`. The repository adopts the 
 Migration shape, chosen to lose nothing: every `docs/` file moved with `git mv` and kept verbatim. `spec.md` became `specs.md` and gained the Prime directive and INV-1..INV-9 above its existing text (§3 stays the binding wording; the INV list is the handle). `plan.md` became `plan_history.md` and a new `plan.md` holds only the description, the ordered Open list, Parked, and Done. Workstreams W1–W21 were **not** back-converted into `plan_done/` step files — adopting a repository with work already finished is a manual exercise the workflow does not require, and rewriting 21 closed workstreams risks losing facts for no gain. `plan_done/` therefore starts empty and holds everything from S001 onward.
 Kept, not replaced: `testing.md` (the acceptance ledger the TESTS rule points at), `worklog.md`, `ideas.md`, and `history/` all moved into `adocs/` unchanged. `CLAUDE.md` was not overwritten — it gained `@AGENTS.md` and had its doc-map paths repointed at `adocs/`.
 Why: the project already ran a document-driven workflow with the same shape; adopting moltke made the rules explicit and machine-readable to any agent, and the migration was the price of having one memory instead of two.
+
+## DEC-002  2026-11-11  audit bugs first, distribution deferred; fixes implemented by Opus subagents
+Tags: plan, process, audit, agents, distribution
+Decision: Max, in chat, after reading audit `2026-11-11_adversarial`: *"concentrati più sui bug ora. La parte di distribuzione la facciamo dopo se mi va, non sono nemmeno certo di farlo. Per la parte di implementazione usa agenti opus 5.5 non fable 5.2 per evitare eccessivo uso di token. Coordina i fix."* Three things follow. (1) **Order:** every audit bug step runs before anything else — S007, S008, S009, S010, S011, S013, S014, S002, S015, S016 — ahead of S001; this replaces the agent-proposed order of the audit commit. (2) **Distribution is deferred and may never happen:** S012 (LICENSE, F06) goes last in Open, and the OAuth-client question (unverified injected client / restricted-scope verification / `drive.file`) stays undecided and unplanned. (3) **Implementation is done by Opus 5.5 subagents, one per step, run sequentially; the main session coordinates** — briefs, reads each diff, runs the suite, the REVIEW fast check, plan moves and commits. This overrides the recorded AGENTS rule ("subagents only for reviews and read-only exploration") **for this fix campaign only**; the rule text in `AGENTS.md` is unchanged, and making it permanent is `/moltke:rules`. Agent-added bookkeeping, for Max to reverse: S001 stays in `plan_current/` waiting on Max's hardware gates (L8) and is not counted against PLAN's one-active-step limit while the fix steps run.
+Why: correctness outranks features and ports; and an implementing agent on the cheaper model, checked by the coordinator, costs fewer tokens than the coordinator writing every fix.
 
 ---
 

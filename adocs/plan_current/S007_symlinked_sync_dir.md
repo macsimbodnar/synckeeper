@@ -16,5 +16,5 @@ excludes:   Symlinks *inside* the tree (S013). Guarding an emptied-but-real sync
             a recorded owner decision (W18-D, W14); reopening it is Max's call.
 closes:     2026-11-11_adversarial-F01
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:
