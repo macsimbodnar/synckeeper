@@ -187,13 +187,21 @@ Publishing to production does **not** remove it. Synckeeper asks for Google's fu
 
 ## 8. Known bugs
 
-All confirmed and reproduced; details in [adocs/decisions.md](adocs/decisions.md). None of them loses data.
+Details in [adocs/decisions.md](adocs/decisions.md) and [adocs/audit/2026-11-11_adversarial.md](adocs/audit/2026-11-11_adversarial.md). Reproduced unless marked. **⚠ rows remove or overwrite files** — removals land in Drive's bin / the system bin, recoverable if noticed; nothing reports them as unrequested. The rest lose nothing.
 
 | Symptom | What to do |
 |---|---|
+| ⚠ **`sync_dir` is a symlink** → scanned as empty: the whole Drive folder is trashed, other machines bin their copy. No error. | Point `sync_dir` at the real path, never a symlink. |
+| ⚠ **`init` with the sync folder gone but `state.db` kept** (folder deleted, disk replaced, config dir restored from backup) → the whole Drive folder is trashed. | Delete `state.db` before `init` when the sync folder is missing. |
+| ⚠ **`init` re-run or `doctor --repair` interrupted** (Ctrl-C, dropped connection) → next cycle moves local files to the bin as if deleted on Drive. Drive untouched. | Re-run it to completion before starting the daemon or `sync`; if too late, restore from the bin. |
+| ⚠ **Two machines edit one file at once** → the later upload can replace the other edit on both machines, no conflict copy. Window: one machine's scan + transfer queue. | Other edit survives only in Drive's version history. |
+| ⚠ **A tracked folder replaced by a symlink** → its Drive folder is trashed, other machines remove it. | Don't symlink inside the sync folder. |
+| One unreadable file (`chmod 000`, root-owned) → nothing syncs, either direction; `status` shows a repeating `last error`. | Fix its permissions or move it out. |
+| "Synckeeper" folder binned in the Drive web UI → daemon doesn't notice, keeps syncing into the binned folder (Drive purges after ~30 days). Seen against the test fake; real Drive unconfirmed. | Restore the folder from Drive's bin. |
+| Linux, sync dir on a different filesystem whose mount root you can't write → a mass deletion from Drive is not held for confirmation; files go to the quarantine. From code reading, not reproduced. | Keep the sync dir on the home filesystem, or make `<mount>/.Trash-$uid` writable. |
 | After a crash, nothing syncs at all — `status` shows a repeating `last error`. Happens when the crash interrupted a file being created in a Drive folder that afterwards keeps refusing to be listed (for any reason other than having been deleted). | `doctor --repair` clears the journal. |
-| You edit a file while it's uploading → the interrupted upload keeps the name and your newer content lands as the conflict copy beside it. | Nothing lost; tidy it by hand. |
-| Repeated crashes around a folder rename wedge one machine: every cycle logs `plan violates §4.5: upload and download both act on …` and refuses. The refusal is the safety check working, so it repeats forever. | Edit or touch the named file — that changes the plan. Needs crashes mid-cycle repeatedly; unlikely in normal use. |
+| ⚠ A file still being written while it uploads (your edit, a large copy, a browser download — any write longer than the poll interval) → the truncated upload keeps the name on every machine; the complete file lands as the conflict copy beside it. | Nothing lost; rename the conflict copy over the truncated file. |
+| Crashes around a folder rename wedge one machine: every cycle logs `plan violates §4.5: upload and download both act on …` and refuses. The refusal is the safety check working, so it repeats forever. | Edit or touch the named file — that changes the plan. Needs crashes mid-cycle; how few is unmeasured. |
 | Two machines with folder names differing only in case or accents can mint a duplicate folder in Drive. | Avoid folder names that differ only in case/accents. |
 | Renaming a file to differ only in case (`a.txt` → `A.txt`) makes your *other* machines retry that rename every cycle. The file is safe on both sides; the name just doesn't update elsewhere. | Change the contents too — it then converges after a transient retry. |
 | **Under investigation.** A folder deleted in Drive can be *re-uploaded* by another machine instead of removed. Seen once, on a freshly adopted Linux machine; every upload failed and nothing reached Drive. Trigger not yet identified. | Check `synckeeper status` on every machine before deleting a large folder, and prefer deleting on a machine's filesystem over the Drive web UI. |

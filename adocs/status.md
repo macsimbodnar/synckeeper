@@ -4,11 +4,14 @@ Convenience view, rewritten by hand at the end of any turn that changed plan
 state. The filesystem beats this file: on disagreement, `plan_current/` wins
 and this file is rewritten to match it.
 
-Updated: 2026-09-03, by Claude (agent) at Max's direction
+Updated: 2026-11-11, by Claude (agent) at Max's direction
 
+- **Audit 2026-11-11 (adversarial, commit `1cea1b7`): 11 findings, all `planned`, none fixed.** Report: [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md). Two Critical (F01 symlinked `sync_dir`, F02 `init` with the folder gone and `state.db` kept — each empties the Drive folder and, through it, every other machine), three High correctness (F03, F04, F05), one publication blocker (F06, no LICENSE), five Medium. Steps S007–S016, plus F09 onto S002. Eight gated repro tests (`SYNCKEEPER_AUDIT_REPRO=1`, 8 of 8 red; skipped by default so `make test` stays green). MANUAL §8 carries every finding as a known bug. **Open list reordered, agent-proposed — Max confirms or reorders; no fix is authorized yet.**
+- **Deep-fuzz command in `CLAUDE.md` is red at HEAD** (seed 45, default crash probability) — F09 / S002.
 - **Last done:** S001's agent-reachable items — **L1, L2, L5, L3, L4**, one commit each (`afc7664`, `0d7d8f1`, `6ab38a6`, `e3bc8fe`, `229f497`), `make test` green at every one and the Linux arm checked with `GOOS=linux go build/vet`. L6 landed earlier (2026-07-25). Before that, the last closed work was W6 (2026-08-23) — see [plan_history.md](plan_history.md) and [testing.md](testing.md).
 - **In progress:** **S001 — finish the Linux port.** Still in `plan_current/`, no `done:` stamp. What landed: the `init` machine-name prompt (L1), the owner-only Linux daemon log (L2), the systemd unit corrections and the no-linger decision (L5), the per-platform `needsRebuild` (L3), and the inotify-limit diagnosis plus overflow-as-a-wake (L4). Rows W7-L1..L5 are in `testing.md`.
-- **Next: L8, and it needs Linux hardware — Max's to run.** On `pop-os`, against the production inotify backend:
+- **Next by plan order: S007** (then S008–S011), once Max confirms the order. S001's remainder is unchanged and independent:
+- **S001 next: L8, and it needs Linux hardware — Max's to run.** On `pop-os`, against the production inotify backend:
   - `go build ./... && go vet ./... && go test ./...` (was green 2026-07-25) plus `go test -race ./...`
   - `SYNCKEEPER_SCALE_FILES=50000 go test ./internal/watch/ -run 'TestScale|TestFSEventsScale' -timeout 20m` — expect ≈0 unwatchable directories
   - the 2 h soak (spec §16.9), **detached and with suspend inhibited**: `systemd-inhibit --what=sleep` — the Linux analogue of the idle-sleep lesson that killed three macOS soak attempts (decisions.md 2026-07-24)
