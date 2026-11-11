@@ -1052,3 +1052,12 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Honest scope, now in MANUAL §8 as one row:** the Drive folder is still trashed when the link is renamed, when its parent is renamed with nothing to pair, and — most likely in practice — when the swap is done in steps under a running daemon (a cycle in the gap reads a real deletion). Advice in MANUAL: `synckeeper pause`, swap, `synckeeper resume`. Planned as **S025**, Max decides whether and how.
 - Docs: MANUAL §6/§8/§9, specs §4.4/§5/§7, testing.md S013.1–S013.14. README checked, no change.
 - **S014 started** (`plan_todo/` → `plan_current/`), continuing the same subagent — it knows the hold machinery S014 reuses.
+
+### 2026-11-11 13:58 — S014 done (audit F08): one unreadable file is a held skip — two rounds
+- **Implemented by the same Opus subagent that did S013** (it knew the hold machinery), reviewed and committed by the coordinator (DEC-002). A permission error while hashing is a skip (`Unscanned` + `UnreadableFile`), held by S013's path hold; the rest of the tree syncs.
+- **Coordinator's addition before the review:** the daemon WARN extended from folders to files — without it the old repeating `last error` became silence.
+- **Fast check (REVIEW) reproduced a regression in round 1:** a tracked file renamed and then unreadable was trashed on Drive (before S014 the scan failed — a wedge, but safe). **Round 2:** a gone baseline file row whose (size, mtime ns) equals an untracked unreadable file's is held and later syncs as the rename; an identity match, not a name match. Also fixed, pre-existing W18-G: rows under an unreadable subdirectory follow a detected parent rename; held rows are not rename sources; W18-G ids join the keep-the-folder guard.
+- Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race`, `GOOS=linux go build/vet`, 60×150 fuzz (seeds 1, 28, 45 only) after each round. No second fast check on round 2: the added rule is narrow and its negative cases are tested.
+- **Residuals → S025** (now "held paths have no memory"), MANUAL §8 row. WARN texts softened to what is true. **S026** planned (`doctor` lists held paths as missing). S006 annotated (Windows sharing violations, macOS placeholders).
+- Docs: MANUAL §6/§8, specs §5, testing.md S014.1–S014.11. README checked, no change.
+- **S018 started** (`plan_todo/` → `plan_current/`), fresh subagent.

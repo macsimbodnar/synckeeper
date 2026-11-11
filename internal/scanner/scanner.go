@@ -6,6 +6,7 @@ package scanner
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -116,6 +117,20 @@ func Scan(root string, base map[string]reconcile.BaseItem, ignore []string) (map
 			item.MD5 = b.MD5 // unchanged by stat; trust the baseline hash
 		} else {
 			sum, err := hashFile(p)
+			if errors.Is(err, fs.ErrPermission) {
+				// One unreadable file used to fail the whole cycle, every
+				// cycle (audit 2026-11-11 F08) — the file arm of W18-G. It is
+				// on disk and unread, which is what Unscanned means: the
+				// engine holds its path on both sides (S013). Only a refused
+				// permission, on open or mid-read: a file that vanished or
+				// fails with an I/O error still fails the cycle, which replans
+				// next time. The stat rides along so the planner can recognise
+				// a tracked file renamed before it became unreadable.
+				skips = append(skips, reconcile.Skip{RelPath: rel, Unscanned: true, UnreadableFile: true,
+					Size: item.Size, MtimeNS: item.MtimeNS,
+					Reason: "file could not be read; left untouched on both sides: " + err.Error()})
+				return nil
+			}
 			if err != nil {
 				return fmt.Errorf("hash %s: %w", rel, err)
 			}

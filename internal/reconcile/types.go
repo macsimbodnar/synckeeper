@@ -82,7 +82,8 @@ type Input struct {
 
 	// UnscannedLocal is the same idea for a path that IS on disk but that the
 	// scan does not read (S013, audit 2026-11-11 F07): a symlink, never
-	// followed, or a non-regular file — mapped to the scan's reason. Unlike an
+	// followed, a non-regular file, or a file it may not open (S014) —
+	// mapped to the scan's reason. Unlike an
 	// unreadable directory the path itself is absent from Local, so the hold
 	// is by path: nothing at or under it is decided or written. Baseline rows
 	// there are reported, never deleted, moved, downloaded or forgotten; no
@@ -93,6 +94,18 @@ type Input struct {
 	// meet it in the ordinary three-way table. Matched under CaseFold /
 	// NormFold, at the exact path only: a link elsewhere holds nothing else.
 	UnscannedLocal map[string]string
+
+	// UnreadableDirs are the local paths of directories the scan could not
+	// read (W18-G). Rows whose local location — after a detected local folder
+	// rename — lies under one are held, which UnreadableLocal, keyed by the
+	// baseline path, cannot see (S014).
+	UnreadableDirs map[string]bool
+
+	// UnreadableFiles maps each local file the scan could not open to the
+	// stat it saw (S014). A baseline file row gone locally whose size AND
+	// mtime equal those of an unreadable file with no baseline row of its own
+	// is that file renamed, and is held rather than read as deleted.
+	UnreadableFiles map[string]LocalItem
 }
 
 // Type enumerates plan actions.
@@ -205,10 +218,22 @@ type Skip struct {
 	Unreadable bool
 
 	// Unscanned marks a local path that exists but the scan did not read: a
-	// symlink or a non-regular file (S013). The engine expands it into
+	// symlink or a non-regular file (S013), or a file it may not open (S014).
+	// The engine expands it into
 	// Input.UnscannedLocal, so a tracked item replaced by one is held, not
 	// read as deleted.
 	Unscanned bool
+
+	// UnreadableFile marks, beside Unscanned, a file the scan may not open
+	// (S014). It only selects the daemon's warning; it is deliberately not
+	// Unreadable, whose expansion holds rows under a directory.
+	UnreadableFile bool
+
+	// Size and MtimeNS are, for an UnreadableFile, the stat the scan saw
+	// (lstat works where open does not). The planner matches them against
+	// baseline rows gone locally: that file renamed, then unreadable (S014).
+	Size    int64
+	MtimeNS int64
 
 	// Duplicate marks the one skip kind that means Drive itself holds two
 	// items under one name in one folder (it allows that; a filesystem does

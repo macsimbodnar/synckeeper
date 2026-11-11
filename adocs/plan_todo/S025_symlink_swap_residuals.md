@@ -11,6 +11,12 @@ goal:       The routes S013 left open, by which a synced folder swapped for a sy
             reads a real deletion — from code reading, and probably the commonest real
             route. The hold is by path and has no memory: nothing records that a row was
             held, so a held path that changes name is indistinguishable from a deletion.
+            Same root cause, same step — the unreadable arm S014 left open (both
+            reproduced in the planner): (5) a file renamed AND edited or touched before
+            it became unreadable, so S014's (size, mtime) identity match no longer
+            holds its old row (`TestAnUnreadableFileWithAnotherStatHoldsNothingElse`);
+            (6) a folder renamed while holding an unreadable subfolder and nothing
+            readable beside it (`TestAnUnreadableSubdirUnderAnUndetectedRenameIsADeletion`).
             A "same name anywhere" guess was built and removed in S013 (it turned moves
             into copies in any tree with unrelated links). Part of audit
             2026-11-11_adversarial F07.

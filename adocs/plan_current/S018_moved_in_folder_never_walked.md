@@ -28,5 +28,5 @@ excludes:   Retrying network-level errors in `internal/driveclient/retry.go`. Th
             it; if it is real it is in scope, if not say so in the stamp.
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

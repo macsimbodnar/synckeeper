@@ -44,8 +44,8 @@ type Engine struct {
 	caseFold *bool // lazily probed once; sync cycles are serialized
 	normFold *bool
 
-	// warnedUnreadable remembers which directories this daemon has already
-	// complained about (W18-G). The condition is standing, not per-cycle, and
+	// warnedUnreadable remembers which directories and files (S014) this
+	// daemon has already complained about (W18-G). The condition is standing, not per-cycle, and
 	// a poll every 45 s would otherwise bury the log in identical lines; it
 	// re-arms when the directory becomes readable again, so a recurrence is
 	// still reported.
@@ -212,9 +212,14 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		// (W18-G) — held harmless, never read as a local deletion.
 		UnreadableLocal: expandUnreadable(baseItems, localSkips),
 		// Paths on disk the scan did not read — symlinks, non-regular files
-		// (S013) — held by path, never read as a local deletion.
+		// (S013), files it may not open (S014) — held by path, never read as
+		// a local deletion.
 		UnscannedLocal: unscannedPaths(localSkips),
-		PreferNewer:    opts.PreferNewer,
+		// What the scan saw of unreadable files and directories (S014): the
+		// planner holds rows a local rename moved under or onto them.
+		UnreadableDirs:  unreadableDirs(localSkips),
+		UnreadableFiles: unreadableFiles(localSkips),
+		PreferNewer:     opts.PreferNewer,
 	})
 	e.warnUnreadable(localSkips)
 	res := &Result{Plan: plan}
@@ -406,22 +411,57 @@ func unscannedPaths(skips []reconcile.Skip) map[string]string {
 	return out
 }
 
-// warnUnreadable says once, per directory, that a folder cannot be read and
-// is therefore not syncing. Skips reach the one-shot `sync` output but the
+// unreadableDirs is the set of local directories the scan could not read.
+func unreadableDirs(skips []reconcile.Skip) map[string]bool {
+	var out map[string]bool
+	for _, s := range skips {
+		if s.Unreadable {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[s.RelPath] = true
+		}
+	}
+	return out
+}
+
+// unreadableFiles maps each file the scan could not open to the stat it saw.
+func unreadableFiles(skips []reconcile.Skip) map[string]reconcile.LocalItem {
+	var out map[string]reconcile.LocalItem
+	for _, s := range skips {
+		if s.UnreadableFile {
+			if out == nil {
+				out = map[string]reconcile.LocalItem{}
+			}
+			out[s.RelPath] = reconcile.LocalItem{Size: s.Size, MtimeNS: s.MtimeNS}
+		}
+	}
+	return out
+}
+
+// warnUnreadable says once, per directory or file (S014), that it cannot be
+// read and is therefore not syncing. Skips reach the one-shot `sync` output but the
 // daemon has no channel for them yet (plan.md W10), so without this a folder
 // would quietly stop syncing on a daemon-first install — the fix for a wedge
 // must not be an invisible standstill.
 func (e *Engine) warnUnreadable(skips []reconcile.Skip) {
 	seen := map[string]bool{}
 	for _, s := range skips {
-		if !s.Unreadable {
+		if !s.Unreadable && !s.UnreadableFile {
 			continue
 		}
 		seen[s.RelPath] = true
-		if !e.warnedUnreadable[s.RelPath] {
-			slog.Warn("a folder in the sync dir cannot be read; its contents are not syncing and nothing under it will be deleted on either side — fix its permissions",
-				"rel_path", s.RelPath, "reason", s.Reason)
+		if e.warnedUnreadable[s.RelPath] {
+			continue
 		}
+		if s.UnreadableFile {
+			// S014: same rule for a file, in words true for a file.
+			slog.Warn("a file in the sync dir cannot be read; it is not syncing — fix its permissions",
+				"rel_path", s.RelPath, "reason", s.Reason)
+			continue
+		}
+		slog.Warn("a folder in the sync dir cannot be read; its contents are not syncing — fix its permissions",
+			"rel_path", s.RelPath, "reason", s.Reason)
 	}
 	e.warnedUnreadable = seen // re-arms once the directory is readable again
 }

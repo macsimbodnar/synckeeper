@@ -338,7 +338,6 @@ func TestAudit20261111_F07_FolderReplacedBySymlinkIsTrashedOnDrive(t *testing.T)
 // open to hash still fails scanner.Scan, and with it the whole cycle — the
 // same wedge, one level down.
 func TestAudit20261111_F08_OneUnreadableFileWedgesEveryCycle(t *testing.T) {
-	auditRepro(t)
 	if os.Geteuid() == 0 {
 		t.Skip("root reads everything")
 	}

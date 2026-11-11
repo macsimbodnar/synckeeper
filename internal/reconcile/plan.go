@@ -278,27 +278,74 @@ func Plan(in Input) ([]Action, []Skip) {
 	// Drive now puts it. Decided once, before the passes: pass 4 must know
 	// which Drive items and local paths belong to held rows before it removes
 	// a folder that contains them.
+	//
+	// S014 adds two unreadable cases the baseline path cannot show. A row
+	// whose local location, after a detected local folder rename, lies under
+	// an unreadable directory (W18-G's UnreadableLocal matches baseline paths
+	// only). And a file row gone locally whose size AND mtime equal those of
+	// an unreadable file with no baseline row of its own: `mv` keeps both, so
+	// that is the file renamed and then unreadable — identity by stat, never
+	// by name. A coincidental match (same size, same mtime to the
+	// nanosecond) holds that one row until the unreadable file is readable,
+	// gone, or changed.
 	held := map[string]string{} // base path → skip reason
 	heldIDs := map[string]bool{}
 	var heldLocal []string // where held rows' files sit locally, sorted
-	if !hold.none() {
+	for id := range in.UnreadableLocal {
+		heldIDs[id] = true // W18-G rows: their Drive items are protected too
+	}
+	if !hold.none() || len(in.UnreadableDirs) > 0 {
 		localAt := func(q string) string {
 			if to, ok := localMoveDstOf[q]; ok {
 				return to
 			}
 			return rewriteLD(q)
 		}
+		lockedDir := map[string]string{} // folded unreadable dir → dir
+		for d := range in.UnreadableDirs {
+			lockedDir[foldPath(d)] = d
+		}
+		underLocked := func(q string) (string, bool) {
+			for k := path.Dir(foldPath(q)); k != "." && k != ""; k = path.Dir(k) {
+				if d, ok := lockedDir[k]; ok {
+					return d, true
+				}
+			}
+			return "", false
+		}
+		type stat struct{ size, mtime int64 }
+		renamedTo := map[stat]string{} // unreadable untracked file, by stat
+		for _, u := range slices.Sorted(maps.Keys(in.UnreadableFiles)) {
+			if _, tracked := in.Base[invLD(u)]; tracked {
+				continue // has its own row: held at its path, renames nothing
+			}
+			st := in.UnreadableFiles[u]
+			if _, dup := renamedTo[stat{st.Size, st.MtimeNS}]; !dup {
+				renamedTo[stat{st.Size, st.MtimeNS}] = u
+			}
+		}
 		for p, b := range in.Base {
 			remNow := ""
 			if ra, ok := remByID[b.FileID]; ok {
 				remNow = rewriteLD(ra.path)
 			}
+			why := ""
 			if u, ok := hold.atAny(p, localAt(p), rewrite(p), remNow); ok {
-				held[p] = hold.reason(p, u)
-				heldIDs[b.FileID] = true
-				if _, ok := in.Local[localAt(p)]; ok {
-					heldLocal = append(heldLocal, localAt(p))
+				why = hold.reason(p, u)
+			} else if d, ok := underLocked(localAt(p)); ok && localAt(p) != p {
+				why = "inside " + d + ", a directory that could not be read (after a local folder rename); leaving both sides alone"
+			} else if _, here := in.Local[localAt(p)]; !here && !b.IsDir && b.Size >= 0 {
+				if u, ok := renamedTo[stat{b.Size, b.MtimeNS}]; ok {
+					why = "gone here, but " + u + " has its exact size and mtime and could not be read — likely this file renamed; leaving both sides alone"
 				}
+			}
+			if why == "" {
+				continue
+			}
+			held[p] = why
+			heldIDs[b.FileID] = true
+			if _, ok := in.Local[localAt(p)]; ok {
+				heldLocal = append(heldLocal, localAt(p))
 			}
 		}
 		slices.Sort(heldLocal)
@@ -1008,6 +1055,9 @@ func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[str
 		}
 		if _, held := hold.at(p); held {
 			continue // S013: not gone, only unread — a copy elsewhere is not its new home
+		}
+		if in.UnreadableLocal[b.FileID] {
+			continue // W18-G, same reason: under a folder the scan could not read
 		}
 		ra, remOK := remByID[b.FileID]
 		if !remOK || ra.item.MD5 != b.DriveMD5 || ra.path != rewriteRD(p) {
