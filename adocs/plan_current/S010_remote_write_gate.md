@@ -18,5 +18,5 @@ excludes:   Closing the window to zero — a `Get` before the mutation narrows i
             window's size on real Drive is unmeasured (fake only).
 closes:     2026-11-11_adversarial-F04
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -412,5 +414,113 @@ func TestS008InitDanglingSymlinkSyncDirNamesTheLink(t *testing.T) {
 	}
 	if got := in.driveFiles(); got != 1 {
 		t.Errorf("%d of 1 files left on Drive", got)
+	}
+}
+
+// killAtList fails the at-th List call, as a dropped connection, Ctrl-C or a
+// kill part-way through a walk would. When crash is set it first takes the
+// DB's crash image: the committed state a process killed at that instant
+// leaves on disk, independent of anything the error path does afterwards.
+type killAtList struct {
+	driveclient.Client
+	at, calls int
+	crash     func()
+}
+
+func (k *killAtList) List(ctx context.Context, parentID string) ([]driveclient.File, error) {
+	k.calls++
+	if k.calls == k.at {
+		if k.crash != nil {
+			k.crash()
+		}
+		return nil, errors.New("dial tcp: connection reset by peer")
+	}
+	return k.Client.List(ctx, parentID)
+}
+
+// crashImage copies the committed state of the DB at src to dst.
+func crashImage(t *testing.T, src, dst string) {
+	t.Helper()
+	h, err := sql.Open("sqlite", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	if _, err := h.Exec(`vacuum into ?`, dst); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// S009 (audit 2026-11-11 F03): a re-run `init` whose mirror rebuild stops at
+// ANY List call — by error, or by process death — leaves a state the next
+// cycle reads as what it is: nothing changed on either side. Before the fix,
+// every baseline row the partial mirror had not refilled was planned as
+// deleted on Drive.
+func TestS009InitRebuildInterruptedAtEveryList(t *testing.T) {
+	ctx := context.Background()
+	setup := func(t *testing.T) (*auditInstall, string) {
+		t.Helper()
+		in := newAuditInstall(t)
+		path := filepath.Join(in.base, "state.db")
+		db, err := statedb.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		in.db = db
+		in.write("top.txt", "top")
+		for _, d := range []string{"docs", "photos", "work/deep"} {
+			for _, f := range []string{"1.txt", "2.txt", "3.txt"} {
+				in.write(d+"/"+f, d+f)
+			}
+		}
+		in.runInit()
+		if res, err := in.engine(in.rootID()).Sync(ctx, engine.Options{}); err != nil || len(res.Plan) != 0 {
+			t.Fatalf("setup: second cycle should be idle: err=%v plan=%d", err, len(res.Plan))
+		}
+		return in, path
+	}
+
+	// Every List a clean re-run makes is a point to interrupt at.
+	clean, _ := setup(t)
+	counter := &killAtList{Client: clean.fake}
+	if _, err := initialize(ctx, counter, clean.db, clean.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if counter.calls < 5 {
+		t.Fatalf("a clean re-run made %d List calls; the tree has 5 folders to walk", counter.calls)
+	}
+
+	for at := 1; at <= counter.calls; at++ {
+		for _, crash := range []bool{false, true} {
+			t.Run(fmt.Sprintf("list%d/crash=%v", at, crash), func(t *testing.T) {
+				in, path := setup(t)
+				k := &killAtList{Client: in.fake, at: at}
+				image := filepath.Join(in.base, "crash.db")
+				if crash {
+					k.crash = func() { crashImage(t, path, image) }
+				}
+				if _, err := initialize(ctx, k, in.db, in.cfg); err == nil {
+					t.Fatal("the interrupted init should have reported its error")
+				}
+				if crash {
+					db, err := statedb.Open(image)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { db.Close() })
+					in.db = db
+				}
+
+				res, err := in.engine(in.rootID()).Sync(ctx, engine.Options{})
+				if err != nil {
+					t.Fatalf("cycle after the interrupted rebuild: %v", err)
+				}
+				if n := auditCount(res.Plan, reconcile.QuarantineLocal); n > 0 || len(res.Plan) != 0 || in.localFiles() != 10 || in.driveFiles() != 10 {
+					t.Fatalf("nothing changed, yet the next cycle planned %d actions (%d local deletes); %d of 10 local files left, %d of 10 on Drive",
+						len(res.Plan), n, in.localFiles(), in.driveFiles())
+				}
+			})
+		}
 	}
 }

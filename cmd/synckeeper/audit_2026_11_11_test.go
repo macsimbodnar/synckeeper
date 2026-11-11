@@ -200,7 +200,6 @@ func (f *flakyList) List(ctx context.Context, parentID string) ([]driveclient.Fi
 // baseline row missing from the half-built mirror is "deleted on Drive", and
 // the local copies are moved to the system bin. Drive still holds every file.
 func TestAudit20261111_F03_InterruptedMirrorRebuildBinsLocalFiles(t *testing.T) {
-	auditRepro(t)
 	in := newAuditInstall(t)
 	ctx := context.Background()
 

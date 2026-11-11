@@ -6,6 +6,7 @@ package remotedelta
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -49,12 +50,25 @@ func Refresh(ctx context.Context, client driveclient.Client, db *statedb.DB, roo
 // used by `doctor --repair` when the DB (or its metadata) was lost. The
 // token is fetched before walking so changes racing the walk are replayed
 // by the next consume (idempotent upserts).
+//
+// The walk spans many List calls and cannot be one transaction, so the
+// marker is retracted in the same commit that empties the cache and set again
+// only once the walk and token are stored. A rebuild that stops part-way —
+// error, Ctrl-C, kill — then leaves no marker beside the partial mirror, and
+// the next Refresh walks again instead of reading every row not yet refilled
+// as deleted on Drive (audit 2026-11-11 F03, invariant 6).
 func ForceFullWalk(ctx context.Context, client driveclient.Client, db *statedb.DB, rootID string) error {
 	token, err := client.StartPageToken(ctx)
 	if err != nil {
 		return err
 	}
-	if err := db.ClearRemoteNodes(); err != nil {
+	err = db.Tx(func(tx *sql.Tx) error {
+		if err := statedb.ClearRemoteNodesTx(tx); err != nil {
+			return err
+		}
+		return statedb.DeleteMetaTx(tx, MetaWalkDone)
+	})
+	if err != nil {
 		return err
 	}
 	if err := fullWalk(ctx, client, db, rootID); err != nil {

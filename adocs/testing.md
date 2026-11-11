@@ -390,6 +390,16 @@ Tests drive `initMerge` (`cmd/synckeeper/init.go`), the code `init`'s RunE runs 
 | S008.3 | First `init` on a joining machine (fresh `state.db`, sync dir and its parents absent) → folder created by the engine, Drive content downloaded into it | passing (2026-11-11, darwin) — `TestS008InitFirstRunCreatesSyncDir` (`cmd/synckeeper/init_test.go`). Green before the fix too: guards the removal of `init`'s own `MkdirAll` |
 | S008.4 | `init` over a dangling-symlink `sync_dir` → error names link and target (`is a symlink to <target>`); target not created, link kept, Drive untouched | passing (2026-11-11, darwin) — `TestS008InitDanglingSymlinkSyncDirNamesTheLink` (`cmd/synckeeper/init_test.go`). Red first: `create sync dir: mkdir …: file exists` |
 
+## S009 — an interrupted mirror rebuild deletes nothing (audit 2026-11-11 F03)
+
+Fault at every `List` of the rebuild, two ways: an error (dropped connection), and a **crash image** — the DB's committed state copied (`vacuum into`) at that `List`, the state a killed process leaves, independent of the error path. Tree: 10 files, 5 folders → 5 `List` calls, 10 cases per caller.
+
+| ID | Case | Status |
+|---|---|---|
+| S009.1 | **F03 end to end**: 10 files synced, idle; `init` re-run, connection drops at the 2nd `List`; next cycle → **zero** `quarantine_local`, 10 of 10 on disk | passing (2026-11-11, darwin) — `TestAudit20261111_F03_InterruptedMirrorRebuildBinsLocalFiles` (`cmd/synckeeper/audit_2026_11_11_test.go`), `SYNCKEEPER_AUDIT_REPRO` gate removed. Red first: `9 local delete actions planned, 1 of 10 local files left on disk, 10 of 10 still on Drive` |
+| S009.2 | `init` re-run interrupted at **every** `List`, by error and by crash image → next cycle plans **no action at all**; 10 of 10 on disk and on Drive | passing (2026-11-11, darwin) — `TestS009InitRebuildInterruptedAtEveryList` (`cmd/synckeeper/init_test.go`). Red (marker retraction removed): all 10 cases, e.g. `planned 7 actions (7 local deletes); 1 of 10 local files left` |
+| S009.3 | `doctor --repair` interrupted at **every** `List`, by error and by crash image → next cycle plans no action; local tree intact | passing (2026-11-11, darwin) — `TestS009RepairRebuildInterruptedAtEveryList` (`internal/doctor/interruptedrebuild_test.go`). Red (marker retraction removed): all 10 cases, e.g. `planned 4 actions (4 local deletes); 0 of 10 local files left` |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

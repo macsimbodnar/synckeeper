@@ -86,11 +86,11 @@ func DeleteRemoteNodesTx(tx *sql.Tx, fileIDs []string) error {
 	return nil
 }
 
-// ClearRemoteNodes empties the cache (before a forced full walk).
-func (d *DB) ClearRemoteNodes() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	_, err := d.sql.Exec(`delete from remote_nodes`)
+// ClearRemoteNodesTx empties the cache inside tx (before a forced full walk),
+// so the walk-done marker can be retracted in the same commit: a mirror that
+// is empty or part-refilled must never sit beside a marker vouching for it.
+func ClearRemoteNodesTx(tx *sql.Tx) error {
+	_, err := tx.Exec(`delete from remote_nodes`)
 	return err
 }
 

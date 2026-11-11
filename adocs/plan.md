@@ -13,11 +13,11 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S009  An interrupted mirror rebuild is read as mass deletion on Drive (audit F03, High)
-2. S010  Remote-write gate — an upload overwrites a concurrent remote edit (audit F04, High)
-3. S011  A file written during its upload lands truncated under its real name (audit F05, High)
-4. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
-5. S014  One unreadable file wedges every cycle (audit F08, Medium)
+1. S010  Remote-write gate — an upload overwrites a concurrent remote edit (audit F04, High)
+2. S011  A file written during its upload lands truncated under its real name (audit F05, High)
+3. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
+4. S014  One unreadable file wedges every cycle (audit F08, Medium)
+5. S018  A moved-in Drive folder whose walk fails once is never walked again — contents never download (S009 fast check, reproduced)
 6. S017  Baseline is not bound to the sync folder — a retargeted link or edited `sync_dir` reads as deletion (S007 fast check; design decided with Max first)
 7. S002  Fix the R25 crash-rename wedge — a refused plan repeats forever (audit F09; shape decided with Max first)
 8. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
@@ -44,6 +44,7 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
+- S009  An interrupted mirror rebuild is read as mass deletion on Drive — fixed 2026-11-11 (audit F03)
 - S008  `init` with the sync folder gone and `state.db` kept — fixed 2026-11-11 (audit F02)
 - S007  A symlinked `sync_dir` is scanned as empty — fixed 2026-11-11 (audit F01)
 

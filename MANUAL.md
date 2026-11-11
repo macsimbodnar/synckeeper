@@ -182,6 +182,7 @@ Publishing to production does **not** remove it. Synckeeper asks for Google's fu
 | `init` says "another instance is running" | The service daemon holds the instance lock: `synckeeper service uninstall` (or Ctrl-C a `watch`), run `init`, reinstall. `login` doesn't need this. |
 | Service crash-loops with "no OAuth client credentials" | Place your `credentials.json` (§5). If you've never signed in: `service uninstall` → `init` → reinstall. |
 | State DB lost or corrupted | Stop the daemon, run `synckeeper init`. It can't delete: the rebuilt baseline starts empty, so every file is an upload or a download. |
+| `init` or `doctor --repair` interrupted (Ctrl-C, dropped connection) | Re-run it. On an existing install the daemon / `sync` also recover alone: a half-rebuilt Drive listing is re-read in full before the next cycle plans anything. A machine's *first* `init` (or one after a lost `state.db`) interrupted → every cycle fails with ``no changes page token stored; run `synckeeper init` `` until `init` completes. Nothing is deleted either way. |
 | Need a deleted file back | Your system bin (a folder comes back whole), then Drive's bin, then `<config dir>/quarantine/<date>/` on a machine with no system bin. Bins expire — Drive's after ~30 days, yours possibly too. |
 | Deleted a lot, want to see what went | `synckeeper activity` — a large deletion leaves a `deleted` line with the count and destination. |
 | Something looks off | `synckeeper status -v`, then stop the daemon and run `synckeeper doctor`. |
@@ -193,7 +194,7 @@ Details in [adocs/decisions.md](adocs/decisions.md) and [adocs/audit/2026-11-11_
 | Symptom | What to do |
 |---|---|
 | ⚠ **`sync_dir` starts naming a different folder while `state.db` is kept** (config edited, its symlink retargeted, or a pre-created empty folder) → the new folder is compared to the old baseline; an empty one reads as everything deleted and the Drive folder is trashed. From code reading, not reproduced. | Changing the sync folder: stop the daemon, delete `state.db`, run `init`. |
-| ⚠ **`init` re-run or `doctor --repair` interrupted** (Ctrl-C, dropped connection) → next cycle moves local files to the bin as if deleted on Drive. Drive untouched. | Re-run it to completion before starting the daemon or `sync`; if too late, restore from the bin. |
+| A folder moved or restored into the Drive folder (Drive web UI, another app) while a connection drops mid-listing → the folder appears locally but its contents never download; no error, later cycles look idle. Drive untouched. | `doctor --repair` re-reads Drive in full. |
 | ⚠ **Two machines edit one file at once** → the later upload can replace the other edit on both machines, no conflict copy. Window: one machine's scan + transfer queue. | Other edit survives only in Drive's version history. |
 | ⚠ **A tracked folder replaced by a symlink** → its Drive folder is trashed, other machines remove it. | Don't symlink inside the sync folder. |
 | One unreadable file (`chmod 000`, root-owned) → nothing syncs, either direction; `status` shows a repeating `last error`. | Fix its permissions or move it out. |

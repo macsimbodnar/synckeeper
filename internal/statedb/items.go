@@ -139,6 +139,7 @@ func SetMetaTx(tx *sql.Tx, key, value string) error {
 // remotedelta.MetaWalkDone when the root identity changes, so that a crash
 // between committing the new root and rebuilding the mirror still leaves a
 // state the next cycle repairs: the missing marker forces a fresh full walk.
+// remotedelta.ForceFullWalk retracts it the same way, with the cleared mirror.
 func DeleteMetaTx(tx *sql.Tx, key string) error {
 	_, err := tx.Exec(`delete from meta where key = ?`, key)
 	return err

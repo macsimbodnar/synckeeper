@@ -1013,3 +1013,11 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **User-visible:** `init`'s sync-dir errors now come from the guard (`merge: sync dir X is a symlink to Y…`, `…is not a directory`), printed after "Initialized." / "Merging…".
 - Docs: MANUAL §6 + §8 (F02 row gone; **S017's class added as a known bug**, marked as from code reading — owed since S007's commit), specs §11/§16.3, testing.md S008.1–S008.4. README checked, no change.
 - **S009 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-11 11:54 — S009 done (audit F03): an interrupted mirror rebuild re-walks instead of binning
+- **Implemented by one Opus subagent, reviewed and committed by the coordinator** (DEC-002). `ForceFullWalk` now empties `remote_nodes` and retracts `initial_walk_done` in one transaction; the marker returns only after the walk and token are stored. Same mechanism `root.commitIdentity` already used. No schema change, no new meta key.
+- **Red-first:** F03's gate removed, seen failing, then green; two every-`List` fault tests (error + crash image), 20 cases. Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race` on the touched packages, `GOOS=linux go build/vet` — green/clean.
+- **Fast check (REVIEW):** no deletion hole at any interruption point or token state. Doc overclaim fixed in this commit: with no stored token (first `init` / lost DB, interrupted) cycles fail with "no changes page token stored" until `init` completes — MANUAL §7 and specs §12 now say so. Test gaps recorded in the step's stamp.
+- **New defect, pre-existing, reproduced by the fast check → S018:** a folder moved/restored into the Drive tree whose content walk fails once is never walked again; contents never download, silently. MANUAL §8 row added (cure today: `doctor --repair`, by reading `ForceFullWalk`).
+- Docs: MANUAL §7/§8, specs §12, testing.md S009.1–S009.3. README checked, no change.
+- **S010 started** (`plan_todo/` → `plan_current/`).
