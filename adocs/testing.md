@@ -545,6 +545,12 @@ Layout: sync dir writable, on a filesystem whose mount root this user cannot wri
 | S016.5 | Residual, not fixed: `status`, `doctor`, `info` and the daemon's start line still describe the home trash (`trash.Available()`/`Describe()`) — MANUAL §8 row | open — S028 |
 | S016.6 | Residual, accepted for now (fast check, 2026-11-12): the probe asks for the sync dir's volume, `moveToTrash` for each item's parent — a filesystem mounted *inside* the sync dir with an unusable bin is not seen by the guard; its files still fall back to the quarantine per item. MANUAL §8 row | open — by code reading, no test |
 
+## S027 — `go test -race` green on Linux: the dashboard's cancellation takes bubbletea's graceful path
+
+| ID | Case | Status |
+|---|---|---|
+| S027.1 | A cancelled context ends `tui.Run` with no error and no data race: cancellation reaches bubbletea as `p.Quit()` (graceful `shutdown`, which waits for the input read loop before closing the reader), not through `tea.WithContext` (kill path: reader closed under the epoll `wait()` still calling `File.Fd()`) | passing (2026-11-12, linux) — `TestRunTreatsCancellationAsCleanExit` (`internal/tui/run_test.go`, unchanged) under `-race`. Red first, before the fix, separate processes: 4/8, 1/8 and 18/30 runs DATA RACE (23/46). After: 20/20 runs of the test and 40/40 of the whole package clean; `make test` green; `GOOS=darwin go vet`, `GOOS=windows go build` clean |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

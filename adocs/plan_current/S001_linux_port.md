@@ -13,6 +13,6 @@ excludes:   Windows (S006); the log-rotation question L2b, which is flagged but 
             yet a decision; any change to the settled conventional watching model
             (one inotify watch per directory, no watch budget, no config knob).
 closes:
-paused_by:  S027 (L8 `-race` gate red on Linux, 2026-11-12)
+paused_by:
 author:     Claude (agent), started 2026-09-03 at Max's direction
 done:

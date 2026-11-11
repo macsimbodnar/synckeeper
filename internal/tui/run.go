@@ -17,7 +17,7 @@ func Run(ctx context.Context, o Options) error {
 	if o.Refresh != nil {
 		o.Snapshot = o.Refresh() // draw a full first frame, not an empty one
 	}
-	opts := []tea.ProgramOption{tea.WithContext(ctx)}
+	var opts []tea.ProgramOption
 	if o.Output != nil {
 		// A test drives the real program through a buffer; the alternate screen
 		// would fill it with cursor gymnastics instead of the frame.
@@ -29,6 +29,20 @@ func Run(ctx context.Context, o Options) error {
 		opts = append(opts, tea.WithInput(o.Input))
 	}
 	p := tea.NewProgram(New(o), opts...)
+	// Cancellation arrives as Quit, not through tea.WithContext: a cancelled
+	// context sends bubbletea (v1.3.10) down its kill path, which closes the
+	// input reader without waiting for the goroutine still reading it — a
+	// data race on Linux's epoll reader (S027). Quit takes the graceful path,
+	// which waits for that goroutine first (bubbletea bounds the wait at 500 ms).
+	runDone := make(chan struct{})
+	defer close(runDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			p.Quit() // returns once Run has ended, if it ends first
+		case <-runDone:
+		}
+	}()
 	_, err := p.Run()
 	if err != nil && ctx.Err() != nil {
 		return nil // Ctrl-C / SIGTERM is a clean exit, not a failure
