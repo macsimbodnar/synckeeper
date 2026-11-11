@@ -24,12 +24,11 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 9. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
 10. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
 11. S001  Finish the Linux port (remaining L-items, then the hardware gates)
-12. S026  `doctor` lists held paths (symlink, unreadable) as missing locally (S014 fast check; report-only)
-13. S003  Daemon surfaces skips in `activity`
-14. S004  Stored error details keep the URL and lose the cause
-15. S005  "N local changes" counts wake-ups, not files
-16. S006  Third platform: Windows
-17. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
+12. S003  Daemon surfaces skips in `activity`
+13. S004  Stored error details keep the URL and lose the cause
+14. S005  "N local changes" counts wake-ups, not files
+15. S006  Third platform: Windows
+16. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
 
 **Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Nine steps cannot simply be run: S017, S020, S024, S022, S025 and S002 need their shape decided or confirmed with Max, S019 needs live Drive and a pick, S015 needs a live-Drive measurement, S016 needs Linux hardware.
 
@@ -46,10 +45,10 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
+- S026  `doctor` lists held paths as held, not missing — fixed 2026-11-11
 - S021  A folder trash checks the folder's contents on Drive first — fixed 2026-11-11 (left open by S010; live verification S019)
 - S018  A folder entering the Drive tree is linked only after its walk completes — fixed 2026-11-11
 - S014  One unreadable file is a held skip, not a wedge — fixed 2026-11-11 (audit F08; residual routes S025)
 - S013  A tracked path replaced by a symlink is held, not read as deleted — fixed 2026-11-11 (audit F07; residual routes S025)
-- S011  A file written during its upload — partial upload recorded as our own, re-uploaded next cycle — fixed 2026-11-11 (audit F05; crash window open, S024)
 
 Earlier work: [plan_history.md](plan_history.md), W1–W21.

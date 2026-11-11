@@ -1085,3 +1085,9 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Stopped per the TESTS rule and Max's standing instruction:** `TestR25CoincidentMoveDivergentContentConflicts` (W4, 2026-07-23; testing.md R25) pins the old conflict for S023's exact shape and is red. The implementer did not touch it; neither did the coordinator. The whole diff is in `git stash` so the tree stays green; `paused_by:` set on the step. Question put to Max in chat.
 - **New finding, pre-existing, from the implementer (scratch two-machine test at `c70a5ae`; not re-run by the coordinator):** the §4.5 wedge is reachable with no crash — both machines rename a folder the same way, one edits a file inside. S002's step file and MANUAL §8's row corrected in this commit; the row's old workaround does not hold for that route and says so.
 - **S026 started** (`plan_todo/` → `plan_current/`) — the last step an agent can run alone.
+
+### 2026-11-11 15:12 — Max decides S023: option A, mirror case kept; S026 done
+> "opzione A, tieni anche il caso speculare"
+- **S023's question answered:** the new rule stands (both sides rename to one name, one side edited → update or download, not a conflict); the recorded R25 test and testing.md row get rewritten to it; the implementer's mirror case (only Drive edited → download) stays. To be recorded as DEC-003 in S023's commit.
+- **S026 done** — implemented by one Opus subagent, reviewed and committed by the coordinator (DEC-002). `doctor` lists held paths (symlink / non-regular, unreadable file, rows under an unreadable directory) in their own section with the scan's reason; `--repair` untouched. Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race`, `GOOS=linux go build/vet`. Fast check (REVIEW) on a small report-only diff, run on a cheaper model: nothing found.
+- Docs: MANUAL §3/§6, testing.md S026.1–S026.6. README and specs §12 checked, no change.

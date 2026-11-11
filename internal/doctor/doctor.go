@@ -59,6 +59,12 @@ type Report struct {
 	// UI, which is a person's decision, and `--repair` only ever adds (§12).
 	DriveDuplicates []string
 
+	// HeldLocal are rows whose local path is on disk but was not read by the
+	// scan: a symlink or non-regular file, a file or directory it may not
+	// read. A sync holds them on both sides instead of reading "absent" as a
+	// local deletion, so they are not MissingLocal (S026).
+	HeldLocal []HeldPath
+
 	// SystemBin is where a deletion arriving from Drive lands on this
 	// machine, and whether that destination is the user's own bin (W14-M2).
 	// Reported, never a fault: a platform without a bin is not broken, it is
@@ -67,9 +73,15 @@ type Report struct {
 	SystemBinOK bool
 }
 
+// HeldPath is a row whose local path is on disk but was not read by the scan.
+type HeldPath struct {
+	RelPath string
+	Reason  string
+}
+
 // Healthy reports whether nothing needs attention.
 func (r *Report) Healthy() bool {
-	return len(r.MissingLocal) == 0 && len(r.LocalModified) == 0 &&
+	return len(r.MissingLocal) == 0 && len(r.HeldLocal) == 0 && len(r.LocalModified) == 0 &&
 		len(r.UntrackedLocal) == 0 && len(r.RemoteOnly) == 0 &&
 		len(r.RemoteMissing) == 0 && r.StaleOps == 0 && len(r.OrphanTemps) == 0 &&
 		len(r.DriveDuplicates) == 0 && len(r.Notes) == 0
@@ -108,16 +120,21 @@ func (d *Doctor) Check(ctx context.Context) (*Report, error) {
 			MtimeNS: it.LocalMtimeNS, DriveMD5: it.DriveMD5, DriveVersion: it.DriveVersion,
 		}
 	}
-	local, _, err := scanner.Scan(d.SyncDir, base, d.Cfg.Engine.Ignore)
+	local, localSkips, err := scanner.Scan(d.SyncDir, base, d.Cfg.Engine.Ignore)
 	if err != nil {
 		return nil, fmt.Errorf("scan local dir: %w", err)
 	}
+	heldWhy := heldBy(localSkips, names.CaseInsensitiveFS(d.SyncDir), names.NormalizationInsensitiveFS(d.SyncDir))
 
 	// DB vs disk.
 	for p, b := range base {
 		loc, ok := local[p]
 		switch {
 		case !ok:
+			if why, held := heldWhy(p); held {
+				rep.HeldLocal = append(rep.HeldLocal, HeldPath{RelPath: p, Reason: why})
+				continue
+			}
 			rep.MissingLocal = append(rep.MissingLocal, p)
 		case !b.IsDir && !loc.IsDir && loc.MD5 != b.MD5:
 			rep.LocalModified = append(rep.LocalModified, p)
@@ -268,6 +285,55 @@ func (d *Doctor) Repair(ctx context.Context) (*Report, error) {
 	return rep, nil
 }
 
+// heldBy returns, for a row absent from the local snapshot, why the engine
+// holds it rather than reading it as deleted. It mirrors what a sync feeds the
+// planner — engine.unscannedPaths matched like reconcile's fold-aware path
+// holds (at or above the row), and engine.expandUnreadable's exact prefix —
+// which are unexported there. Holds the planner infers from its move detection
+// (a row renamed into an unreadable directory, or matched by stat to an
+// unreadable file) are not reproduced: doctor detects no moves.
+func heldBy(skips []reconcile.Skip, caseFold, normFold bool) func(string) (string, bool) {
+	fold := func(p string) string {
+		segs := strings.Split(p, "/")
+		for i, s := range segs {
+			segs[i] = names.FoldKey(s, caseFold, normFold)
+		}
+		return strings.Join(segs, "/")
+	}
+	unscanned := map[string]reconcile.Skip{} // folded path → its skip
+	var unreadable []reconcile.Skip
+	for _, s := range skips {
+		switch {
+		case s.Unscanned:
+			unscanned[fold(s.RelPath)] = s
+		case s.Unreadable:
+			unreadable = append(unreadable, s)
+		}
+	}
+	return func(p string) (string, bool) {
+		fp := fold(p)
+		for q := fp; len(unscanned) > 0; {
+			if s, ok := unscanned[q]; ok {
+				if q == fp {
+					return s.Reason, true
+				}
+				return "under " + s.RelPath + " (" + s.Reason + ")", true
+			}
+			i := strings.LastIndexByte(q, '/')
+			if i < 0 {
+				break
+			}
+			q = q[:i]
+		}
+		for _, s := range unreadable {
+			if strings.HasPrefix(p, s.RelPath+"/") {
+				return "under " + s.RelPath + " (" + s.Reason + ")", true
+			}
+		}
+		return "", false
+	}
+}
+
 func findOrphanTemps(syncDir string) []string {
 	// A walk does not descend a symlinked root (S007). Unresolvable means the
 	// dir is missing; the walk below then finds nothing, as before.
@@ -293,4 +359,5 @@ func sortAll(r *Report) {
 	for _, s := range [][]string{r.MissingLocal, r.LocalModified, r.UntrackedLocal, r.RemoteOnly, r.RemoteMissing, r.OrphanTemps, r.DriveDuplicates} {
 		sort.Strings(s)
 	}
+	sort.Slice(r.HeldLocal, func(i, j int) bool { return r.HeldLocal[i].RelPath < r.HeldLocal[j].RelPath })
 }

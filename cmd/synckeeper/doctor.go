@@ -67,6 +67,14 @@ func printReport(r *doctor.Report, repaired bool) {
 		}
 	}
 	section("rows whose local file is missing", r.MissingLocal)
+	if len(r.HeldLocal) > 0 {
+		held := make([]string, len(r.HeldLocal))
+		for i, h := range r.HeldLocal {
+			held[i] = h.RelPath + ": " + h.Reason
+		}
+		section("rows on disk but not read by the scan (held)", held)
+		fmt.Println("  sync leaves these alone on both sides until each is a readable plain file or folder again.")
+	}
 	section("local files modified since last sync", r.LocalModified)
 	section("local files not yet tracked", r.UntrackedLocal)
 	section("remote files not yet tracked", r.RemoteOnly)

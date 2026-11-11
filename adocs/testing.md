@@ -504,6 +504,19 @@ Engine cases inject B's write at A's first `List` or `Trash` of the folder (`gat
 | S021.13 | Round 2, walk order: the folder being trashed is listed last, after every subfolder listing returned, and the `Trash` follows it; serially, subfolders strictly deepest first | passing (2026-11-11, darwin) — `TestFolderTrashGateListsTheFolderItselfLast`, `TestFolderTrashGateSerialWalkIsDeepestFirst` (`internal/executor/foldertrashwalk_test.go`). Red first: `calls end with [list fake-7 list fake-9 trash fake-2], want [list fake-2, trash fake-2]` |
 | S021.14 | Round 2, concurrency (`transferWorkers` = 4): 316-folder tree → exactly 316 `List` calls, more than one in flight, unchanged tree trashed; a failed subfolder `List` → that error (not drift), folder itself never listed, no trash; drift at every level (deep edit, deep add, mid-tree subfolder, top-level add, deep folder trashed, deep file moved inside) and no drift → same verdict serial (1 worker) and concurrent; the S021.9 drift table run at both | passing (2026-11-11, darwin, also under `-race`) — `TestFolderTrashGateListsConcurrentlyOncePerFolder`, `TestFolderTrashGateListingErrorStopsTheWalk`, `TestFolderTrashGateConcurrentMatchesSerialOnABigTree` (`internal/executor/foldertrashwalk_test.go`), `TestFolderTrashGateRefusesDriftInside` (`workers=1`, `workers=4`). Red first: `at most 1 List call in flight: the walk is serial`; `after a failed listing the walk went on to "list fake-2"` |
 
+## S026 — `doctor` reports a held path as held, not missing
+
+Each world: synced, then `gone.txt` deleted (control: must stay in `MissingLocal`), then tracked paths made held. `--repair` checked on the same world: adopts only `keep.txt` (+ `locked` in d), row count unchanged, held rows byte-identical, held Drive items alive, no `Trash` call, `gone.txt` not re-created, report unchanged.
+
+| ID | Case | Status |
+|---|---|---|
+| S026.1 | (a) tracked file → symlink: `a.txt` held, `symlink; not followed` | passing (2026-11-11, darwin) — `TestS026SymlinkedFileIsHeldNotMissing` (`internal/doctor/heldpaths_test.go`). Red first: `MissingLocal = [a.txt gone.txt], want [gone.txt]` |
+| S026.2 | (b) tracked folder → symlink: `dir` held (scan reason), `dir/b.txt`, `dir/sub`, `dir/sub/c.txt` held `under dir (symlink; not followed)` | passing (2026-11-11, darwin) — `TestS026SymlinkedFolderIsHeldNotMissing`. Red first: `MissingLocal = [dir dir/b.txt dir/sub dir/sub/c.txt gone.txt]` |
+| S026.3 | (c) tracked file edited then `chmod 000` (skipped where a 0000 file is readable): `doc.txt` held, `file could not be read` | passing (2026-11-11, darwin) — `TestS026UnreadableFileIsHeldNotMissing`. Red first: `MissingLocal = [doc.txt gone.txt]` |
+| S026.4 | (d) `locked/` `chmod 000`: `locked/x.txt`, `locked/sub`, `locked/sub/y.txt` held `under locked (directory could not be read…)`; `locked` itself neither held nor missing | passing (2026-11-11, darwin) — `TestS026RowsUnderUnreadableDirAreHeldNotMissing`. Red first: `MissingLocal = [gone.txt locked/sub locked/sub/y.txt locked/x.txt]` |
+| S026.5 | Output: section `rows on disk but not read by the scan (held) (N):`, one `  <path>: <reason>` line each, then the hint line; missing section unchanged | passing (2026-11-11, darwin) — `TestS026DoctorPrintsHeldRows` (`cmd/synckeeper/doctor_test.go`). Red first: section absent from the old printer's output |
+| S026.6 | No regression; `--repair` unchanged (its assertions in S026.1–4 already passed before the fix) | passing (2026-11-11, darwin) — `make test`; `go test -race` on doctor, cmd/synckeeper; linux build + vet |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |
