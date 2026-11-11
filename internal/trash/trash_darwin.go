@@ -48,4 +48,7 @@ func moveToTrash(path string) error {
 
 func available() bool { return true }
 
+// Finder picks and creates the per-volume .Trashes itself.
+func availableFor(string) bool { return true }
+
 func describe() string { return "macOS Trash (Finder)" }

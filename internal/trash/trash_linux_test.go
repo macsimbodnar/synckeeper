@@ -206,6 +206,88 @@ func TestVolumeTrashOnOtherFilesystem(t *testing.T) {
 	}
 }
 
+// S016 (audit F11): AvailableFor probes the trash the dir's items will
+// really reach. On another filesystem that is <mount>/.Trash-$uid; when it
+// cannot be created or written, the answer is false even though the home
+// trash is fine — otherwise the mass-delete guard waves through deletions
+// that all land in the quarantine. Driven through the deviceOf seam.
+func TestAvailableForProbesTheTrashTheDirUses(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes through any mode bits; the unwritable arms need a normal user")
+	}
+	home := trashHome(t)
+	volume := t.TempDir()
+	syncDir := filepath.Join(volume, "sync")
+	if err := os.MkdirAll(syncDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(volume, 0o755) }) // let TempDir clean up
+	volTrash := filepath.Join(volume, ".Trash-"+strconv.Itoa(os.Getuid()))
+
+	orig := deviceOf
+	t.Cleanup(func() { deviceOf = orig })
+	onVolume := func(path string) (uint64, error) {
+		if path == volume || strings.HasPrefix(path, volume+string(filepath.Separator)) {
+			return 2, nil
+		}
+		return 1, nil
+	}
+
+	// Same filesystem as the home trash: the home trash is the answer.
+	deviceOf = func(string) (uint64, error) { return 1, nil }
+	if !AvailableFor(syncDir) {
+		t.Error("same filesystem, writable home trash: want available")
+	}
+	if _, err := os.Lstat(volTrash); err == nil {
+		t.Error("probing a home-trash dir created a volume trash")
+	}
+
+	deviceOf = onVolume
+	if err := os.Chmod(volume, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if !Available() {
+		t.Fatal("precondition: the home trash must stay available")
+	}
+	if AvailableFor(syncDir) {
+		t.Errorf("mount root unwritable, %s cannot exist: want unavailable", volTrash)
+	}
+
+	// An existing volume trash this user cannot write passes MkdirAll; the
+	// access check is what refuses it.
+	if err := os.Chmod(volume, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, half := range []string{"files", "info"} {
+		if err := os.MkdirAll(filepath.Join(volTrash, half), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(volTrash, "info"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Join(volTrash, "info"), 0o700) })
+	if AvailableFor(syncDir) {
+		t.Error("volume trash's info/ is read-only: want unavailable")
+	}
+
+	// A writable volume trash is available, and the home trash was never
+	// the one asked.
+	if err := os.Chmod(filepath.Join(volTrash, "info"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(home), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Dir(home), 0o755) })
+	if !AvailableFor(syncDir) {
+		t.Error("writable volume trash: want available whatever the home trash says")
+	}
+}
+
 // Trashing something that is not there is an error, not a silent success:
 // the caller stated an expectation and it was wrong.
 func TestMoveToTrashMissing(t *testing.T) {

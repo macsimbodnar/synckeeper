@@ -237,7 +237,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	}
 	// Where this cycle's deletions would land decides whether they need a
 	// question at all (W14-M1): a bin the user can see needs none.
-	res.TrashAvailable = e.trasher().Available()
+	res.TrashAvailable = e.trasher().AvailableFor(e.SyncDir)
 	guardErr := guards.CheckMassDelete(plan, trackedFiles, e.Cfg.Engine.MassDeleteThreshold, opts.ConfirmDeletes, res.TrashAvailable)
 
 	// The collapse runs AFTER the guard has counted the plan and never

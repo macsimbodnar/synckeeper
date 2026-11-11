@@ -24,5 +24,23 @@ excludes:   Runs with or after S001's L8 hardware gates — same machine.
             to the quarantine. Unmount with `sudo umount /mnt/sk_f11` afterwards.
 closes:     2026-11-11_adversarial-F11
 paused_by:
-author:
-done:
+author:     Claude (agent), started 2026-11-12 on `pop-os` at Max's direction
+done:       2026-11-12, on `pop-os`. F11 reproduced on hardware first and confirmed as
+            written: real tmpfs, mount root unwritable, 40 of 41 files binned in Drive →
+            `TrashAvailable=true`, guard silent, 40 files to the quarantine. No `sudo` in
+            the session, so a user namespace (`unshare -Urm`, `chmod 555`, capabilities
+            dropped) instead of the `sudo` recipe — same mechanism, uid 0 inside.
+            Fix: `trash.AvailableFor(dir)` probes the bin an item inside `dir` reaches
+            (`trashDirIn`; creates `files/`+`info/` as a move would, `access(W_OK|X_OK)`);
+            `Trasher` has no dir-less probe, so the engine guard and both executor
+            removal roads ask `AvailableFor(SyncDir)`. Tests: engine
+            `TestF11GuardHoldsWhenTheSyncDirsVolumeTrashIsUnusable` (gated,
+            `SYNCKEEPER_F11_DIR`) red before / green after; trash
+            `TestAvailableForProbesTheTrashTheDirUses` (runs in `make test` on Linux).
+            Red-checks: home-trash probe → both red; `access` removed → read-only arm
+            red. `make test`, `go vet ./...`, `gofmt -l`, `-race` on trash/executor/
+            engine/guards green on linux; `GOOS=windows go build`, `GOOS=darwin go vet`
+            clean. Fast check (REVIEW): no defect; its nested-mount edge recorded
+            (testing.md S016.6, MANUAL §8). Residual: `status`/`doctor`/`info`/daemon
+            start line still name the home bin → S028; MANUAL §8 row rewritten to say
+            so (not removed — the step's "row leaves the list" holds for the guard).

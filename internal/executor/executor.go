@@ -917,7 +917,7 @@ func (x *Executor) removeFile(rel string, exp expectation) error {
 		return err
 	}
 	t := x.trasher()
-	if !t.Available() {
+	if !t.AvailableFor(x.SyncDir) {
 		x.noteQuarantineFallback()
 	} else {
 		err := guardedTrashPath(abs, "trash source "+rel, exp, t)
@@ -965,7 +965,7 @@ func (x *Executor) removeDir(a reconcile.Action) error {
 		covered[rel] = e
 	}
 	t := x.trasher()
-	if t.Available() {
+	if t.AvailableFor(x.SyncDir) {
 		err := guardedTrashDir(abs, covered, x.Ignore, t)
 		switch {
 		case err == nil:

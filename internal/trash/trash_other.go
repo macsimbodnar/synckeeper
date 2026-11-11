@@ -12,4 +12,6 @@ func moveToTrash(string) error { return ErrUnavailable }
 
 func available() bool { return false }
 
+func availableFor(string) bool { return false }
+
 func describe() string { return "unavailable on this platform (deletes use Synckeeper's quarantine)" }
