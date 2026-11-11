@@ -8,9 +8,9 @@ package main
 //
 //	SYNCKEEPER_AUDIT_REPRO=1 go test ./cmd/synckeeper -run TestAudit20261111 -v
 //
-// Both tests replay `init`'s own steps in `init`'s own order (init.go RunE:
-// initialize → os.MkdirAll(syncDir) → eng.Sync(PreferNewer)); the command
-// itself cannot be driven here because its sign-in has no test seam.
+// Both tests run `init`'s own steps through initMerge, the helper init.go's
+// RunE calls after sign-in; the command itself cannot be driven here because
+// its sign-in has no test seam.
 
 import (
 	"context"
@@ -58,18 +58,11 @@ func (in *auditInstall) engine(rootID string) *engine.Engine {
 		QuarantineDir: filepath.Join(in.base, "quarantine"), RootID: rootID, Trash: in.bin}
 }
 
-// runInit is init.go's RunE from `initialize` to the merge.
+// runInit is init.go's RunE from `initialize` to the merge: initMerge, the
+// code RunE itself runs.
 func (in *auditInstall) runInit() *engine.Result {
 	in.t.Helper()
-	ctx := context.Background()
-	rootID, err := initialize(ctx, in.fake, in.db, in.cfg) // init.go:96
-	if err != nil {
-		in.t.Fatal(err)
-	}
-	if err := os.MkdirAll(in.syncDir, 0o755); err != nil { // init.go:105
-		in.t.Fatal(err)
-	}
-	res, err := in.engine(rootID).Sync(ctx, engine.Options{PreferNewer: true}) // init.go:128
+	res, err := initMerge(context.Background(), in.engine(""), func(string) {})
 	if err != nil {
 		in.t.Fatalf("init merge: %v", err)
 	}
@@ -156,7 +149,6 @@ func auditCount(plan []reconcile.Action, typ reconcile.Type) int {
 // full baseline — which it reads as "the user deleted everything" and
 // propagates to Drive.
 func TestAudit20261111_F02_InitWithMissingSyncDirEmptiesDrive(t *testing.T) {
-	auditRepro(t)
 	in := newAuditInstall(t)
 
 	// A working install: three files, synced.
@@ -176,9 +168,9 @@ func TestAudit20261111_F02_InitWithMissingSyncDirEmptiesDrive(t *testing.T) {
 	}
 	res := in.runInit()
 
-	if trashed, left := auditCount(res.Plan, reconcile.TrashRemote), in.driveFiles(); left != 3 || trashed > 0 {
+	if trashed, left, local := auditCount(res.Plan, reconcile.TrashRemote), in.driveFiles(), in.localFiles(); left != 3 || trashed > 0 || local != 3 {
 		t.Fatalf("`init` deleted from Drive: %d trash_remote actions planned, %d of 3 files left in the Drive folder, %d of 3 back on disk (want 3 and 3: recreated and downloaded back)",
-			trashed, left, in.localFiles())
+			trashed, left, local)
 	}
 }
 

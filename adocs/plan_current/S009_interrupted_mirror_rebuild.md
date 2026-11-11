@@ -16,5 +16,5 @@ excludes:   Retrying network-level errors in `internal/driveclient/retry.go` —
             separate.
 closes:     2026-11-11_adversarial-F03
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

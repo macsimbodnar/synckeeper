@@ -379,6 +379,17 @@ Found by the widened W16 fuzzer, minimized to deterministic reproductions before
 | S007.6 | Watch backends are handed the resolved root, at creation and at every post-cycle `refresh` (fsnotify adds watches by walking the root, which does not descend a symlink) | passing (2026-11-11, darwin) — `TestWatchBackendsGetTheResolvedSyncDir` (`internal/watch/symlinkroot_test.go`), via the `newBackend` seam. Red first: every root was the link |
 | S007.7 | `doctor` over a symlinked `sync_dir`: check reads the tree, finds an orphan temp; `--repair` removes it and reports healthy | passing (2026-11-11, darwin) — `TestDoctorFollowsSymlinkedSyncDir` (`internal/doctor/symlinkroot_test.go`). Red first: `OrphanTemps = []` |
 
+## S008 — `init` over a kept `state.db` with the sync folder gone deletes nothing (audit 2026-11-11 F02)
+
+Tests drive `initMerge` (`cmd/synckeeper/init.go`), the code `init`'s RunE runs after sign-in — not a hand copy of its steps.
+
+| ID | Case | Status |
+|---|---|---|
+| S008.1 | **F02 end to end**: 3 files synced, sync folder deleted, `state.db` kept, `init` re-run → **zero** `trash_remote`, 3 of 3 files still on Drive | passing (2026-11-11, darwin) — `TestAudit20261111_F02_InitWithMissingSyncDirEmptiesDrive` (`cmd/synckeeper/audit_2026_11_11_test.go`), `SYNCKEEPER_AUDIT_REPRO` gate removed; `runInit` now calls `initMerge`. Red first: `2 trash_remote actions planned, 0 of 3 files left in the Drive folder, 0 of 3 back on disk` |
+| S008.2 | **F5 through `init`'s steps**: vanished folder → plan holds no `trash_remote`, `quarantine_local` or `upload`; Drive keeps 2 of 2; both files back on disk byte-identical; next cycle idle | passing (2026-11-11, darwin) — `TestS008InitRecreatesVanishedSyncDir` (`cmd/synckeeper/init_test.go`). Red first: `planned trash_remote precious.txt`, `0 of 2 files left on Drive` |
+| S008.3 | First `init` on a joining machine (fresh `state.db`, sync dir and its parents absent) → folder created by the engine, Drive content downloaded into it | passing (2026-11-11, darwin) — `TestS008InitFirstRunCreatesSyncDir` (`cmd/synckeeper/init_test.go`). Green before the fix too: guards the removal of `init`'s own `MkdirAll` |
+| S008.4 | `init` over a dangling-symlink `sync_dir` → error names link and target (`is a symlink to <target>`); target not created, link kept, Drive untouched | passing (2026-11-11, darwin) — `TestS008InitDanglingSymlinkSyncDirNamesTheLink` (`cmd/synckeeper/init_test.go`). Red first: `create sync dir: mkdir …: file exists` |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

@@ -11,6 +11,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/config"
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
+	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
@@ -321,5 +322,95 @@ func TestResolveMachineNameAlwaysValid(t *testing.T) {
 		if got == "" || got != config.SanitizeMachineName(got) {
 			t.Errorf("answer %q resolved to %q, which config.validate() rejects", answer, got)
 		}
+	}
+}
+
+// S008 (audit 2026-11-11 F02): the F5 acceptance — a vanished sync dir is
+// recreated and re-downloaded with the remote untouched — run through `init`'s
+// own steps rather than the engine alone. `init` used to create the folder
+// before the merge, so the engine never saw it missing, never reset the
+// baseline, and read the empty folder as everything deleted.
+func TestS008InitRecreatesVanishedSyncDir(t *testing.T) {
+	in := newAuditInstall(t)
+	in.write("precious.txt", "do not lose")
+	in.write("docs/nested.txt", "also precious")
+	in.runInit()
+
+	// The folder is lost; state.db survives; the user runs `init`.
+	if err := os.RemoveAll(in.syncDir); err != nil {
+		t.Fatal(err)
+	}
+	res := in.runInit()
+
+	for _, a := range res.Plan {
+		switch a.Type {
+		case reconcile.TrashRemote, reconcile.QuarantineLocal, reconcile.Upload:
+			t.Errorf("init over a vanished sync dir planned %s %s; want downloads only, the remote untouched", a.Type, a.RelPath)
+		}
+	}
+	if got := in.driveFiles(); got != 2 {
+		t.Fatalf("%d of 2 files left on Drive", got)
+	}
+	for rel, want := range map[string]string{"precious.txt": "do not lose", "docs/nested.txt": "also precious"} {
+		got, err := os.ReadFile(filepath.Join(in.syncDir, filepath.FromSlash(rel)))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q (err %v), want %q downloaded back", rel, got, err, want)
+		}
+	}
+	// Genuinely synced again, not merely undamaged.
+	if res, err := in.engine(in.rootID()).Sync(context.Background(), engine.Options{}); err != nil || len(res.Plan) != 0 {
+		t.Errorf("next cycle: err=%v, %d actions planned, want steady state", err, len(res.Plan))
+	}
+}
+
+// With `init` no longer creating the sync dir itself, a first run still gets
+// one — parents included — from the engine, and the Drive content lands in it.
+func TestS008InitFirstRunCreatesSyncDir(t *testing.T) {
+	first := newAuditInstall(t)
+	first.write("from-drive.txt", "remote")
+	first.runInit()
+
+	// A second machine joins: fresh state DB, sync dir and its parent absent.
+	joiner := newAuditInstall(t)
+	joiner.fake = first.fake
+	joiner.syncDir = filepath.Join(joiner.base, "not", "yet", "Synckeeper")
+	joiner.runInit()
+
+	if info, err := os.Stat(joiner.syncDir); err != nil || !info.IsDir() {
+		t.Fatalf("sync dir after first init: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(joiner.syncDir, "from-drive.txt")); err != nil || string(got) != "remote" {
+		t.Errorf("from-drive.txt = %q (err %v), want it downloaded", got, err)
+	}
+}
+
+// A sync dir that is a symlink to nothing (its volume unmounted) stops `init`
+// with the engine's own message naming link and target — before S008 `init`
+// failed first on its own mkdir with an opaque "file exists". Nothing is
+// created and nothing leaves Drive.
+func TestS008InitDanglingSymlinkSyncDirNamesTheLink(t *testing.T) {
+	in := newAuditInstall(t)
+	in.write("a.txt", "a")
+	in.runInit()
+
+	if err := os.RemoveAll(in.syncDir); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(in.base, "unmounted", "Synckeeper")
+	if err := os.Symlink(target, in.syncDir); err != nil {
+		t.Fatal(err)
+	}
+	_, err := initMerge(context.Background(), in.engine(""), func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "is a symlink to "+target) {
+		t.Fatalf("init over a dangling symlink: err = %v, want the link and its target named", err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Errorf("the link's target was created (stat err %v); it must stay absent", err)
+	}
+	if info, err := os.Lstat(in.syncDir); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the link itself was replaced or removed (err %v)", err)
+	}
+	if got := in.driveFiles(); got != 1 {
+		t.Errorf("%d of 1 files left on Drive", got)
 	}
 }

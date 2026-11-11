@@ -93,44 +93,24 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 
-			rootID, err := initialize(ctx, client, db, cfg)
-			if err != nil {
-				return err
-			}
-
 			syncDir, err := cfg.SyncDir()
 			if err != nil {
 				return err
 			}
-			if err := os.MkdirAll(syncDir, 0o755); err != nil {
-				return fmt.Errorf("create sync dir: %w", err)
-			}
-
-			fmt.Printf("Initialized.\n  drive folder: %q (id %s)\n  sync dir:     %s\n  config:       %s\n",
-				root.Name(db, cfg.Drive.FolderName), rootID, syncDir, cfgPath)
-
-			// Always merge (W18-B). This was `--adopt`; it is now what `init`
-			// does, because it is the only correct answer in every case and
-			// the flag only ever asked the user to confirm the obvious. A
-			// union merge over the existing baseline uploads what is local,
-			// downloads what is remote, pairs identical content, and conflicts
-			// the rest — it cannot delete (spec §11), so it is safe to re-run
-			// and safe as the recovery path for a lost DB.
-			//
-			// PreferNewer is set here and nowhere else (W18-E): at the one-off
-			// moment a machine joins, the more recent edit is the answer the
-			// user would give to "which of these two is the real one".
-			fmt.Println("Merging this machine with the Drive folder (union; nothing is deleted)…")
 			eng := &engine.Engine{
 				DB: db, Client: client, Cfg: cfg, SyncDir: syncDir,
-				QuarantineDir: filepath.Join(configDir, "quarantine"), RootID: rootID,
+				QuarantineDir: filepath.Join(configDir, "quarantine"),
 			}
-			res, err := eng.Sync(ctx, engine.Options{PreferNewer: true})
+			res, err := initMerge(ctx, eng, func(rootID string) {
+				fmt.Printf("Initialized.\n  drive folder: %q (id %s)\n  sync dir:     %s\n  config:       %s\n",
+					root.Name(db, cfg.Drive.FolderName), rootID, syncDir, cfgPath)
+				fmt.Println("Merging this machine with the Drive folder (union; nothing is deleted)…")
+			})
 			if res != nil {
 				printMergeResult(res)
 			}
 			if err != nil {
-				return fmt.Errorf("merge: %w", err)
+				return err
 			}
 			if res.Failed > 0 {
 				return fmt.Errorf("%d of %d merge actions failed; re-run `synckeeper sync`", res.Failed, len(res.Plan))
@@ -226,6 +206,41 @@ func printMergeResult(res *engine.Result) {
 	for _, s := range res.Skips {
 		fmt.Printf("    skipped: %s (%s)\n", s.RelPath, s.Reason)
 	}
+}
+
+// initMerge is `init` from the Drive-side setup to the end of the merge, the
+// part that decides what moves; RunE and the tests share it, so a test cannot
+// drift from what `init` really does. eng carries everything but RootID, which
+// initialize settles. announce runs between the two, once the Drive folder is
+// known.
+//
+// Always merge (W18-B). This was `--adopt`; it is now what `init` does,
+// because it is the only correct answer in every case and the flag only ever
+// asked the user to confirm the obvious. A union merge over the existing
+// baseline uploads what is local, downloads what is remote, pairs identical
+// content, and conflicts the rest — it cannot delete (spec §11), so it is safe
+// to re-run and safe as the recovery path for a lost DB.
+//
+// PreferNewer is set here and nowhere else (W18-E): at the one-off moment a
+// machine joins, the more recent edit is the answer the user would give to
+// "which of these two is the real one".
+func initMerge(ctx context.Context, eng *engine.Engine, announce func(rootID string)) (*engine.Result, error) {
+	rootID, err := initialize(ctx, eng.Client, eng.DB, eng.Cfg)
+	if err != nil {
+		return nil, err
+	}
+	eng.RootID = rootID
+	announce(rootID)
+	// The sync dir is deliberately not created here: the engine's
+	// guards.EnsureSyncDir must find a missing one missing, so it recreates it
+	// AND resets the baseline. Created here first, the merge saw an empty
+	// folder beside a full baseline and trashed the whole Drive folder (audit
+	// 2026-11-11 F02).
+	res, err := eng.Sync(ctx, engine.Options{PreferNewer: true})
+	if err != nil {
+		return res, fmt.Errorf("merge: %w", err)
+	}
+	return res, nil
 }
 
 // initialize performs the Drive-side setup through the client interface so

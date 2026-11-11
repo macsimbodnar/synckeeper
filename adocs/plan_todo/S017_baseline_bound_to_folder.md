@@ -9,6 +9,11 @@ goal:       The baseline is not bound to the sync folder's identity. When `sync_
             (2026-11-11); named as "same root cause, not separately run" in audit
             2026-11-11_adversarial F02. S007 made the link case reachable without
             touching synckeeper: the engine re-resolves the link every cycle.
+            A third route, pre-existing, found by S008's fast check: the process is
+            killed between `guards.EnsureSyncDir`'s `MkdirAll` and the engine's
+            `ResetBaseline` (`internal/engine/engine.go:152-157`, separate steps) —
+            the folder then exists empty beside a full baseline. The chosen shape
+            must close it too (or the reset moves ahead of the mkdir).
 accepts:    Red-first tests for both routes (retargeted link, edited `sync_dir`) show
             zero deletions planned on either side; the cycle either resets the
             baseline (as `EnsureSyncDir` does for a recreated folder) or stops with a

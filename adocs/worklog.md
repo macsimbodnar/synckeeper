@@ -1005,3 +1005,11 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Fast check (REVIEW), one Opus subagent, read-only:** nothing that loses or misplaces a file. Trivial: MANUAL §6 overstated the dangling-link message for `init` — fixed in this commit. Real: a retargeted link is scanned against the old baseline → **S017**, placed with the steps that need Max's design pick. Minor, folded into S017: FSEvents keeps watching the old target after a same-volume retarget (polling still catches changes).
 - Docs: MANUAL §6/§8/§9 (the F01 known-bug row is gone), specs §3.4/§6, testing.md S007.1–S007.7. README checked, no change.
 - **S008 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-11 11:44 — S008 done (audit F02): `init` no longer creates the sync dir
+- **Implemented by one Opus subagent, reviewed and committed by the coordinator** (DEC-002). `init`'s early `os.MkdirAll` is gone; new `initMerge` helper is what RunE and the tests run, so the engine's `EnsureSyncDir` recreates a missing folder **and** resets the baseline. Folder gone + `state.db` kept → files download back, nothing trashed.
+- **Red-first:** F02's gate removed, seen failing through `initMerge`, then green; three `TestS008…` tests. Coordinator re-ran `go build && go vet`, `gofmt -l`, `go test -count=1 ./...`, `GOOS=linux go build/vet` — green/clean.
+- **Fast check (REVIEW):** no defect in the diff. Trivial, fixed here: the F02 test named the disk half only in its message — it now asserts it. Pre-existing, sent to S017: a kill between the guard's mkdir and the baseline reset.
+- **User-visible:** `init`'s sync-dir errors now come from the guard (`merge: sync dir X is a symlink to Y…`, `…is not a directory`), printed after "Initialized." / "Merging…".
+- Docs: MANUAL §6 + §8 (F02 row gone; **S017's class added as a known bug**, marked as from code reading — owed since S007's commit), specs §11/§16.3, testing.md S008.1–S008.4. README checked, no change.
+- **S009 started** (`plan_todo/` → `plan_current/`).
