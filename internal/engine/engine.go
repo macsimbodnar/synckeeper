@@ -249,6 +249,12 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		plan = reconcile.CollapseDirDeletes(plan, remote)
 		res.Plan = plan
 	}
+	// On the final shape of the plan, collapsed or not: what each folder
+	// trash expects the folder to hold on Drive when it runs (S021).
+	if plan, err = e.pinFolderTrashContents(plan); err != nil {
+		return res, err
+	}
+	res.Plan = plan
 
 	if guardErr != nil {
 		if !opts.DeferMassDelete {
@@ -292,6 +298,38 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		purgeQuarantine(e.QuarantineDir, e.Cfg.Engine.QuarantineRetentionDays)
 	}
 	return res, nil
+}
+
+// pinFolderTrashContents hands reconcile the mirror the plan was built on —
+// every non-trashed row, not the snapshot, since a Google-native or skipped
+// item inside a folder goes to Drive's bin with it all the same. Read only
+// when the plan trashes a folder.
+func (e *Engine) pinFolderTrashContents(plan []reconcile.Action) ([]reconcile.Action, error) {
+	trashesFolder := false
+	for _, a := range plan {
+		if a.Type == reconcile.TrashRemote && a.IsDir {
+			trashesFolder = true
+			break
+		}
+	}
+	if !trashesFolder {
+		return plan, nil
+	}
+	nodes, err := e.DB.AllRemoteNodes()
+	if err != nil {
+		return nil, fmt.Errorf("read remote mirror for folder trashes: %w", err)
+	}
+	mirror := make([]reconcile.RemoteChild, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Trashed {
+			continue
+		}
+		mirror = append(mirror, reconcile.RemoteChild{
+			FileID: n.FileID, ParentID: n.ParentID, Name: n.Name,
+			IsDir: n.MimeType == driveclient.FolderMimeType, MD5: n.MD5,
+		})
+	}
+	return reconcile.PinFolderTrashContents(plan, mirror), nil
 }
 
 // reportDeletions counts what the executed plan removed and, when that

@@ -17,6 +17,16 @@ goal:       The remote-write gate (S010) has never run against real Drive, and i
             concurrent write, the row would adopt their md5 and the next cycle would
             overwrite their edit instead of conflicting (S011 fast check, a guess the
             fake cannot show).
+            (5) S021's folder-contents check lists every folder of a deleted subtree:
+            unmeasured on real Drive are `files.list` consistency right after a write
+            (a lagging listing lets an add through; on a machine with no system bin,
+            children trashed seconds earlier may still be listed and refuse the folder
+            once per nesting level), its wall clock on a tree of thousands of folders,
+            and legacy multi-parent items (the mirror keeps one parent, `List` returns
+            the item under each → refused every cycle). An alternative to measure
+            against it: one `changes.list` from the cycle's page token — "did anything
+            under this folder change since my refresh?" — instead of N listings; only
+            as good as the feed's lag.
             Found by S010's fast check (2026-11-11), by reading.
 accepts:    A live run (`SYNCKEEPER_LIVE_TEST=1`) exercises each gated mutation and each
             drift kind against a throwaway Drive folder and records what real Drive

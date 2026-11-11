@@ -21,5 +21,5 @@ excludes:   The R25 wedge itself (S002) — same code path, different defect; if
             shape is decided first, build this on top of it.
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

@@ -173,20 +173,50 @@ type Action struct {
 	// was built on. The executor hands it to the Drive client, which re-checks
 	// it immediately before the mutation and refuses on any drift — another
 	// machine's write landing mid-cycle must reach the decision table, not be
-	// overwritten. nil means no expectation: an action journaled before the
-	// field existed.
+	// overwritten. A folder TrashRemote also carries the folder's contents,
+	// which the executor checks against Drive's listing first (S021). nil
+	// means no expectation: an action journaled before the field existed.
 	RemoteWant *RemoteExpect `json:",omitempty"`
 }
 
 // RemoteExpect is the Drive state a remote mutation expects to find: the
 // snapshot entry the plan was built on. Content (MD5) for a file; for a
-// folder only its identity — name, parent, not trashed — since a folder has
-// no content hash and its children are not re-read.
+// folder its identity — name, parent, not trashed — and, on a folder
+// TrashRemote, its contents (S021).
 type RemoteExpect struct {
 	ParentID string
 	Name     string
 	IsDir    bool
 	MD5      string
+
+	// Contents is, on a folder TrashRemote, what the folder may still hold on
+	// Drive when the trash runs (S021) — trashing a folder takes its whole
+	// subtree. nil means the contents are not checked: any other action, a
+	// journal row from before S021, or a hand-built action.
+	Contents *RemoteContents `json:",omitempty"`
+}
+
+// RemoteContents is a folder trash's expectation of the folder's subtree on
+// Drive: the plan's mirror rows under it, minus what the plan's own earlier
+// actions trash or move out (PinFolderTrashContents). The gate lists the
+// folder and refuses on anything else — a file edited, added, renamed, moved,
+// trashed or gone. Empty Items is the normal expectation for a folder emptied
+// item by item: then the folder must hold nothing.
+type RemoteContents struct {
+	Items []RemoteChild
+}
+
+// RemoteChild is one item inside a folder on Drive as the mirror holds it:
+// what identifies its place (parent, name) and its version (md5 for a file,
+// identity alone for a folder). Every mirror row counts, including those the
+// snapshot skips (Google-native, ignored, invalid or shadowed names) — they
+// go to the bin with the folder too.
+type RemoteChild struct {
+	FileID   string
+	ParentID string
+	Name     string
+	IsDir    bool
+	MD5      string `json:",omitempty"`
 }
 
 // SubtreeEntry is one covered descendant of a collapsed directory delete:

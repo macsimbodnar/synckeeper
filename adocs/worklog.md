@@ -1070,3 +1070,12 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Existing holes on installed machines are not healed automatically: `doctor --repair` (MANUAL §8).
 - Docs: MANUAL §7/§8, specs §9, testing.md S018.1–S018.8. README checked, no change.
 - **S021 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-11 14:50 — S021 done: a folder trash checks the folder's contents on Drive — two rounds
+- **Implemented by one Opus subagent, reviewed and committed by the coordinator** (DEC-002). The engine pins the folder's mirror subtree on every folder `TrashRemote`; the executor lists it on Drive before the trash and refuses on any difference. Both planner shapes covered.
+- **Fast check (REVIEW):** no blocking defect. Its cost finding drove round 2: listings were serial and breadth-first (N+1 round trips, the trashed folder checked first = stalest). **Round 2:** deepest-first, 4 concurrent (`transferWorkers`), the folder itself last; first drift or error cancels.
+- Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race` (executor ×3 for the new concurrency), `GOOS=linux go build/vet`, 60×150 fuzz (seeds 1, 28, 45 only) after each round.
+- **Cost accepted and documented:** one `List` per folder of a deleted tree — minutes for thousands of folders, the cycle blocked meanwhile. An O(1) alternative (one `changes.list` since the cycle's token) recorded in S019 to be measured live, not built.
+- **Not verified on real Drive**; S019 gained item (5). Google-native edits inside are not detected (no md5) — stated in MANUAL §6; no `modifiedTime` compare added (an unverifiable stale time would refuse a folder delete forever).
+- Docs: MANUAL §6/§8 (row removed), specs §4.2/§7, testing.md S021.1–S021.14. README checked, no change.
+- **S023 started** (`plan_todo/` → `plan_current/`).
