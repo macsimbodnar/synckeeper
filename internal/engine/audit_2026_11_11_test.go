@@ -158,7 +158,6 @@ func TestAudit20261111_F01_SymlinkedSyncDirEmptiesDrive(t *testing.T) {
 // mutating it. Nothing re-checks the REMOTE side: Update(fileID) replaces
 // whatever Drive holds at that moment.
 func TestAudit20261111_F04_UpdateRemoteOverwritesConcurrentRemoteEdit(t *testing.T) {
-	auditRepro(t)
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 	b := newMachine(t, "b", fake, root)

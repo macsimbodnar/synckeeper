@@ -13,23 +13,25 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S010  Remote-write gate — an upload overwrites a concurrent remote edit (audit F04, High)
-2. S011  A file written during its upload lands truncated under its real name (audit F05, High)
-3. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
-4. S014  One unreadable file wedges every cycle (audit F08, Medium)
-5. S018  A moved-in Drive folder whose walk fails once is never walked again — contents never download (S009 fast check, reproduced)
+1. S011  A file written during its upload lands truncated under its real name (audit F05, High)
+2. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
+3. S014  One unreadable file wedges every cycle (audit F08, Medium)
+4. S018  A moved-in Drive folder whose walk fails once is never walked again — contents never download (S009 fast check, reproduced)
+5. S021  A folder trash does not look inside the folder — a file edited or added there meanwhile is binned (left open by S010; reproduced on the fake)
 6. S017  Baseline is not bound to the sync folder — a retargeted link or edited `sync_dir` reads as deletion (S007 fast check; design decided with Max first)
-7. S002  Fix the R25 crash-rename wedge — a refused plan repeats forever (audit F09; shape decided with Max first)
-8. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
-9. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
-10. S001  Finish the Linux port (remaining L-items, then the hardware gates)
-11. S003  Daemon surfaces skips in `activity`
-12. S004  Stored error details keep the URL and lose the cause
-13. S005  "N local changes" counts wake-ups, not files
-14. S006  Third platform: Windows
-15. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
+7. S020  A folder deleted here while renamed there: delete wins badly (S010 fast check, reproduced; rule decided with Max first)
+8. S002  Fix the R25 crash-rename wedge — a refused plan repeats forever (audit F09; shape decided with Max first)
+9. S019  Remote-write gate on real Drive: live verification, narrower window (S010 fast check; live Drive and Max's pick first)
+10. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
+11. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
+12. S001  Finish the Linux port (remaining L-items, then the hardware gates)
+13. S003  Daemon surfaces skips in `activity`
+14. S004  Stored error details keep the URL and lose the cause
+15. S005  "N local changes" counts wake-ups, not files
+16. S006  Third platform: Windows
+17. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
 
-**Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Four steps cannot simply be run: S017 and S002 need their shape decided with Max, S015 needs a live-Drive measurement, S016 needs Linux hardware.
+**Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Six steps cannot simply be run: S017, S020 and S002 need their shape decided with Max, S019 needs live Drive and a pick, S015 needs a live-Drive measurement, S016 needs Linux hardware.
 
 Behind the audit steps the earlier order stands: S001 → S003 is Max's, recorded 2026-08-23 (W7 → W22 → W10; S002, then W22, now runs with the audit bugs). S004 and S005 were found 2026-09-03 and appended rather than inserted: both are cheap, self-contained, and independent, so they are candidates to jump — Max's call, a one-line edit here.
 
@@ -44,6 +46,7 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
+- S010  Remote-write gate — a concurrent Drive write refuses the mutation — fixed 2026-11-11 (audit F04; residuals S019, S021)
 - S009  An interrupted mirror rebuild is read as mass deletion on Drive — fixed 2026-11-11 (audit F03)
 - S008  `init` with the sync folder gone and `state.db` kept — fixed 2026-11-11 (audit F02)
 - S007  A symlinked `sync_dir` is scanned as empty — fixed 2026-11-11 (audit F01)

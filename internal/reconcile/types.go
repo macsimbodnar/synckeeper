@@ -33,6 +33,10 @@ type RemoteItem struct {
 	MD5     string // empty for dirs
 	Version int64
 
+	// ParentID is the Drive folder the mirror holds the item in — what a
+	// remote mutation pins as part of its expected state (RemoteExpect).
+	ParentID string
+
 	// ModifiedNS is Drive's modifiedTime in unix nanoseconds, 0 when unknown.
 	// Read only under PreferNewer.
 	ModifiedNS int64
@@ -136,6 +140,26 @@ type Action struct {
 	LocalExists  bool
 	LocalSize    int64
 	LocalMtimeNS int64
+
+	// RemoteWant is the remote counterpart (spec §7 remote write gate, S010):
+	// on UpdateRemote, TrashRemote and MoveRemote, the Drive state the plan
+	// was built on. The executor hands it to the Drive client, which re-checks
+	// it immediately before the mutation and refuses on any drift — another
+	// machine's write landing mid-cycle must reach the decision table, not be
+	// overwritten. nil means no expectation: an action journaled before the
+	// field existed.
+	RemoteWant *RemoteExpect `json:",omitempty"`
+}
+
+// RemoteExpect is the Drive state a remote mutation expects to find: the
+// snapshot entry the plan was built on. Content (MD5) for a file; for a
+// folder only its identity — name, parent, not trashed — since a folder has
+// no content hash and its children are not re-read.
+type RemoteExpect struct {
+	ParentID string
+	Name     string
+	IsDir    bool
+	MD5      string
 }
 
 // SubtreeEntry is one covered descendant of a collapsed directory delete:

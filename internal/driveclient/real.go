@@ -153,6 +153,9 @@ func (r *real) Upload(ctx context.Context, parentID, name string, content io.Rea
 }
 
 func (r *real) Update(ctx context.Context, fileID string, content io.Reader, size int64) (File, error) {
+	if err := r.checkPrecondition(ctx, fileID); err != nil {
+		return File{}, fmt.Errorf("update %s: %w", fileID, err)
+	}
 	// Not wrapped in withRetry, for the same reason Upload is not: the media
 	// reader is consumed on the first attempt (spec §7).
 	call := r.svc.Files.Update(fileID, nil).Fields(fileFields).Context(ctx)
@@ -185,6 +188,9 @@ func (r *real) Download(ctx context.Context, fileID string) (io.ReadCloser, erro
 }
 
 func (r *real) Trash(ctx context.Context, fileID string) error {
+	if err := r.checkPrecondition(ctx, fileID); err != nil {
+		return fmt.Errorf("trash %s: %w", fileID, err)
+	}
 	err := withRetry(ctx, func() error {
 		_, err := r.svc.Files.Update(fileID, &drive.File{Trashed: true}).Context(ctx).Do()
 		return err
@@ -229,8 +235,32 @@ func (r *real) About(ctx context.Context) (About, error) {
 	return out, nil
 }
 
+// checkPrecondition is the remote write gate for a mutation of fileID: when
+// ctx carries a Precondition, one metadata read immediately before the
+// mutation. It narrows the race to the time from this read to the mutation
+// landing — one round trip at best, the retry backoff on top for a Trash or
+// Move that is retried, the whole media transfer for an Update. No
+// conditional write is used, so it does not close it.
+func (r *real) checkPrecondition(ctx context.Context, fileID string) error {
+	p, ok, err := preconditionFor(ctx, fileID)
+	if err != nil || !ok {
+		return err
+	}
+	cur, err := r.Get(ctx, fileID)
+	return p.verify(cur, err)
+}
+
 func (r *real) Move(ctx context.Context, fileID, newParentID, newName string) (File, error) {
 	current, err := r.Get(ctx, fileID)
+	// The read Move needs for the current parents doubles as the write
+	// gate's re-read: no extra round trip.
+	if p, ok, perr := preconditionFor(ctx, fileID); perr != nil {
+		return File{}, fmt.Errorf("move %s: %w", fileID, perr)
+	} else if ok {
+		if verr := p.verify(current, err); verr != nil {
+			return File{}, fmt.Errorf("move %s: %w", fileID, verr)
+		}
+	}
 	if err != nil {
 		return File{}, err
 	}

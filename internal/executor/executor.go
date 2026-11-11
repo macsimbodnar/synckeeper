@@ -533,7 +533,7 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 	if err != nil {
 		return err
 	}
-	f, err := x.Client.Move(ctx, a.FileID, parent, path.Base(a.NewRelPath))
+	f, err := x.gatedMove(ctx, a, parent, path.Base(a.NewRelPath))
 	if err != nil {
 		return err
 	}
@@ -541,6 +541,15 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 	x.mu.Lock()
 	x.bumpedVersions[a.FileID] = f.Version
 	x.mu.Unlock()
+	// A Drive edit landing inside the remote gate's one-round-trip window
+	// rides along with the move, and the reply shows it. Recording that md5
+	// would mark the local bytes as in sync with content they never had —
+	// silent divergence. Keep the md5 the plan synced against, so the next
+	// cycle sees the remote change and downloads it.
+	driveMD5 := f.MD5
+	if w := a.RemoteWant; w != nil && !w.IsDir && f.MD5 != w.MD5 {
+		driveMD5 = w.MD5
+	}
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 		// RenameItemPath renames the row — and, for a directory, every
 		// descendant row — leaving is_dir and the scanned stat/md5 intact.
@@ -551,7 +560,7 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 		if err := statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath); err != nil {
 			return err
 		}
-		if err := statedb.UpdateItemDrive(tx, a.FileID, f.MD5, f.Version); err != nil {
+		if err := statedb.UpdateItemDrive(tx, a.FileID, driveMD5, f.Version); err != nil {
 			return err
 		}
 		// The mirror follows the move too (W16). Descendants need no rewrite:
@@ -622,7 +631,7 @@ func (x *Executor) updateRemote(ctx context.Context, opID int64, a reconcile.Act
 	if err != nil {
 		return err
 	}
-	remote, err := x.Client.Update(ctx, a.FileID, f, pre.Size())
+	remote, err := x.gatedUpdate(ctx, a, f, pre.Size())
 	if err != nil {
 		return err
 	}
@@ -760,7 +769,7 @@ func (x *Executor) record(opID int64, a reconcile.Action) error {
 // which is one API call instead of one per file and one restorable entry in
 // the bin instead of a thousand — the mirror image of what W13 did locally.
 func (x *Executor) trashRemote(ctx context.Context, opID int64, a reconcile.Action) error {
-	if err := x.Client.Trash(ctx, a.FileID); err != nil {
+	if err := x.gatedTrash(ctx, a); err != nil {
 		return err
 	}
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {

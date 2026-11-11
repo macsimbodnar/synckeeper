@@ -1021,3 +1021,15 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **New defect, pre-existing, reproduced by the fast check → S018:** a folder moved/restored into the Drive tree whose content walk fails once is never walked again; contents never download, silently. MANUAL §8 row added (cure today: `doctor --repair`, by reading `ForceFullWalk`).
 - Docs: MANUAL §7/§8, specs §12, testing.md S009.1–S009.3. README checked, no change.
 - **S010 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-11 12:20 — S010 done (audit F04): the remote-write gate
+- **Implemented by one Opus subagent, reviewed and committed by the coordinator** (DEC-002). The planner pins the Drive state each remote mutation was planned on (`Action.RemoteWant`); `executor/remotewrite.go` is the single choke point (AST-tested) and passes it via the context; `Update`/`Trash`/`Move` re-read and refuse with `ErrDrift`. Refusal = failed action, replanned next cycle. Cost: +1 `Get` per `Update`/`Trash`, +0 per `Move`. No schema change.
+- **Design deviation accepted:** check inside the client rather than an executor-side `Get` — otherwise the F04 test's hook (fires at the `Update` call) could not pass unedited.
+- **Red-first:** F04 ungated and green, 5 new race tests + unit tests. Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race`, `GOOS=linux go build/vet` — green/clean. **Deep fuzz compared by the coordinator:** seeds 1, 28, 45 fail with the change and on an untouched `git archive` of `06df839` — same set, all the §4.5 wedge. The audit named only seed 45; S002's `accepts` now names all three.
+- **Not verified: real Drive.** The real client's gate has only been read.
+- **Fast check (REVIEW):** no permanent false refusal, no bypass. Doc overclaim fixed in this commit — the residual window is the file's whole upload for an `Update`, the retry backoff for `Trash`/`Move`, not "one round trip" (MANUAL §6, specs §7, `real.go` comment). → **S019**.
+- **Pre-existing defect reproduced by the fast check → S020:** folder deleted on A while renamed on Drive → self-contradicting plan, files binned as separate Drive entries, rename discarded, deletion unreported. MANUAL §8 row added. Needs Max's rule (rename beats delete, or a clean delete).
+- **Left open by S010 → S021:** a folder trash does not look inside the folder. MANUAL §8 row kept (rewritten by the implementer to the residual).
+- Not reproduced: the implementer's note that testing.md lists S008.1–S008.3 twice — checked, one copy.
+- Docs: MANUAL §6/§8, specs §7, testing.md S010.1–S010.10, README (executor row). 
+- **S011 started** (`plan_todo/` → `plan_current/`).

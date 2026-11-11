@@ -155,7 +155,7 @@ Publishing to production does **not** remove it. Synckeeper asks for Google's fu
 
 ## 6. How syncing behaves
 
-- **Conflicts.** Changed on both sides → remote keeps the name, your version is kept beside it as `name (conflict <machine> <date_time>).ext` and uploaded too, so every machine sees both. Nothing lost.
+- **Conflicts.** Changed on both sides → remote keeps the name, your version is kept beside it as `name (conflict <machine> <date_time>).ext` and uploaded too, so every machine sees both. Nothing lost. Each upload, rename and delete re-checks the Drive file first; changed by another machine meanwhile → refused, and the next cycle resolves it as a conflict (or edit-beats-delete). Only a change landing between that re-check and the request completing can still be overwritten (kept in Drive's version history or bin) — for an upload that is the file's whole transfer, minutes for a large file.
 - **Except at `init`**, where the more recently edited side takes the plain name and the other becomes the conflict copy (renamed on Drive too). Badly skewed clocks can misname a pair at `init` — never lose one.
 - **Deletes are never permanent.** Deleted in Drive → your local copy goes to **your system bin** (macOS Trash, Linux desktop trash), restorable like anything else. Deleted locally → the Drive file goes to Drive's bin (~30 days).
 - **A deleted folder is one bin entry, both ways** — contents inside, restorable in one go. If something inside changed since the scan, or holds a file the sync never saw, the folder is removed file by file instead and the stranger is left alone.
@@ -195,7 +195,8 @@ Details in [adocs/decisions.md](adocs/decisions.md) and [adocs/audit/2026-11-11_
 |---|---|
 | ⚠ **`sync_dir` starts naming a different folder while `state.db` is kept** (config edited, its symlink retargeted, or a pre-created empty folder) → the new folder is compared to the old baseline; an empty one reads as everything deleted and the Drive folder is trashed. From code reading, not reproduced. | Changing the sync folder: stop the daemon, delete `state.db`, run `init`. |
 | A folder moved or restored into the Drive folder (Drive web UI, another app) while a connection drops mid-listing → the folder appears locally but its contents never download; no error, later cycles look idle. Drive untouched. | `doctor --repair` re-reads Drive in full. |
-| ⚠ **Two machines edit one file at once** → the later upload can replace the other edit on both machines, no conflict copy. Window: one machine's scan + transfer queue. | Other edit survives only in Drive's version history. |
+| ⚠ **A folder deleted on one machine while another renames it** → the delete wins and the rename is discarded: its files go to Drive's bin as separate entries (restoring the folder alone does not bring them back) and to the renaming machine's system bin. The deleting machine logs one `move_local` error and reports no deletion. | Restore each file from Drive's bin. |
+| ⚠ **A folder deleted here while another machine edits or adds a file inside it** → that file goes to Drive's bin with the folder, then off the other machine's disk. Window: this machine's scan + transfer queue. | Restore the folder from Drive's bin. |
 | ⚠ **A tracked folder replaced by a symlink** → its Drive folder is trashed, other machines remove it. | Don't symlink inside the sync folder. |
 | One unreadable file (`chmod 000`, root-owned) → nothing syncs, either direction; `status` shows a repeating `last error`. | Fix its permissions or move it out. |
 | "Synckeeper" folder binned in the Drive web UI → daemon doesn't notice, keeps syncing into the binned folder (Drive purges after ~30 days). Seen against the test fake; real Drive unconfirmed. | Restore the folder from Drive's bin. |

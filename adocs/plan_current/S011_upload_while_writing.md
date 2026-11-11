@@ -17,5 +17,5 @@ touches:    internal/executor, internal/scanner (if in-flight files are skipped)
 excludes:   The blind re-upload W17 ruled out.
 closes:     2026-11-11_adversarial-F05
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

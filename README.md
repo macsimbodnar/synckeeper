@@ -32,7 +32,7 @@ The daemon is the product; the CLI (and any future UI) are thin clients of it. O
 | `cmd/synckeeper` | CLI entry (cobra); thin client of the daemon |
 | `internal/engine` | one sync cycle: scan → reconcile → execute → commit baseline |
 | `internal/reconcile` | pure `(base, local, remote) → ordered plan`; decision table + dependency ordering (spec §4). Most-tested code |
-| `internal/executor` | runs the plan; the single local-mutation choke point (spec §7) |
+| `internal/executor` | runs the plan; the local- and remote-mutation choke points (spec §7) |
 | `internal/scanner` | local tree scan (md5 only on size/mtime drift) |
 | `internal/remotedelta` | Drive metadata mirror from `changes.list`; case/normalization fold |
 | `internal/root` | Drive folder identity: id-first resolve, rename recorded, recreate + baseline reset when gone (never a deletion) |

@@ -316,6 +316,7 @@ func Snapshot(db *statedb.DB, rootID string, ignore []string, caseFold, normFold
 				Size:       n.Size,
 				MD5:        n.MD5,
 				Version:    n.Version,
+				ParentID:   n.ParentID,
 				ModifiedNS: n.ModifiedNS,
 			}
 			if isDir && !visited[n.FileID] {

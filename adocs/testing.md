@@ -400,6 +400,23 @@ Fault at every `List` of the rebuild, two ways: an error (dropped connection), a
 | S009.2 | `init` re-run interrupted at **every** `List`, by error and by crash image → next cycle plans **no action at all**; 10 of 10 on disk and on Drive | passing (2026-11-11, darwin) — `TestS009InitRebuildInterruptedAtEveryList` (`cmd/synckeeper/init_test.go`). Red (marker retraction removed): all 10 cases, e.g. `planned 7 actions (7 local deletes); 1 of 10 local files left` |
 | S009.3 | `doctor --repair` interrupted at **every** `List`, by error and by crash image → next cycle plans no action; local tree intact | passing (2026-11-11, darwin) — `TestS009RepairRebuildInterruptedAtEveryList` (`internal/doctor/interruptedrebuild_test.go`). Red (marker retraction removed): all 10 cases, e.g. `planned 4 actions (4 local deletes); 0 of 10 local files left` |
 
+## S010 — the remote-write gate: a concurrent Drive write refuses the mutation (audit 2026-11-11 F04)
+
+Engine cases inject the other machine's write at the moment this machine calls `Update` / `Trash` / `Move` (`hookClient`, `raceClient`): after its refresh, before the request reaches Drive. Each then settles 3 rounds on both machines and checks both trees.
+
+| ID | Case | Status |
+|---|---|---|
+| S010.1 | **F04 end to end**: A's `UpdateRemote` races B's edit of the same file → both edits on both machines, one as the conflict copy | passing (2026-11-11, darwin) — `TestAudit20261111_F04_UpdateRemoteOverwritesConcurrentRemoteEdit` (`internal/engine/audit_2026_11_11_test.go`), `SYNCKEEPER_AUDIT_REPRO` gate removed. Red first: `[a] … files on disk = map[notes.txt:edit made on A]`, same on b |
+| S010.2 | A's `TrashRemote` (local delete) races B's edit → B's edit on both machines (edit beats delete) | passing (2026-11-11, darwin) — `TestRemoteGateTrashRacingRemoteEdit` (`internal/engine/remotegate_test.go`). Red first: `files on disk = map[]` on a and b |
+| S010.3 | A's `MoveRemote` (local rename) races B's edit under the old name → B's edit and A's renamed file on both machines, trees equal | passing (2026-11-11, darwin) — `TestRemoteGateMoveRacingRemoteEdit` (`internal/engine/remotegate_test.go`). Red first: `trees diverge at new.txt: a="v1" b="edit made on B"` |
+| S010.4 | A's `UpdateRemote` races B's delete → A's edit resurrected on both machines | passing (2026-11-11, darwin) — `TestRemoteGateUpdateRacingRemoteTrash` (`internal/engine/remotegate_test.go`). Red first: `files on disk = map[]` on a and b |
+| S010.5 | Folder arm: A's folder `MoveRemote` (local folder rename) races B's delete of that folder → A's renamed folder on both machines | passing (2026-11-11, darwin) — `TestRemoteGateFolderMoveRacingRemoteTrash` (`internal/engine/remotegate_test.go`). Red first: `files on disk = map[]` on a and b |
+| S010.6 | Residual window: B's edit lands **after** the gate passed, before A's `Move` → the move carries it; A's commit keeps the planned md5, so A downloads the edit; trees equal | passing (2026-11-11, darwin) — `TestRemoteGateMoveWindowEditStillConverges` (`internal/engine/remotegate_test.go`, `windowClient` drops the precondition to model a passed check). Red first: `trees diverge at new.txt: a="v1" b="edit made on B"` |
+| S010.7 | `Precondition` verdicts on the fake, per drift × mutation: file edited / renamed / moved / trashed / gone, folder renamed / moved / trashed / gone → `ErrDrift`, Drive unchanged, no trash sent; unchanged file and folder (child added inside) → mutation goes through; precondition naming another id → refused | passing (2026-11-11, darwin) — `TestPreconditionRefusesDrift`, `TestPreconditionPassesWhenDriveMatches`, `TestPreconditionForAnotherItemRefuses` (`internal/driveclient/precondition_test.go`) |
+| S010.8 | Every planner emission site pins `RemoteWant` (parent, name, dir, md5): `UpdateRemote`, file and folder `TrashRemote`, file-pair and folder-rename `MoveRemote`, the init merge's step-aside `MoveRemote` | passing (2026-11-11, darwin) — `TestRemoteMutationsPinTheirPlannedDriveState` (`internal/reconcile/remotewant_test.go`) |
+| S010.9 | Choke point: no `Update` / `Trash` / `Move` on a Drive client in `internal/executor` outside `remotewrite.go` | passing (2026-11-11, darwin) — `TestGateNoDriveMutationOutsideRemotewrite` (`internal/executor/remotegate_test.go`); seen red with one call reverted to `x.Client.Trash` |
+| S010.10 | Own writes never trip the gate: the whole offline suite and the fuzzer run every remote mutation gated | passing (2026-11-11, darwin) — `make test`; `TestFuzzConvergence` default, and 60×150 failing the same seeds as before the change (1, 28, 45: the §4.5 wedge, S002) |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

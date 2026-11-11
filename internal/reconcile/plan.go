@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"maps"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -25,6 +26,13 @@ func (in Input) localWinsName(loc LocalItem, r RemoteItem) bool {
 	return in.PreferNewer && r.ModifiedNS > 0 && loc.MtimeNS > r.ModifiedNS
 }
 
+// pinRemote is what a remote mutation expects Drive to still hold (spec §7
+// remote write gate): the snapshot entry at remotePath, which is the path of
+// the item on Drive, so its last segment is the Drive name.
+func pinRemote(remotePath string, r RemoteItem) *RemoteExpect {
+	return &RemoteExpect{ParentID: r.ParentID, Name: path.Base(remotePath), IsDir: r.IsDir, MD5: r.MD5}
+}
+
 // remoteStepsAside renames the losing Drive file to the conflict name, in
 // place, before anything is uploaded. It is what keeps the local winner's
 // upload from minting a SECOND item under one name in one Drive folder — the
@@ -34,7 +42,7 @@ func (in Input) localWinsName(loc LocalItem, r RemoteItem) bool {
 func remoteStepsAside(remotePath string, r RemoteItem, in Input) Action {
 	return Action{Type: MoveRemote, RelPath: remotePath,
 		NewRelPath: conflicts.Path(remotePath, in.Machine, in.Now),
-		FileID:     r.FileID, MD5: r.MD5, Size: r.Size}
+		FileID:     r.FileID, MD5: r.MD5, Size: r.Size, RemoteWant: pinRemote(remotePath, r)}
 }
 
 // Plan computes the ordered action plan. Output order: local dir moves
@@ -171,15 +179,18 @@ func Plan(in Input) ([]Action, []Skip) {
 		// One reparent carries the whole subtree; the per-file moves it
 		// explains are never emitted (pass 1 sees the children at their
 		// post-rename paths and finds nothing to do).
+		id := in.Base[m.from].FileID
+		ra := remByID[id] // detectLocalDirMoves pairs only dirs the remote holds at m.from
 		moves = append(moves, Action{Type: MoveRemote, RelPath: m.from, NewRelPath: m.to,
-			FileID: in.Base[m.from].FileID, IsDir: true})
+			FileID: id, IsDir: true, RemoteWant: pinRemote(ra.path, ra.item)})
 	}
 
 	// Local move pairing candidates: baseline files deleted locally whose
 	// remote is unchanged (safe to reinterpret as the source of a move).
 	type moveSrc struct {
-		path string
-		b    BaseItem
+		path   string
+		b      BaseItem
+		remote remoteRef // what the remote mutation (move or trash) pins
 	}
 	pairKey := func(md5 string, size int64) string { return md5 + "|" + itoa(size) }
 	moveSrcs := map[string][]moveSrc{}
@@ -310,7 +321,7 @@ func Plan(in Input) ([]Action, []Skip) {
 				transfers = append(transfers, Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
 					MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version})
 			} else {
-				src := moveSrc{path: p, b: b}
+				src := moveSrc{path: p, b: b, remote: ra}
 				moveSrcs[pairKey(b.MD5, b.Size)] = append(moveSrcs[pairKey(b.MD5, b.Size)], src)
 				trashCandidates = append(trashCandidates, src)
 			}
@@ -361,7 +372,8 @@ func Plan(in Input) ([]Action, []Skip) {
 					transfers = append(transfers, act)
 				}
 			case localChanged && !remoteContentChanged:
-				act := Action{Type: UpdateRemote, RelPath: pathNow, FileID: b.FileID}
+				act := Action{Type: UpdateRemote, RelPath: pathNow, FileID: b.FileID,
+					RemoteWant: pinRemote(ra.path, ra.item)}
 				if remoteMoved {
 					act.ProtectedBy = expected // upload must read the moved file, not a stranger
 				}
@@ -527,14 +539,16 @@ func Plan(in Input) ([]Action, []Skip) {
 			moveSrcs[key] = srcs[1:]
 			pairedSrc[src.path] = true
 			moves = append(moves, Action{Type: MoveRemote, RelPath: src.path, NewRelPath: target,
-				FileID: src.b.FileID, MD5: loc.MD5, Size: loc.Size})
+				FileID: src.b.FileID, MD5: loc.MD5, Size: loc.Size,
+				RemoteWant: pinRemote(src.remote.path, src.remote.item)})
 			continue
 		}
 		transfers = append(transfers, Action{Type: Upload, RelPath: target})
 	}
 	for _, src := range trashCandidates {
 		if !pairedSrc[src.path] {
-			deletes = append(deletes, Action{Type: TrashRemote, RelPath: src.path, FileID: src.b.FileID})
+			deletes = append(deletes, Action{Type: TrashRemote, RelPath: src.path, FileID: src.b.FileID,
+				RemoteWant: pinRemote(src.remote.path, src.remote.item)})
 		}
 	}
 
@@ -673,7 +687,8 @@ func Plan(in Input) ([]Action, []Skip) {
 				continue
 			}
 			if !hasCreateUnder(ra.path) && !hasCreateUnder(rewriteLD(ra.path)) && !remoteAliveUnder(ra.path) {
-				deletes = append(deletes, Action{Type: TrashRemote, RelPath: ra.path, FileID: b.FileID, IsDir: true})
+				deletes = append(deletes, Action{Type: TrashRemote, RelPath: ra.path, FileID: b.FileID, IsDir: true,
+					RemoteWant: pinRemote(ra.path, ra.item)})
 			}
 		default:
 			deletes = append(deletes, Action{Type: Forget, RelPath: p, FileID: b.FileID, IsDir: true})

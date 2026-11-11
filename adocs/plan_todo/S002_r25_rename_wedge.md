@@ -9,7 +9,7 @@ accepts:    Seeds 19 and 2 pass:
             go test ./internal/engine -run TestFuzzConvergence`. Seed 45 passes at the
             default crash probability (audit 2026-11-11_adversarial F09: `SYNCKEEPER_FUZZ_RUNS=60
             SYNCKEEPER_FUZZ_STEPS=150` is red on it, so the wedge does not need
-            `SYNCKEEPER_FUZZ_CRASH=1`); the records saying it does — decisions.md:60,
+            `SYNCKEEPER_FUZZ_CRASH=1`); seeds 1 and 28 fail the same sweep with the same message, measured 2026-11-11 at `06df839` — all three must pass); the records saying it does — decisions.md:60,
             plan_history.md:186, MANUAL §8 — are corrected in the fix's commit. A fuzzer sweep at
             crash probability 1.0 becomes a recorded sweep so the class cannot
             regress unseen. testing.md rows land with the fix; MANUAL §8's

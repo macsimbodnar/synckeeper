@@ -79,6 +79,33 @@ func (f *Fake) get(id string) (*fakeFile, error) {
 	return file, nil
 }
 
+// verifyLocked applies a write-gate precondition to the item as the fake
+// holds it. Callers must hold f.mu: the fake's check and mutation are
+// atomic, so tests exercise a race landing BEFORE the mutating call, never
+// the one-round-trip window the real client keeps.
+func (f *Fake) verifyLocked(p Precondition, fileID string) error {
+	file, err := f.get(fileID)
+	if err != nil {
+		return p.verify(File{}, err)
+	}
+	return p.verify(file.File, nil)
+}
+
+// getGated is get for a mutation: the item, after the write gate's check
+// when ctx carries a precondition. Callers must hold f.mu.
+func (f *Fake) getGated(ctx context.Context, fileID string) (*fakeFile, error) {
+	p, ok, err := preconditionFor(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if err := f.verifyLocked(p, fileID); err != nil {
+			return nil, err
+		}
+	}
+	return f.get(fileID)
+}
+
 // Forget removes a file from the fake entirely, as if it had been purged from
 // Drive — every call naming it then answers ErrNotFound. Tests use it for the
 // states a trash cannot model: a root folder that is gone rather than binned,
@@ -210,14 +237,14 @@ func (f *Fake) Upload(_ context.Context, parentID, name string, content io.Reade
 	return file.File, nil
 }
 
-func (f *Fake) Update(_ context.Context, fileID string, content io.Reader, _ int64) (File, error) {
+func (f *Fake) Update(ctx context.Context, fileID string, content io.Reader, _ int64) (File, error) {
 	data, err := io.ReadAll(content)
 	if err != nil {
 		return File{}, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	file, err := f.get(fileID)
+	file, err := f.getGated(ctx, fileID)
 	if err != nil {
 		return File{}, err
 	}
@@ -244,9 +271,17 @@ func (f *Fake) Download(_ context.Context, fileID string) (io.ReadCloser, error)
 	return io.NopCloser(bytes.NewReader(file.content)), nil
 }
 
-func (f *Fake) Trash(_ context.Context, fileID string) error {
+func (f *Fake) Trash(ctx context.Context, fileID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Gate first: a refused trash is never sent, so it is not counted.
+	if p, ok, err := preconditionFor(ctx, fileID); err != nil {
+		return err
+	} else if ok {
+		if err := f.verifyLocked(p, fileID); err != nil {
+			return err
+		}
+	}
 	f.trashCalls++
 	file, err := f.get(fileID)
 	if err != nil {
@@ -277,10 +312,10 @@ func (f *Fake) Mkdir(_ context.Context, parentID, name string) (File, error) {
 	return file.File, nil
 }
 
-func (f *Fake) Move(_ context.Context, fileID, newParentID, newName string) (File, error) {
+func (f *Fake) Move(ctx context.Context, fileID, newParentID, newName string) (File, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	file, err := f.get(fileID)
+	file, err := f.getGated(ctx, fileID)
 	if err != nil {
 		return File{}, err
 	}
