@@ -1061,3 +1061,12 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Residuals → S025** (now "held paths have no memory"), MANUAL §8 row. WARN texts softened to what is true. **S026** planned (`doctor` lists held paths as missing). S006 annotated (Windows sharing violations, macOS placeholders).
 - Docs: MANUAL §6/§8, specs §5, testing.md S014.1–S014.11. README checked, no change.
 - **S018 started** (`plan_todo/` → `plan_current/`), fresh subagent.
+
+### 2026-11-11 14:17 — S018 done: a folder entering the Drive tree is linked only after its walk completes
+- **Implemented by one Opus subagent, reviewed and committed by the coordinator** (DEC-002). `consumeChanges` defers the entering folder's row until its walk finishes; "entering" is decided by reachability from the root (`inTree`), not by row existence. No schema change.
+- **The guessed deletion route was real** (folder moved out and back, re-walk interrupted → local deletes planned; 12 fault cases red) — fixed. Two further routes to the same hole found and covered: a folder seen twice in one batch; a restored folder with a legacy trashed tombstone.
+- Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race`, `GOOS=linux go build/vet`, 60×150 fuzz (seeds 1, 28, 45 only).
+- **Fast check (REVIEW): clean** — nine batch orderings × every-`List` fault × error/crash converge. Doc points fixed in this commit (MANUAL §8 "before 2026-11-11" was wrong for today's earlier builds; specs §9 wording). Trade recorded in MANUAL §7: a persistently failing walk now stops all syncing instead of leaving a silent hole.
+- Existing holes on installed machines are not healed automatically: `doctor --repair` (MANUAL §8).
+- Docs: MANUAL §7/§8, specs §9, testing.md S018.1–S018.8. README checked, no change.
+- **S021 started** (`plan_todo/` → `plan_current/`).

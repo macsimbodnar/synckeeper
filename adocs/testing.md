@@ -468,6 +468,21 @@ Hold is by path (`Input.UnscannedLocal`, from `Skip.Unscanned`): nothing at or u
 | S014.11 | **Accepted residuals pinned** (MANUAL §8): file renamed with a changed mtime → deletion (the "mtime differs" subtest); unreadable subfolder under a renamed folder with nothing readable beside it → deletion | passing (2026-11-11, darwin) — `TestAnUnreadableFileWithAnotherStatHoldsNothingElse/mtime_differs`, `TestAnUnreadableSubdirUnderAnUndetectedRenameIsADeletion` (`internal/reconcile/unreadablerename_test.go`) |
 | S014.7 | No regression | passing (2026-11-11, darwin, re-run after review round 2) — `make test`; `go test -race` on scanner, engine, reconcile; `TestFuzzConvergence` default passes; 60×150 fails the same seeds as before (1, 28, 45: the §4.5 wedge, S002) |
 
+## S018 — a folder entering the Drive tree is walked until its walk completes
+
+Faults as in S009: an error at a `List`, and a **crash image** (`vacuum into` at that `List`). Moved-in folders are built outside the tree before the page token, so no creation events replay for them.
+
+| ID | Case | Status |
+|---|---|---|
+| S018.1 | Reviewer's shape: `box` (`inner.txt`, `sub/deep.txt`) moved into the root, `List(box)` fails once, by error and by crash image → refresh reports it; next 2 refreshes: snapshot = `box`, `box/inner.txt`, `box/sub`, `box/sub/deep.txt`; `deep.txt` edited on Drive → new md5 in the mirror | passing (2026-11-11, darwin) — `TestS018MovedInFolderWalkFailsOnce` (`internal/remotedelta/movedin_test.go`). Red first, both: `refresh 1 after the failed walk: snapshot = [box], want [box box/inner.txt box/sub box/sub/deep.txt]` |
+| S018.2 | 5-folder moved-in tree, fault at **every** `List` of the walk, error and crash image → refresh reports it; snapshot shows nothing of `box` until complete; next refresh → full tree | passing (2026-11-11, darwin) — `TestS018MovedInFolderInterruptedAtEveryList`. Red first: all 10 cases, e.g. `after the interrupted walk the snapshot shows [box top.txt]: box visible before its walk completed` |
+| S018.3 | Row existence ≠ in the tree: walk stops at `List(box/sub)` after `sub`'s row was written; `sub` moved straight into the root → walked, `sub/deep.txt` in the snapshot | passing (2026-11-11, darwin) — `TestS018PartlyWalkedSubfolderMovedInDirectly`. Red first: `snapshot = box,sub, want box,sub,sub/deep.txt`; also red with only the row-last half of the fix |
+| S018.4 | One batch, same folder twice: renamed outside the tree, then moved in (fake feed does not coalesce) → walked. No fault needed | passing (2026-11-11, darwin) — `TestS018FolderSeenOutsideThenMovedInSameBatch`. Red first: `snapshot = box, want box,box/inner.txt`; also red with only the row-last half |
+| S018.5 | Engine: moved-in `box`, `List(box)` fails once, error and crash image → that cycle errors; next cycle downloads `box/inner.txt`, `box/sub/deep.txt` | passing (2026-11-11, darwin) — `TestS018MovedInFolderDownloadsAfterFailedWalk` (`internal/engine/movedin_test.go`). Red first, both: `read box/inner.txt: … no such file or directory` |
+| S018.6 | **Reviewer's guessed deletion route — real.** Synced `box` (12 files, 3 folders) moved out of the tree; that cycle prunes its rows but its local deletes don't run (held by the mass-delete guard, no bin / crash image right after the refresh); moved back; re-walk stops at every `List`, error and crash image → interrupted cycle errors, plans no delete; next 2 cycles plan no delete; local tree byte-identical | passing (2026-11-11, darwin) — `TestS018MovedOutAndBackInterruptedDeletesNothing`. Red first: all 12 cases, e.g. `cycle 1 after the interrupted walk planned 11 deletes` (`quarantine_local` of `box/f*.txt` and `box/sub`, executed to the bin) |
+| S018.7 | Legacy trashed tombstone for `box` (parent = root) links nothing: `box` moved in → walked, `box/inner.txt` in the snapshot | passing (2026-11-11, darwin) — `TestS018RestoredFolderWithLegacyTombstoneIsWalked`. Seen red with `RemoteParent` ignoring `trashed`: `snapshot = box, want box,box/inner.txt` |
+| S018.8 | No regression | passing (2026-11-11, darwin) — `make test`; `go test -race` on remotedelta, statedb, engine, doctor, cmd/synckeeper; linux build + vet; `TestFuzzConvergence` default passes; 60×150 fails the same seeds as before (1, 28, 45: the §4.5 wedge, S002) |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |

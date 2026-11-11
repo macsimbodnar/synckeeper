@@ -104,6 +104,21 @@ func (d *DB) HasRemoteNode(fileID string) (bool, error) {
 	return err == nil, err
 }
 
+// RemoteParent returns the cached parent id of a node. ok is false when no
+// row exists or the row is a trashed tombstone, which links nothing into the
+// tree.
+func (d *DB) RemoteParent(fileID string) (parentID string, ok bool, err error) {
+	var trashed int
+	err = d.sql.QueryRow(`select parent_id, trashed from remote_nodes where file_id = ?`, fileID).Scan(&parentID, &trashed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return parentID, trashed == 0, nil
+}
+
 // AllRemoteNodes returns the whole cache.
 func (d *DB) AllRemoteNodes() ([]RemoteNode, error) {
 	rows, err := d.sql.Query(`select file_id, parent_id, name, mime_type, md5, size, version, trashed, modified_ns

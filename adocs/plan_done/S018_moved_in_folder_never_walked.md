@@ -29,4 +29,30 @@ excludes:   Retrying network-level errors in `internal/driveclient/retry.go`. Th
 closes:
 paused_by:
 author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
-done:
+done:       2026-11-11. `consumeChanges` holds the row of a folder entering the tree in
+            memory and writes it only after that folder's walk completes; the page token
+            is still saved last. "Entering" = the new parent is linked to the root
+            through mirror rows (`inTree`, the reachability `prune` and `Snapshot` use)
+            and the folder's own cached row is not — row existence alone is not
+            trusted. New read-only `(*DB).RemoteParent`. No schema change, no meta key.
+            Tests (testing.md S018.1–S018.8): the exact reproduction shape; a fault at
+            every `List` as error and as crash image; a partly walked subfolder moved in
+            directly; a folder seen twice in one batch; a restored folder with a legacy
+            trashed tombstone; the engine-level download after a failed walk.
+            The deletion route `excludes` asked to test is REAL and fixed: a folder
+            moved out and back with its re-walk interrupted planned local deletes of
+            its files (12 fault cases red, `TestS018MovedOutAndBackInterruptedDeletesNothing`).
+            Verified by the coordinator: `go build && go vet`, `gofmt -l`,
+            `go test -count=1 ./...`, `-race` on remotedelta/statedb/doctor/cmd green on
+            darwin; `GOOS=linux go build/vet` clean; 60×150 fuzz fails on seeds 1, 28,
+            45 only (S002). Fast check (REVIEW): nine batch orderings × every-`List`
+            fault × error/crash all converge; no re-walk of this machine's own writes;
+            prune cannot run on a half-walked folder; a failed `Refresh` aborts before
+            planning. Its two doc points fixed here. Trade accepted and now in MANUAL
+            §7: while an entering folder's walk keeps failing, every cycle aborts and
+            nothing syncs (before: a silent hole). NOT healed automatically: folders
+            left empty by earlier builds — `doctor --repair` (MANUAL §8 row kept for
+            that). Unverified: whether real Drive ever delivers one file twice in a
+            batch. Noted: `HasRemoteNode` is now test-only; one assertion in the
+            moved-out-and-back test is vacuous on the interrupted cycle (the follow-up
+            cycles carry the proof).

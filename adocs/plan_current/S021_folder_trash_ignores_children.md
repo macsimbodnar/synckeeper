@@ -20,5 +20,5 @@ excludes:   The real-client window and retry questions (S019). Folder deleted he
             renamed there (S020).
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

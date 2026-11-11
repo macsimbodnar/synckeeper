@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -111,8 +112,17 @@ func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.
 		if err != nil {
 			return err
 		}
+		// A folder entering the tree (moved or restored in, or new) may carry
+		// a subtree no change event will ever report, so it is walked — and
+		// its own row is written only after that walk completes. Until then
+		// nothing links the walk's rows to the root: a walk stopped by an
+		// error or by process death leaves the folder outside the tree, and
+		// the replayed batch (the token is saved last) walks it again (S018).
 		var walks []string
+		pending := map[string]statedb.RemoteNode{}
 		for _, c := range page.Changes {
+			// A later entry for the same file supersedes a pending one.
+			delete(pending, c.FileID)
 			switch {
 			case c.Removed || c.File == nil || c.File.Trashed:
 				// Trashed rows would only ever be filtered out again, so
@@ -125,33 +135,34 @@ func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.
 				if len(c.File.Parents) > 0 {
 					parent = c.File.Parents[0]
 				}
-				// A folder we have never seen, attached to a known parent,
-				// may carry a whole subtree for which no change events will
-				// ever arrive (moved or restored into the tree): walk it.
+				node := toNode(*c.File, parent)
 				if c.File.IsDir() {
-					known, err := db.HasRemoteNode(c.File.ID)
+					enters, err := entersTree(db, c.File.ID, parent, rootID)
 					if err != nil {
 						return err
 					}
-					parentKnown := parent == rootID
-					if !parentKnown && parent != "" {
-						if parentKnown, err = db.HasRemoteNode(parent); err != nil {
-							return err
+					if enters {
+						if !slices.Contains(walks, c.File.ID) {
+							walks = append(walks, c.File.ID)
 						}
-					}
-					if !known && parentKnown {
-						walks = append(walks, c.File.ID)
+						pending[c.File.ID] = node
+						continue
 					}
 				}
-				if err := db.UpsertRemoteNode(toNode(*c.File, parent)); err != nil {
+				if err := db.UpsertRemoteNode(node); err != nil {
 					return err
 				}
 			}
 		}
-		// Walk before the token is persisted: a failed walk is replayed
-		// with its batch on the next refresh (upserts are idempotent).
 		for _, id := range walks {
+			node, ok := pending[id]
+			if !ok {
+				continue
+			}
 			if err := fullWalk(ctx, client, db, id); err != nil {
+				return err
+			}
+			if err := db.UpsertRemoteNode(node); err != nil {
 				return err
 			}
 		}
@@ -166,12 +177,44 @@ func consumeChanges(ctx context.Context, client driveclient.Client, db *statedb.
 	}
 }
 
+// entersTree reports whether a folder change moves the folder into the tree:
+// its new parent is in the mirror's tree and its cached row, if any, is not.
+func entersTree(db *statedb.DB, id, parent, rootID string) (bool, error) {
+	if in, err := inTree(db, parent, rootID); err != nil || !in {
+		return false, err
+	}
+	in, err := inTree(db, id, rootID)
+	return !in, err
+}
+
+// inTree reports whether the mirror links id to rootID through parent rows —
+// the reachability prune and Snapshot use. A row's existence is not enough:
+// rows of a walk that stopped part-way, and out-of-tree rows not yet pruned,
+// exist without their subtrees, and reading them as "contents known" is how a
+// folder ended up in the tree with its contents never fetched (S018).
+func inTree(db *statedb.DB, id, rootID string) (bool, error) {
+	seen := map[string]bool{}
+	for id != rootID {
+		if id == "" || seen[id] {
+			return false, nil
+		}
+		seen[id] = true
+		parent, ok, err := db.RemoteParent(id)
+		if err != nil || !ok {
+			return false, err
+		}
+		id = parent
+	}
+	return true, nil
+}
+
 // prune drops cache rows unreachable from the root folder: children of
 // deleted folders, out-of-tree files the drive-wide changes feed dragged in,
-// and legacy trashed tombstones. Without it the cache grows monotonically
-// with all Drive activity, and every sync cycle loads the whole table. A
-// pruned subtree that later re-enters the tree is restored by the
-// unknown-folder walk in consumeChanges.
+// legacy trashed tombstones, and rows of an entering folder's walk that
+// stopped part-way. Without it the cache grows monotonically with all Drive
+// activity, and every sync cycle loads the whole table. A pruned subtree that
+// later re-enters the tree is restored by the entering-folder walk in
+// consumeChanges.
 func prune(db *statedb.DB, rootID string) error {
 	nodes, err := db.AllRemoteNodes()
 	if err != nil {
