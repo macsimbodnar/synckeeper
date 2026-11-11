@@ -1108,3 +1108,7 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Linux handoff:** status.md has a block for the session Max will start on `pop-os` (L8 gates, then S016 with a tmpfs reproduction recipe now in its step file), on a branch `linux` so it cannot collide with `master` here.
 - Max's `git push` from this session failed (`Permission denied (publickey)`); told him — pushing is his.
 - **S002 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-12 00:02 — correction: master only
+> "lo status e' sbagliato, si lavora solo su master per ora"
+- The Linux handoff in status.md told that session to work on a branch `linux` — an agent's invention, never asked of Max. Corrected: every session works on `master`; pull before starting and before each commit; Max pushes and pulls between machines.
