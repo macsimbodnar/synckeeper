@@ -1033,3 +1033,13 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Not reproduced: the implementer's note that testing.md lists S008.1–S008.3 twice — checked, one copy.
 - Docs: MANUAL §6/§8, specs §7, testing.md S010.1–S010.10, README (executor row). 
 - **S011 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-11 12:41 — S011 done (audit F05): a partial upload is recorded as our own write
+- **Implemented by one Opus subagent, reviewed and committed by the coordinator** (DEC-002). On an md5 mismatch after upload, `commitPartialUpload` commits the baseline row as holding Drive's bytes (local size -1 → always rehashed) plus the mirror row; the action is still reported failed; next cycle re-uploads onto the same id. No conflict copy, no extra API call, same for create and update.
+- **Design deviation accepted:** the partial item is not trashed (the audit's suggestion) — trashing starves a continuously written file and litters Drive's bin.
+- **Red-first:** F05 ungated and green; update-arm and continuous-writer tests; one skipped test pins the open crash window. Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race`, `GOOS=linux go build/vet` — green/clean. Fuzz before/after by the implementer: same three seeds.
+- **Fast check (REVIEW):** no data-loss path; all readers of the -1 row checked. Two findings, both documented in this commit and planned: **S022** (a file written without pause fails every cycle → quarantine purge, large-deletion warning and per-file activity stay off; ring flushed — MANUAL §6's "can't evict your history" corrected) and **S023** (double rename to one name + local edit conflicts instead of uploading — pre-existing planner rule; MANUAL §6's "never a conflict copy" corrected to name the exception).
+- **Left open → S024:** kill or lost reply between Drive storing the partial and the commit. MANUAL §8 row rewritten to that residual. Needs Max's mechanism pick.
+- S019 gained a fourth item (does real Drive's `Update` reply ever reflect a concurrent foreign write?).
+- Docs: MANUAL §6/§8, specs §7, testing.md S011.1–S011.5. README checked, no change.
+- **S013 started** (`plan_todo/` → `plan_current/`).

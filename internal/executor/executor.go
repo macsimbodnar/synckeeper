@@ -638,17 +638,22 @@ func (x *Executor) updateRemote(ctx context.Context, opID int64, a reconcile.Act
 	return x.commitUpload(opID, a.RelPath, abs, hash, pre, remote, parent)
 }
 
+// unknownLocalSize marks a baseline row whose local stat is deliberately not
+// recorded: no file has this size, so the scanner never trusts the row's md5
+// and always rehashes the file.
+const unknownLocalSize = -1
+
 // commitUpload verifies Drive stored what we hashed and commits the row.
-// If the file changed mid-upload we commit the pre-upload stat so the next
-// scan sees it dirty and re-uploads.
+// The row carries the pre-upload stat, so an edit landing after the stream
+// reads as dirty next scan and re-uploads.
 func (x *Executor) commitUpload(opID int64, rel, abs, hash string, pre os.FileInfo, remote driveclient.File, parentID string) error {
 	if err := checkpoint(CPUploadBeforeCommit); err != nil {
 		return err
 	}
-	if remote.MD5 != hash {
-		return fmt.Errorf("drive reported md5 %s but local content hashed %s (file changed mid-upload?); will retry next run", remote.MD5, hash)
-	}
 	x.setPathID(rel, remote.ID)
+	if remote.MD5 != hash {
+		return x.commitPartialUpload(opID, rel, hash, remote, parentID)
+	}
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 		if err := statedb.UpsertItem(tx, statedb.Item{
 			DriveFileID: remote.ID, RelPath: rel, Size: pre.Size(), ContentMD5: hash,
@@ -658,6 +663,41 @@ func (x *Executor) commitUpload(opID int64, rel, abs, hash string, pre os.FileIn
 		}
 		return x.mirror(tx, remote, parentID)
 	})
+}
+
+// commitPartialUpload handles an upload whose file was still being written:
+// Drive stored bytes other than the ones hashed — a prefix of a growing file,
+// or a mix of two versions — S011, audit F05. Those bytes are this machine's
+// own write, and the next cycle must see them as such. Left unrecorded, they
+// read as a stranger's: a create's item is seeded as both-new, an update's
+// new md5 as a remote edit, and §4.2's conflict row gives the partial copy
+// the canonical name and exiles the complete file to a conflict copy.
+//
+// So the row states the truth: Drive holds remote.MD5, and that is the
+// content last synced. The local file differs from it, so the next scan reads
+// local-changed, remote-unchanged and plans an UpdateRemote over this same
+// id — no second item (W17), no conflict. The mirror follows as for any own
+// write (W16), which is also what lets the remote-write gate pass that
+// update. The local stat is not recorded: the file changed in a way the stat
+// may not show, so the scanner must hash it rather than trust remote.MD5.
+//
+// A file written without pause repeats this every cycle: each cycle lands a
+// newer snapshot on Drive and nothing else, until the writer stops and an
+// upload's md5 matches.
+func (x *Executor) commitPartialUpload(opID int64, rel, hash string, remote driveclient.File, parentID string) error {
+	if err := x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
+		if err := statedb.UpsertItem(tx, statedb.Item{
+			DriveFileID: remote.ID, RelPath: rel, Size: unknownLocalSize, ContentMD5: remote.MD5,
+			DriveMD5: remote.MD5, DriveVersion: remote.Version,
+		}); err != nil {
+			return err
+		}
+		return x.mirror(tx, remote, parentID)
+	}); err != nil {
+		return err
+	}
+	// Still a failed action: the file is not in sync yet, and the user is told.
+	return fmt.Errorf("file changed while it uploaded: Drive holds md5 %s, the content hashed before the upload was %s; uploading again next cycle", remote.MD5, hash)
 }
 
 // mirror records on the Drive side of the state DB what we just did to Drive,

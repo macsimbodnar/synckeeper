@@ -40,6 +40,7 @@ type hookClient struct {
 	onUpload    func(name string) // before the bytes are read
 	afterUpload func(name string) // after Drive has stored them
 	onUpdate    func(fileID string)
+	afterUpdate func(fileID string) // after Drive has stored the new revision
 }
 
 func (h *hookClient) Upload(ctx context.Context, parentID, name string, content io.Reader, size int64) (driveclient.File, error) {
@@ -58,12 +59,16 @@ func (h *hookClient) Upload(ctx context.Context, parentID, name string, content 
 
 func (h *hookClient) Update(ctx context.Context, fileID string, content io.Reader, size int64) (driveclient.File, error) {
 	h.mu.Lock()
-	hook := h.onUpdate
+	hook, after := h.onUpdate, h.afterUpdate
 	h.mu.Unlock()
 	if hook != nil {
 		hook(fileID)
 	}
-	return h.Client.Update(ctx, fileID, content, size)
+	f, err := h.Client.Update(ctx, fileID, content, size)
+	if after != nil {
+		after(fileID)
+	}
+	return f, err
 }
 
 func auditCount(plan []reconcile.Action, typ reconcile.Type) int {
@@ -219,7 +224,6 @@ func TestAudit20261111_F04_UpdateRemoteOverwritesConcurrentRemoteEdit(t *testing
 // Drive's favour: the truncated upload takes the canonical name and the
 // complete file is renamed to a conflict copy.
 func TestAudit20261111_F05_FileWrittenDuringUploadIsTruncatedAtCanonicalName(t *testing.T) {
-	auditRepro(t)
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 	b := newMachine(t, "b", fake, root)

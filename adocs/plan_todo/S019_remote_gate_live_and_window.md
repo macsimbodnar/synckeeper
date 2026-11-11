@@ -12,6 +12,11 @@ goal:       The remote-write gate (S010) has never run against real Drive, and i
             "item inside a folder another machine binned" refusal and a possible
             one-cycle self-refusal (a folder trash sorted ahead of its children's,
             `plan.go:750` vs `:550`/`:690`) exist only on real Drive and are untested.
+            (4) S011 records a partial upload's md5 from Drive's `Update` reply as this
+            machine's own write: if real Drive's reply can reflect another machine's
+            concurrent write, the row would adopt their md5 and the next cycle would
+            overwrite their edit instead of conflicting (S011 fast check, a guess the
+            fake cannot show).
             Found by S010's fast check (2026-11-11), by reading.
 accepts:    A live run (`SYNCKEEPER_LIVE_TEST=1`) exercises each gated mutation and each
             drift kind against a throwaway Drive folder and records what real Drive

@@ -13,5 +13,5 @@ touches:    internal/scanner, internal/engine, MANUAL.md, adocs/specs.md §5,
 excludes:   Following symlinks. Surfacing skips under the daemon (S003).
 closes:     2026-11-11_adversarial-F07
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

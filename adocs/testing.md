@@ -417,6 +417,18 @@ Engine cases inject the other machine's write at the moment this machine calls `
 | S010.9 | Choke point: no `Update` / `Trash` / `Move` on a Drive client in `internal/executor` outside `remotewrite.go` | passing (2026-11-11, darwin) — `TestGateNoDriveMutationOutsideRemotewrite` (`internal/executor/remotegate_test.go`); seen red with one call reverted to `x.Client.Trash` |
 | S010.10 | Own writes never trip the gate: the whole offline suite and the fuzzer run every remote mutation gated | passing (2026-11-11, darwin) — `make test`; `TestFuzzConvergence` default, and 60×150 failing the same seeds as before the change (1, 28, 45: the §4.5 wedge, S002) |
 
+## S011 — a file still being written while it uploads keeps its real name, complete (audit 2026-11-11 F05)
+
+The writer is injected through `hookClient`: one part appended between the executor's hash and the stream (Drive stores bytes ≠ hash), one after Drive stored them. Then 3–4 rounds on both machines.
+
+| ID | Case | Status |
+|---|---|---|
+| S011.1 | **F05 end to end, create arm**: new `video.mkv` grows during its `Upload` → exactly one `video.mkv`, complete, on a and b; no conflict copy | passing (2026-11-11, darwin) — `TestAudit20261111_F05_FileWrittenDuringUploadIsTruncatedAtCanonicalName` (`internal/engine/audit_2026_11_11_test.go`), `SYNCKEEPER_AUDIT_REPRO` gate removed. Red first: `[a] … have 2 file(s): map[video (conflict a …).mkv:PART-1\|PART-2\|PART-3 video.mkv:PART-1\|PART-2\|]`, same on b |
+| S011.2 | **Update arm**: synced file rewritten in place, grows during its `UpdateRemote` → cycle reports 1 failed action; then exactly one complete `video.mkv` on a, b and Drive | passing (2026-11-11, darwin) — `TestS011UpdateOfFileStillBeingWrittenKeepsCompleteFileAtCanonicalName` (`internal/engine/uploadwhilewriting_test.go`). Red first: same conflict pair on a, b and Drive |
+| S011.3 | **Writer never pauses**: 5 cycles, every upload mid-write → each cycle 1 failed action, Drive holds one `app.log` whose content is a prefix of the local file and grows every cycle (not starved), b mirrors it, no conflict copy anywhere; writer stops → a, b, Drive equal, next plan empty | passing (2026-11-11, darwin) — `TestS011FileWrittenAcrossCyclesIsNeverStarvedNorConflicted` (`internal/engine/uploadwhilewriting_test.go`). Red first: `cycle 2: want the one upload reported failed (still being written), got 0` — cycle 2 had turned `app.log` into the conflict copy |
+| S011.4 | **Residual, not closed**: crash at `CPUploadBeforeCommit` after a partial upload, create and update arms → partial keeps the name, complete file is the conflict copy | skipped (known residual, spec §7 Uploads) — `TestS011CrashAfterPartialUploadLandsResidual` (`internal/engine/uploadwhilewriting_test.go`). Seen red with the skip removed: both arms `have 2 file(s): map[video (conflict a …).mkv:PART-1\|PART-2\|PART-3 video.mkv:PART-1\|PART-2\|]` |
+| S011.5 | No regression on the matching path | passing (2026-11-11, darwin) — `make test`; `TestFuzzConvergence` default 8/8 before and after; 60×150 fails the same seeds before and after (1, 28, 45: the §4.5 wedge, S002) |
+
 ## Live smoke (any phase, manual)
 
 | Case | Status |
