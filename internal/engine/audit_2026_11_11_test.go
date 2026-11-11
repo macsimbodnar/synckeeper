@@ -108,7 +108,6 @@ func auditDriveFiles(t *testing.T, fake *driveclient.Fake, rootID string) int {
 // deletions being unguarded by design (W14) — the whole Drive folder goes to
 // Drive's bin. Every other machine then moves its own copy to its system bin.
 func TestAudit20261111_F01_SymlinkedSyncDirEmptiesDrive(t *testing.T) {
-	auditRepro(t)
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 	b := newMachine(t, "b", fake, root)

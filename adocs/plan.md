@@ -13,13 +13,13 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S007  A symlinked `sync_dir` is scanned as empty — Drive folder trashed (audit F01, Critical)
-2. S008  `init` with the sync folder gone and `state.db` kept empties Drive (audit F02, Critical)
-3. S009  An interrupted mirror rebuild is read as mass deletion on Drive (audit F03, High)
-4. S010  Remote-write gate — an upload overwrites a concurrent remote edit (audit F04, High)
-5. S011  A file written during its upload lands truncated under its real name (audit F05, High)
-6. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
-7. S014  One unreadable file wedges every cycle (audit F08, Medium)
+1. S008  `init` with the sync folder gone and `state.db` kept empties Drive (audit F02, Critical)
+2. S009  An interrupted mirror rebuild is read as mass deletion on Drive (audit F03, High)
+3. S010  Remote-write gate — an upload overwrites a concurrent remote edit (audit F04, High)
+4. S011  A file written during its upload lands truncated under its real name (audit F05, High)
+5. S013  A tracked folder replaced by a symlink is trashed on Drive (audit F07, Medium)
+6. S014  One unreadable file wedges every cycle (audit F08, Medium)
+7. S017  Baseline is not bound to the sync folder — a retargeted link or edited `sync_dir` reads as deletion (S007 fast check; design decided with Max first)
 8. S002  Fix the R25 crash-rename wedge — a refused plan repeats forever (audit F09; shape decided with Max first)
 9. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
 10. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
@@ -30,7 +30,7 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 15. S006  Third platform: Windows
 16. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
 
-**Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Three steps cannot simply be run: S002 needs its shape decided with Max, S015 needs a live-Drive measurement, S016 needs Linux hardware.
+**Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Four steps cannot simply be run: S017 and S002 need their shape decided with Max, S015 needs a live-Drive measurement, S016 needs Linux hardware.
 
 Behind the audit steps the earlier order stands: S001 → S003 is Max's, recorded 2026-08-23 (W7 → W22 → W10; S002, then W22, now runs with the audit bugs). S004 and S005 were found 2026-09-03 and appended rather than inserted: both are cheap, self-contained, and independent, so they are candidates to jump — Max's call, a one-line edit here.
 
@@ -45,4 +45,6 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
-- nothing yet under this structure — see [plan_history.md](plan_history.md) for W1–W21.
+- S007  A symlinked `sync_dir` is scanned as empty — fixed 2026-11-11 (audit F01)
+
+Earlier work: [plan_history.md](plan_history.md), W1–W21.

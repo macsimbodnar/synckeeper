@@ -16,12 +16,29 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 )
 
+// walkDir is filepath.WalkDir; a var so a test can stand in for a walk that
+// sees nothing, the failure the empty-scan check in Scan exists to catch.
+var walkDir = filepath.WalkDir
+
 // Scan walks root and returns the local snapshot plus reported skips.
 func Scan(root string, base map[string]reconcile.BaseItem, ignore []string) (map[string]reconcile.LocalItem, []reconcile.Skip, error) {
+	// WalkDir does not follow a symlink given as its root: it visits the link
+	// and stops, and an empty snapshot beside a full baseline reads as every
+	// tracked file deleted locally (audit 2026-11-11 F01). Walk what it names.
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve sync dir %s: %w", root, err)
+	}
+	root = resolved
+
 	snapshot := map[string]reconcile.LocalItem{}
 	var skips []reconcile.Skip
+	visited := 0 // entries below root the walk reached, ignored and skipped ones included
 
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err = walkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if p != root {
+			visited++
+		}
 		if err != nil {
 			// One unreadable directory used to fail the whole cycle, every
 			// cycle, visible only in the log (W18-G, review F4). It is now
@@ -107,6 +124,22 @@ func Scan(root string, base map[string]reconcile.BaseItem, ignore []string) (map
 	})
 	if err != nil {
 		return nil, nil, err
+	}
+	// The structural net under every route to "the scan saw nothing" (a root
+	// the walk did not descend, an unreadable one, the next one nobody has
+	// thought of yet): an empty snapshot over a non-empty directory would plan
+	// the deletion of every tracked file, so it fails the cycle instead. A
+	// directory that is genuinely empty is not caught here — that is a
+	// legitimate deletion (W18-D).
+	if visited == 0 {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return nil, nil, fmt.Errorf("re-read sync dir %s after an empty scan: %w", root, err)
+		}
+		if len(entries) > 0 {
+			return nil, nil, fmt.Errorf("scan of sync dir %s saw no entries but the directory holds %d; refusing to sync, as that would read as every file deleted",
+				root, len(entries))
+		}
 	}
 	return snapshot, skips, nil
 }

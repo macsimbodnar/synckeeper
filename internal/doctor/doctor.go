@@ -269,6 +269,11 @@ func (d *Doctor) Repair(ctx context.Context) (*Report, error) {
 }
 
 func findOrphanTemps(syncDir string) []string {
+	// A walk does not descend a symlinked root (S007). Unresolvable means the
+	// dir is missing; the walk below then finds nothing, as before.
+	if r, err := filepath.EvalSymlinks(syncDir); err == nil {
+		syncDir = r
+	}
 	var out []string
 	filepath.WalkDir(syncDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

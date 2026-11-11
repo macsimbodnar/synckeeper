@@ -993,3 +993,15 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Recorded as DEC-002** (Max's words quoted): audit bug steps ahead of everything; S012 (LICENSE) last; the OAuth question left undecided; one Opus subagent per step, sequential, main session coordinates — overriding the AGENTS rule for this campaign only, rule text unchanged.
 - `plan.md` Open reordered to match; `status.md` rewritten. S001 stays in `plan_current/` waiting on Max's hardware and is not counted as the agent's active step — agent-added bookkeeping, stated in DEC-002.
 - **S007 started** (`plan_todo/` → `plan_current/`, `author:` set).
+
+### 2026-11-11 11:37 — S001 explained; Max will run the L8 gates himself
+> "Cosa e' il S001? Lo volgio sbloccare subito. se e' questione di testare su hardware e' tutto ok perche sta funzionando su linux e mac da mesi senza alcun problema"
+> "ok, eseguiro' su linx stasera o domani."
+- Explained S001's remainder: L8 (`-race`, 50k scale, 2 h soak on Linux — none ever run there) and L7 (docs). Offered to close L8 on Max's field report as W6.1 was; **Max chose to run the gates on `pop-os` instead**, so no decision was recorded and S001 is unchanged. Commands given in chat.
+
+### 2026-11-11 11:37 — S007 done (audit F01): a symlinked `sync_dir` is followed
+- **Implemented by one Opus subagent, reviewed and committed by the coordinator** (DEC-002). The engine resolves `sync_dir` per cycle (`filepath.EvalSymlinks`) and scans, writes, bins and cleans temps under the resolved path; `scanner.Scan`, the watch backends and `doctor` resolve too. Dangling link → hard error in `guards.EnsureSyncDir`. New structural net: a scan reaching no entry over a non-empty dir is a hard error.
+- **Red-first:** F01's gate removed, seen failing, then green; `symlinkroot_test.go` ×4. Coordinator re-ran `go build && go vet`, `gofmt -l`, `go test -count=1 ./...`, `GOOS=linux go build/vet` — all green/clean.
+- **Fast check (REVIEW), one Opus subagent, read-only:** nothing that loses or misplaces a file. Trivial: MANUAL §6 overstated the dangling-link message for `init` — fixed in this commit. Real: a retargeted link is scanned against the old baseline → **S017**, placed with the steps that need Max's design pick. Minor, folded into S017: FSEvents keeps watching the old target after a same-volume retarget (polling still catches changes).
+- Docs: MANUAL §6/§8/§9 (the F01 known-bug row is gone), specs §3.4/§6, testing.md S007.1–S007.7. README checked, no change.
+- **S008 started** (`plan_todo/` → `plan_current/`).

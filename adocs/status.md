@@ -8,11 +8,12 @@ Updated: 2026-11-11, by Claude (agent) at Max's direction
 
 - **Audit 2026-11-11 (adversarial, commit `1cea1b7`): 11 findings, all `planned`.** Report: [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md). Steps S007–S016, plus F09 onto S002. Eight gated repro tests (`SYNCKEEPER_AUDIT_REPRO=1`); each fix removes its test's gate. MANUAL §8 carries every finding as a known bug until its fix lands.
 - **Fix campaign authorized by Max 2026-11-11 (DEC-002):** audit bugs first, in `plan.md` order; distribution (S012, the OAuth client question) deferred and uncertain. One Opus subagent implements each step, sequentially; the main session coordinates, reviews, and commits.
-- **In progress: S007** (symlinked `sync_dir`, F01, Critical).
+- **Last done: S007** (symlinked `sync_dir`, F01, Critical) — fixed 2026-11-11; fast check clean, one follow-up planned as **S017** (baseline not bound to the folder: a retargeted link or edited `sync_dir` reads as deletion; needs Max's design pick).
+- **In progress: S008** (`init` with the sync folder gone and `state.db` kept, F02, Critical).
 - **Deep-fuzz command in `CLAUDE.md` is red at HEAD** (seed 45, default crash probability) — F09 / S002.
 - **Last done:** S001's agent-reachable items — **L1, L2, L5, L3, L4**, one commit each (`afc7664`, `0d7d8f1`, `6ab38a6`, `e3bc8fe`, `229f497`), `make test` green at every one and the Linux arm checked with `GOOS=linux go build/vet`. L6 landed earlier (2026-07-25). Before that, the last closed work was W6 (2026-08-23) — see [plan_history.md](plan_history.md) and [testing.md](testing.md).
 - **Also in `plan_current/`, waiting on Max's hardware (not counted as the agent's active step, DEC-002):** **S001 — finish the Linux port.** Still in `plan_current/`, no `done:` stamp. What landed: the `init` machine-name prompt (L1), the owner-only Linux daemon log (L2), the systemd unit corrections and the no-linger decision (L5), the per-platform `needsRebuild` (L3), and the inotify-limit diagnosis plus overflow-as-a-wake (L4). Rows W7-L1..L5 are in `testing.md`.
-- **Next by plan order:** S008, S009, S010, S011, S013, S014. Then three that need Max: S002 (shape), S015 (live Drive), S016 (Linux hardware). S001's remainder is unchanged and independent:
+- **Next by plan order:** S009, S010, S011, S013, S014. Then four that need Max: S017 and S002 (shape), S015 (live Drive), S016 (Linux hardware). **Max runs S001's L8 gates on `pop-os` himself (said 2026-11-11: "stasera o domani")** — S001 closes with L7 once he reports. S001's remainder is unchanged and independent:
 - **S001 next: L8, and it needs Linux hardware — Max's to run.** On `pop-os`, against the production inotify backend:
   - `go build ./... && go vet ./... && go test ./...` (was green 2026-07-25) plus `go test -race ./...`
   - `SYNCKEEPER_SCALE_FILES=50000 go test ./internal/watch/ -run 'TestScale|TestFSEventsScale' -timeout 20m` — expect ≈0 unwatchable directories

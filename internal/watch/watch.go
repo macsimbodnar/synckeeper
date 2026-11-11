@@ -11,6 +11,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -272,7 +273,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				pollingOnly = w.latchIfNeeded(&latch, failed, &fw)
 				noteBackend(live, fw, pollingOnly)
 			default:
-				pollingOnly = w.latchIfNeeded(&latch, fw.refresh(w.Eng.SyncDir), &fw)
+				pollingOnly = w.latchIfNeeded(&latch, fw.refresh(w.watchRoot()), &fw)
 				noteBackend(live, fw, pollingOnly)
 			}
 			mode := ModeWatching
@@ -389,7 +390,19 @@ func (w *Watcher) startNotifier(ctx context.Context, debounce *time.Timer, live 
 		},
 		watchLimit: func() { w.watchLimitHit.Store(true) },
 	}
-	return newBackend(ctx, w.Eng.SyncDir, w.ignoreGlobs, hooks)
+	return newBackend(ctx, w.watchRoot(), w.ignoreGlobs, hooks)
+}
+
+// watchRoot is the directory the backends watch: the sync dir with symlinks
+// resolved, as the engine scans it (S007). fsnotify adds its watches by walking
+// the root, and a walk does not descend a symlinked root — handed the link it
+// would watch nothing. On error the configured path is returned unchanged: the
+// watcher is only a wake-up, and the cycle itself reports why the dir is bad.
+func (w *Watcher) watchRoot() string {
+	if r, err := filepath.EvalSymlinks(w.Eng.SyncDir); err == nil {
+		return r
+	}
+	return w.Eng.SyncDir
 }
 
 // fdLimitOnce: the rlimit is process-wide; one raise is enough.

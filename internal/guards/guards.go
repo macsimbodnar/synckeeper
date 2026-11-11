@@ -48,6 +48,13 @@ func EnsureSyncDir(dir string, trackedItems int) (recreated bool, err error) {
 	case !os.IsNotExist(err):
 		return false, fmt.Errorf("sync dir %s is unreadable: %w", dir, err)
 	}
+	// A symlink to nothing is not a missing folder: its target is most likely
+	// on a volume that is not mounted, and recreating cannot help — mkdir on
+	// the link fails, and creating the target would sync into the bare
+	// mountpoint. Say what it is (S007).
+	if target, lerr := os.Readlink(dir); lerr == nil {
+		return false, fmt.Errorf("sync dir %s is a symlink to %s, which does not exist (is its volume mounted?)", dir, target)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, fmt.Errorf("recreate sync dir %s: %w", dir, err)
 	}

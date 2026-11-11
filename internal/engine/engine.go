@@ -159,7 +159,15 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		}
 		baseItems = nil
 	}
-	if err := executor.CleanStaleState(ctx, e.DB, e.Client, e.RootID, e.SyncDir); err != nil {
+	// A symlinked sync_dir must behave like the directory it names (audit
+	// 2026-11-11 F01): walks do not follow a symlinked root, and the Linux bin
+	// finds its volume by walking up the path, so everything below works on the
+	// resolved path. Resolved per cycle, so a retargeted link is followed.
+	root, err := filepath.EvalSymlinks(e.SyncDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sync dir %s: %w", e.SyncDir, err)
+	}
+	if err := executor.CleanStaleState(ctx, e.DB, e.Client, e.RootID, root); err != nil {
 		return nil, err
 	}
 
@@ -182,7 +190,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 	opts.Stage.set(StageScanning)
-	local, localSkips, err := scanner.Scan(e.SyncDir, base, e.Cfg.Engine.Ignore)
+	local, localSkips, err := scanner.Scan(root, base, e.Cfg.Engine.Ignore)
 	if err != nil {
 		return nil, fmt.Errorf("scan local dir: %w", err)
 	}
@@ -251,7 +259,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	x := &executor.Executor{
-		DB: e.DB, Client: e.Client, SyncDir: e.SyncDir,
+		DB: e.DB, Client: e.Client, SyncDir: root,
 		QuarantineDir: e.QuarantineDir, RootID: e.RootID,
 		Ignore: e.Cfg.Engine.Ignore, Trash: e.trasher(),
 	}
