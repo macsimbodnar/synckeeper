@@ -20,6 +20,11 @@ touches:    internal/reconcile (pass 1, R25 path), internal/engine, MANUAL.md,
 excludes:   The R25 wedge itself (S002) — same code path, different defect; if S002's
             shape is decided first, build this on top of it.
 closes:
-paused_by:
+paused_by:  Max's decision (2026-11-11), not a step: the implementation is complete and
+            parked in `git stash` ("S023 implementation…"); one pre-existing test,
+            `TestR25CoincidentMoveDivergentContentConflicts`
+            (internal/reconcile/coincident_move_test.go, testing.md row R25), pins the
+            old conflict outcome for this step's exact shape and is red against it.
+            An agent does not rewrite a recorded acceptance test on its own.
 author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

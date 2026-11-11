@@ -11,5 +11,5 @@ touches:    internal/doctor, cmd/synckeeper (doctor output), MANUAL.md, adocs/te
 excludes:   Any change to what `--repair` does.
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

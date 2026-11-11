@@ -1079,3 +1079,9 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Not verified on real Drive**; S019 gained item (5). Google-native edits inside are not detected (no md5) — stated in MANUAL §6; no `modifiedTime` compare added (an unverifiable stale time would refuse a folder delete forever).
 - Docs: MANUAL §6/§8 (row removed), specs §4.2/§7, testing.md S021.1–S021.14. README checked, no change.
 - **S023 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-11 15:06 — S023 built and parked on a recorded test; the R25 wedge needs no crash
+- **S023 implemented by one Opus subagent; NOT committed.** The R25 branch of pass 1 became a three-way decision: local changed / remote unchanged → `UpdateRemote`; remote changed / local unchanged → `Download` (added by the implementer beyond the step); both → conflict as before. Ten new tests green; fuzz sets identical before/after (default; 60×150: 1, 28, 45; crash=1×40: 2, 19).
+- **Stopped per the TESTS rule and Max's standing instruction:** `TestR25CoincidentMoveDivergentContentConflicts` (W4, 2026-07-23; testing.md R25) pins the old conflict for S023's exact shape and is red. The implementer did not touch it; neither did the coordinator. The whole diff is in `git stash` so the tree stays green; `paused_by:` set on the step. Question put to Max in chat.
+- **New finding, pre-existing, from the implementer (scratch two-machine test at `c70a5ae`; not re-run by the coordinator):** the §4.5 wedge is reachable with no crash — both machines rename a folder the same way, one edits a file inside. S002's step file and MANUAL §8's row corrected in this commit; the row's old workaround does not hold for that route and says so.
+- **S026 started** (`plan_todo/` → `plan_current/`) — the last step an agent can run alone.

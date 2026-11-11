@@ -13,13 +13,13 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S023  Both sides rename a file to the same name + a local edit → conflict instead of upload (S011 fast check, reproduced; same code path as S002)
+1. S023  Both sides rename a file to the same name + a local edit → conflict instead of upload (built, parked in `git stash`: a recorded R25 test pins the old outcome — Max decides)
 2. S017  Baseline is not bound to the sync folder — a retargeted link or edited `sync_dir` reads as deletion (S007 fast check; design decided with Max first)
 3. S020  A folder deleted here while renamed there: delete wins badly (S010 fast check, reproduced; rule decided with Max first)
 4. S024  Crash between a partial upload landing and its commit — the window S011 left open (audit F05; mechanism decided with Max first)
 5. S022  One action failing every cycle keeps quarantine purge, deletion warning and activity detail off (S011 fast check; outcome wording confirmed with Max)
 6. S025  Held paths have no memory: routes S013/S014 left open (link or unreadable item renamed, swap under a running daemon; Max decides whether and how)
-7. S002  Fix the R25 crash-rename wedge — a refused plan repeats forever (audit F09; shape decided with Max first)
+7. S002  Fix the R25 rename wedge — a refused plan repeats forever (audit F09; reachable WITHOUT a crash, found 2026-11-11; shape decided with Max first)
 8. S019  Remote-write gate on real Drive: live verification, narrower window (S010 fast check; live Drive and Max's pick first)
 9. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
 10. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
