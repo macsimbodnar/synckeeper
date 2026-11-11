@@ -12,6 +12,12 @@ This file has two halves, because the project kept 1233 lines of decisions befor
 - DEC-001 2026-09-03 — adopt the moltke document workflow; docs/ becomes adocs/
 - DEC-002 2026-11-11 — audit bugs first, distribution deferred; fixes implemented by Opus subagents
 - DEC-003 2026-11-11 — a file renamed the same way on both sides and edited on one is an update, not a conflict
+- DEC-004 2026-11-11 — S002: fix the planner for every wedge route and make a repeating refused plan visible
+- DEC-005 2026-11-11 — S017: the sync folder is identified by a hidden marker file inside it
+- DEC-006 2026-11-11 — S020: a folder renamed on Drive beats its local deletion
+- DEC-007 2026-11-11 — S024 not built: the partial-upload crash window is accepted
+- DEC-008 2026-11-11 — S022: a partial upload stays a failed action; the Failed-gated safeguards are fixed
+- DEC-009 2026-11-11 — S025 not built: held paths keep no memory; the residual routes are accepted
 
 ## DEC-001  2026-09-03  adopt the moltke document workflow; docs/ becomes adocs/
 Tags: process, docs, workflow
@@ -29,6 +35,36 @@ Why: correctness outranks features and ports; and an implementing agent on the c
 Tags: reconcile, conflicts, renames, R25, tests
 Decision: Max, in chat, asked to choose between the new rule (A) and the recorded conflict (B): *"opzione A, tieni anche il caso speculare"*. In pass 1's coincident-move branch (R25, W4 2026-07-23: the baseline row's remote item sits at a new path and a local file is already there), the outcome now follows §4.2's ordinary notions instead of "any md5 difference conflicts": local content changed and Drive's still equals the baseline's Drive md5 → `UpdateRemote` on the same id; Drive's changed and the local file is unchanged → `Download` over it (the mirror case, added by the implementer beyond S023's text and kept by Max); both changed → the conflict as before; equal → `Record` as before. The acceptance test that pinned the old outcome, `TestR25CoincidentMoveDivergentContentConflicts`, is **re-targeted, not deleted**: its Drive content changes from the baseline's `X` to `Z`, so it still proves what its name says — divergent content conflicts — on a shape that is divergent under the new rule; testing.md row R25 says so. Rejected (B): keeping the conflict left S011's symptom alive in this shape — both machines rename a partially uploaded file the same way and the truncated copy wins the name.
 Why: with Drive's content unchanged since the baseline there is no second edit to protect; a conflict there demotes the only real edit to a conflict copy and lets stale bytes keep the name.
+
+## DEC-004  2026-11-11  S002: fix the planner for every wedge route and make a repeating refused plan visible
+Tags: reconcile, R25, wedge, status, S002, audit-F09
+Decision: Max, in chat, 2026-11-11, answering six lettered questions: *"S002 -> B, S017 -> B, S020 -> A, S024 -> B, S022 -> B, S025 -> B"*. For S002, option B: the planner is corrected so that no known route puts two transfer-stage actions on one path — the crash routes (fuzz seeds 19 and 2 at `SYNCKEEPER_FUZZ_CRASH=1`; seeds 1, 28, 45 at the default) and the no-crash route (both machines rename a folder the same way, one edits a file inside) — AND a plan that `ValidateTransferStage` refuses cycle after cycle is surfaced in `status` as a standstill, not only as a repeating error. Rejected (A): fixing the planner alone — the refusal is the safety net for the next unknown route, and a net that fires silently forever is how this stayed unnoticed. **This entry also corrects the archive without editing it:** decisions.md 2026-08-01 ("reproduces only at `SYNCKEEPER_FUZZ_CRASH=1`"), plan_history.md W22 ("every recorded sweep is green" at the default 0.12) and the reasoning that placed it behind the Linux port are false as measured 2026-11-11 (audit 2026-11-11_adversarial F09; `06df839`).
+Why: the wedge is reachable in ordinary two-machine use, and a refused plan must never again be able to repeat unseen.
+
+## DEC-005  2026-11-11  S017: the sync folder is identified by a hidden marker file inside it
+Tags: engine, guards, sync-dir, baseline, S017, audit-F02
+Decision: Max, in chat, 2026-11-11, answering six lettered questions: *"S002 -> B, S017 -> B, S020 -> A, S024 -> B, S022 -> B, S025 -> B"*. For S017, option B: Synckeeper writes a hidden marker file inside the sync folder (a name the default ignore pattern `.synckeeper*` already covers) carrying an id that the state DB also records. A cycle that finds a non-empty baseline and no marker, or a marker with another id, is not looking at the folder it synced — a re-pointed `sync_dir`, a retargeted symlink, an unmounted volume's bare mountpoint, a recreated empty folder, a kill between the guard's mkdir and the baseline reset — and stops with an error naming the cure; `init` is the explicit way to adopt the folder (reset + union merge). An emptied folder that still holds its marker stays a real deletion (W18-D, W14). Rejected (A): recording the resolved path — it cannot tell a recreated or unmounted folder at the same path from the real one.
+Why: path identity misses the commonest routes; a marker in the folder travels with the folder and is absent exactly when the folder is not the one that was synced.
+
+## DEC-006  2026-11-11  S020: a folder renamed on Drive beats its local deletion
+Tags: reconcile, deletes, renames, S020
+Decision: Max, in chat, 2026-11-11, answering six lettered questions: *"S002 -> B, S017 -> B, S020 -> A, S024 -> B, S022 -> B, S025 -> B"*. For S020, option A: when a folder is deleted on one machine while another renames it on Drive, the rename wins — the deleting machine gets the folder back under its new name, nothing is trashed on Drive. This extends §4.2's per-file row "deleted | changed or moved → download" to files whose parent folder was renamed remotely. Rejected (B): letting the delete win cleanly — it removes from every machine content another machine had just shown it still uses.
+Why: same principle as edit-beats-delete — when one side acted on the item and the other deleted it, the deletion yields.
+
+## DEC-007  2026-11-11  S024 not built: the partial-upload crash window is accepted
+Tags: executor, uploads, crash, accepted, S024, audit-F05
+Decision: Max, in chat, 2026-11-11, answering six lettered questions: *"S002 -> B, S017 -> B, S020 -> A, S024 -> B, S022 -> B, S025 -> B"*. For S024, option B: not built. The residual of audit 2026-11-11_adversarial **F05** that S011 left open — a file still being written is uploaded, Drive stores the partial bytes, and the process is killed (or Drive's reply lost) before the commit, so the partial keeps the name and the complete file becomes a conflict copy — is accepted. Nothing is lost; MANUAL §8 keeps the row; the skipped test `TestS011CrashAfterPartialUploadLandsResidual` keeps pinning it. Rejected (A): tagging every upload with its author through Drive `appProperties` — an interface change touching every uploaded file, unverifiable without live runs, for a coincidence of two rare events.
+Why: cost and blast radius of the cure exceed a recoverable, rare outcome.
+
+## DEC-008  2026-11-11  S022: a partial upload stays a failed action; the Failed-gated safeguards are fixed
+Tags: engine, activity, quarantine, S022
+Decision: Max, in chat, 2026-11-11, answering six lettered questions: *"S002 -> B, S017 -> B, S020 -> A, S024 -> B, S022 -> B, S025 -> B"*. For S022, option B: an upload whose file changed under it stays a *failed* action (`sync` exits non-zero until the file is in sync). What changes is that one failing action no longer switches off the cycle's safeguards: the quarantine is purged on schedule, a mass deletion that did execute is reported, the other files' activity entries are recorded, and a failure repeating every cycle folds into one counted entry. Rejected (A): a separate "still being written" outcome — it would report success for a file that is not in sync.
+Why: the report must stay honest; the defect is in what a failure disables, not in calling it one.
+
+## DEC-009  2026-11-11  S025 not built: held paths keep no memory; the residual routes are accepted
+Tags: reconcile, holds, symlinks, accepted, S025, audit-F07
+Decision: Max, in chat, 2026-11-11, answering six lettered questions: *"S002 -> B, S017 -> B, S020 -> A, S024 -> B, S022 -> B, S025 -> B"*. For S025, option B: not built. The routes S013 and S014 left open, part of audit 2026-11-11_adversarial **F07** — a folder swapped for a symlink is still trashed on Drive when the link is renamed or replaced under another name, when its parent is renamed with nothing beside it to pair the rename, when both are renamed, and when the swap is done in steps under a running daemon; an unreadable file renamed *and* touched, and a folder renamed while holding only an unreadable subfolder — are accepted as documented (MANUAL §8, with `synckeeper pause` → swap → `synckeeper resume`). Rejected (A): remembering held rows in the state DB — a schema change that still cannot close the swap under a running daemon, where a real deletion is observed before the link exists.
+Why: the cure is a schema change for a partial gain; the outcome is recoverable from Drive's bin and the local bytes are never touched.
 
 ---
 

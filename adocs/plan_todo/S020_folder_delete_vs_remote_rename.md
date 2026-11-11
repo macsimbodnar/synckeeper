@@ -20,7 +20,9 @@ accepts:    Max picks the rule first: a remote folder rename beats a local folde
             testing.md rows.
 touches:    internal/reconcile, internal/engine, MANUAL.md, adocs/specs.md,
             adocs/testing.md
-excludes:   Nothing is built before the rule is chosen.
+excludes:   Rule decided by Max 2026-11-11 (DEC-006): the remote rename beats the local
+            delete — the deleting machine gets the folder back under its new name,
+            nothing is trashed on Drive.
 closes:
 paused_by:
 author:

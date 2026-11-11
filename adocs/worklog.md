@@ -1098,3 +1098,13 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **Fast check (REVIEW): no defect.** Both new arms sound; no §4.5 overlap; next cycle idle. Its one residual written into specs §4.3 (delete + unrelated create at the name Drive renamed the file to = one update; old content only in Drive's revisions).
 - Docs: MANUAL §6, specs §4.2/§4.3/§7, testing.md S023.1–S023.9 + R25. README checked, no change.
 - **The autonomous queue is empty.** Eleven steps closed today. Everything left at the top of `plan.md` waits on Max (decisions), live Drive, or Linux hardware.
+
+### 2026-11-11 23:51 — Max decides the six open shapes; live tests authorized; Linux handoff written
+> "S002 -> B / S017 -> B / S020 -> A / S024 -> B / S022 -> B / S025 -> B / 5. Do il permesso al test. / 6. Ok, quanto e' pronto dimmi che lancio claude su linux e lo faccio eseguire."
+- **DEC-004..DEC-009 recorded**, one per answer, each with the option rejected. DEC-004 also corrects the archive's false "only at `SYNCKEEPER_FUZZ_CRASH=1`" without editing it (plan_history.md and pre-adoption decisions are read-only).
+- **S024 and S025 closed unbuilt** — moved to `plan_done/` with a `done:` stamp saying NOT BUILT and naming the decision; MANUAL §8 keeps both rows; the audit's F05 and F07 residuals are thereby `accepted` portions, noted in status.md (the report's `Status:` lines move at the re-run).
+- Step files S002, S017, S020, S022 carry the decided shape in `excludes`; `plan.md` Open reordered: S002, S020, S017, S022, then S019/S015 (live), S016/S001 (Linux).
+- **Live-Drive tests authorized** for this machine's token, throwaway folder only — S019, S015.
+- **Linux handoff:** status.md has a block for the session Max will start on `pop-os` (L8 gates, then S016 with a tmpfs reproduction recipe now in its step file), on a branch `linux` so it cannot collide with `master` here.
+- Max's `git push` from this session failed (`Permission denied (publickey)`); told him — pushing is his.
+- **S002 started** (`plan_todo/` → `plan_current/`).

@@ -13,23 +13,21 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S017  Baseline is not bound to the sync folder — a retargeted link or edited `sync_dir` reads as deletion (S007 fast check; design decided with Max first)
-2. S020  A folder deleted here while renamed there: delete wins badly (S010 fast check, reproduced; rule decided with Max first)
-3. S024  Crash between a partial upload landing and its commit — the window S011 left open (audit F05; mechanism decided with Max first)
-4. S022  One action failing every cycle keeps quarantine purge, deletion warning and activity detail off (S011 fast check; outcome wording confirmed with Max)
-5. S025  Held paths have no memory: routes S013/S014 left open (link or unreadable item renamed, swap under a running daemon; Max decides whether and how)
-6. S002  Fix the R25 rename wedge — a refused plan repeats forever (audit F09; reachable WITHOUT a crash, found 2026-11-11; shape decided with Max first)
-7. S019  Remote-write gate on real Drive: live verification, narrower window (S010 fast check; live Drive and Max's pick first)
-8. S015  `watch`/`sync` never check the Drive root (audit F10, Medium, live confirmation first)
-9. S016  Linux mass-delete guard probes the wrong trash (audit F11, Medium, Linux hardware first)
-10. S001  Finish the Linux port (remaining L-items, then the hardware gates)
-11. S003  Daemon surfaces skips in `activity`
-12. S004  Stored error details keep the URL and lose the cause
-13. S005  "N local changes" counts wake-ups, not files
-14. S006  Third platform: Windows
-15. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
+1. S002  Fix the R25 rename wedge — planner fixed for every route + a repeating refused plan visible in `status` (audit F09; DEC-004)
+2. S020  A folder renamed on Drive beats its local deletion (DEC-006)
+3. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
+4. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
+5. S019  Remote-write gate on real Drive: live verification, narrower window (live runs authorized by Max 2026-11-11)
+6. S015  `watch`/`sync` never check the Drive root (audit F10; live confirmation first — authorized)
+7. S016  Linux mass-delete guard probes the wrong trash (audit F11; run by a session on `pop-os`)
+8. S001  Finish the Linux port — L8 gates on `pop-os`, then L7 docs
+9. S003  Daemon surfaces skips in `activity`
+10. S004  Stored error details keep the URL and lose the cause
+11. S005  "N local changes" counts wake-ups, not files
+12. S006  Third platform: Windows
+13. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
 
-**Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. **Every step an agent can run alone is done (2026-11-11).** What is left at the top waits on Max: S017, S020, S024, S022, S025 and S002 need a shape, rule or confirmation; S019 and S015 need live Drive; S016 needs Linux hardware.
+**Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Max decided the six open shapes on 2026-11-11 (DEC-004..DEC-009): S002, S020, S017, S022 are runnable; **S024 and S025 are closed unbuilt, accepted by decision**. S019 and S015 run against real Drive with Max's permission. S016 and S001's L8 run on `pop-os`, in a session Max starts there.
 
 Behind the audit steps the earlier order stands: S001 → S003 is Max's, recorded 2026-08-23 (W7 → W22 → W10; S002, then W22, now runs with the audit bugs). S004 and S005 were found 2026-09-03 and appended rather than inserted: both are cheap, self-contained, and independent, so they are candidates to jump — Max's call, a one-line edit here.
 
@@ -44,10 +42,10 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
+- S025  Held paths keep no memory — NOT BUILT, accepted (DEC-009)
+- S024  Partial-upload crash window — NOT BUILT, accepted (DEC-007)
 - S023  A file renamed the same way on both sides and edited on one is an update, not a conflict — fixed 2026-11-11 (DEC-003)
 - S026  `doctor` lists held paths as held, not missing — fixed 2026-11-11
 - S021  A folder trash checks the folder's contents on Drive first — fixed 2026-11-11 (left open by S010; live verification S019)
-- S018  A folder entering the Drive tree is linked only after its walk completes — fixed 2026-11-11
-- S014  One unreadable file is a held skip, not a wedge — fixed 2026-11-11 (audit F08; residual routes S025)
 
 Earlier work: [plan_history.md](plan_history.md), W1–W21.

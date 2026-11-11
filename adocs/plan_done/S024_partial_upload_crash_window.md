@@ -24,4 +24,5 @@ excludes:   Nothing is built before Max picks the mechanism — both change some
 closes:
 paused_by:
 author:
-done:
+done:       2026-11-11. NOT BUILT — closed by decision, not by work: Max chose to accept
+            the residual (DEC-007); the crash window stays open and documented (MANUAL §8; skipped test `TestS011CrashAfterPartialUploadLandsResidual`).

@@ -23,10 +23,14 @@ accepts:    Red-first tests for both routes (retargeted link, edited `sync_dir`)
 touches:    internal/statedb (meta: recorded folder identity), internal/engine,
             internal/guards, internal/watch (fsevents_darwin refresh), MANUAL.md,
             adocs/specs.md, adocs/testing.md
-excludes:   Nothing is built before Max picks the shape: what identifies the folder
-            (resolved path, a marker file, device+inode) and what a mismatch does
-            (reset the baseline and merge, or refuse). An emptied-but-same folder stays
-            a real deletion (W18-D, W14).
+excludes:   Shape decided by Max 2026-11-11 (DEC-005): a hidden marker file inside the sync
+            folder (covered by the default ignore `.synckeeper*`) carrying an id the state
+            DB also records. Non-empty baseline + marker absent or with another id →
+            the cycle stops with an error naming the cure; `init` adopts the folder
+            (reset + union merge). An emptied folder that still holds its marker stays a
+            real deletion (W18-D, W14). Existing installs have no marker: the first
+            cycle after the upgrade must mint one without reading that as a mismatch —
+            decide how, deliberately, and say it.
 closes:
 paused_by:
 author:

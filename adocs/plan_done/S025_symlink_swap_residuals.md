@@ -32,4 +32,5 @@ excludes:   Following symlinks. Deleting the link stays a deletion.
 closes:
 paused_by:
 author:
-done:
+done:       2026-11-11. NOT BUILT — closed by decision, not by work: Max chose to accept
+            the residual (DEC-009); the residual routes stay open and documented (MANUAL §8).

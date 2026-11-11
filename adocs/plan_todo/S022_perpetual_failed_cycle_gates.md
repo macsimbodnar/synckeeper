@@ -24,7 +24,9 @@ accepts:    Red-first tests: with one action failing every cycle, (a) the quaran
 touches:    internal/engine, internal/watch, internal/statedb (activity folding),
             internal/executor (only if the partial upload gets its own outcome),
             MANUAL.md, adocs/specs.md, adocs/testing.md
-excludes:   S003 (skips in `activity`), S004, S005 — neighbours, separate.
+excludes:   Decided by Max 2026-11-11 (DEC-008): a partial upload STAYS a failed action;
+            only what a failure disables changes. S003 (skips in `activity`), S004,
+            S005 — neighbours, separate.
 closes:
 paused_by:
 author:

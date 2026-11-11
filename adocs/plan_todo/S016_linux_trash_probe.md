@@ -12,6 +12,16 @@ accepts:    Reproduced first on Linux hardware (sync dir user-owned inside a roo
             fix's commit.
 touches:    internal/trash (linux), internal/engine, MANUAL.md, adocs/testing.md
 excludes:   Runs with or after S001's L8 hardware gates — same machine.
+            HOW TO REPRODUCE (for the session on Linux): a root-owned mount holding a
+            user-owned sync dir, e.g. `sudo mkdir -p /mnt/sk_f11 && sudo mount -t tmpfs
+            tmpfs /mnt/sk_f11 && sudo mkdir /mnt/sk_f11/sync && sudo chown $USER
+            /mnt/sk_f11/sync` (the mount root stays root-owned, so
+            `/mnt/sk_f11/.Trash-$UID` cannot be created); point a test engine's sync dir
+            there (a Linux-tagged test using the in-memory Drive fake, skipped unless an
+            env var names the prepared directory); delete >25% and >10 of the tracked
+            files on the fake; expected today: `trash.Available()` true (home trash), so
+            the mass-delete guard does not hold, every `MoveToTrash` fails, files fall
+            to the quarantine. Unmount with `sudo umount /mnt/sk_f11` afterwards.
 closes:     2026-11-11_adversarial-F11
 paused_by:
 author:

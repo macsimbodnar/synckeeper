@@ -17,18 +17,21 @@ accepts:    The no-crash shape above passes as a red-first engine test. Seeds 19
             go test ./internal/engine -run TestFuzzConvergence`. Seed 45 passes at the
             default crash probability (audit 2026-11-11_adversarial F09: `SYNCKEEPER_FUZZ_RUNS=60
             SYNCKEEPER_FUZZ_STEPS=150` is red on it, so the wedge does not need
-            `SYNCKEEPER_FUZZ_CRASH=1`); seeds 1 and 28 fail the same sweep with the same message, measured 2026-11-11 at `06df839` — all three must pass; the records saying it does — decisions.md:60,
-            plan_history.md:186, MANUAL §8 — are corrected in the fix's commit. A fuzzer sweep at
+            `SYNCKEEPER_FUZZ_CRASH=1`); seeds 1 and 28 fail the same sweep with the same message, measured 2026-11-11 at `06df839` — all three must pass; MANUAL §8's row leaves in the fix's commit
+            (the archive records are corrected by DEC-004, not edited). A fuzzer sweep at
             crash probability 1.0 becomes a recorded sweep so the class cannot
             regress unseen. testing.md rows land with the fix; MANUAL §8's
             known-bugs entry leaves the list in the fix's commit.
 touches:    internal/reconcile (pass 1, red-first before the planner), internal/engine,
             adocs/testing.md, MANUAL.md
-excludes:   Nothing is implemented before the shape is decided with Max: a
-            rejected-plan-is-permanent wedge may deserve a general answer (a refused
-            plan repeating identically is a reportable standstill) rather than one
-            more special case in pass 1. Both were named at triage; neither is chosen.
+excludes:   Shape decided by Max 2026-11-11 (DEC-004), both parts: (1) the planner is fixed
+            for every known route — no rel_path, nor an ancestor/descendant pair, carries
+            two transfer-stage actions; (2) a plan `ValidateTransferStage` refuses cycle
+            after cycle is shown in `status` as a standstill. The archive entries that
+            said "only at `SYNCKEEPER_FUZZ_CRASH=1`" (decisions.md 2026-08-01,
+            plan_history.md W22) are NOT edited — both are read-only; DEC-004 corrects
+            them. Out of scope: S020's rule (folder deleted here vs renamed there).
 closes:     2026-11-11_adversarial-F09
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002, DEC-004)
 done:
