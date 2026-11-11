@@ -13,5 +13,5 @@ excludes:   A file whose `lstat` fails inside a readable directory — decided 2
             to keep failing (the tree is moving under the scanner).
 closes:     2026-11-11_adversarial-F08
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-11 at Max's direction (DEC-002)
 done:

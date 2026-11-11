@@ -16,6 +16,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -270,4 +271,72 @@ func removeOwnTemp(abs string) error {
 		return fmt.Errorf("refusing to remove %s: not a synckeeper temp file", abs)
 	}
 	return os.Remove(abs)
+}
+
+// localMutations are the action types that write the local tree, or (Record)
+// restate its truth in the baseline — every one is checked by
+// refuseLinkedPaths before it runs. TestGateClassifiesEveryActionType makes
+// a new action type pick a side.
+var localMutations = map[reconcile.Type]bool{
+	reconcile.MkdirLocal:      true,
+	reconcile.MkdirRemote:     true, // also creates the local folder
+	reconcile.MoveLocal:       true,
+	reconcile.ConflictBackup:  true,
+	reconcile.Download:        true,
+	reconcile.Record:          true,
+	reconcile.QuarantineLocal: true,
+}
+
+// refuseLinkedPaths is the structural net under the planner's holds (S013,
+// spec §7): a local mutation is refused when any path component between the
+// sync root and its target — the target included — is a symlink. Without it
+// one planner gap writes through a link into a folder outside the sync dir:
+// MkdirAll and the download's temp file follow an intermediate symlink, and
+// guardedStat looks at the last element only. The root itself is exempt:
+// S007 resolves it, and SyncDir is the resolved path. A collapsed folder
+// delete has its covered entries checked too, since its fallback removes them
+// one by one. Cost: one Lstat per existing path component (each directory
+// once per action), before the action's own I/O.
+func (x *Executor) refuseLinkedPaths(a reconcile.Action) error {
+	if !localMutations[a.Type] {
+		return nil
+	}
+	seen := map[string]bool{}
+	check := func(rel string) error {
+		if rel == "" {
+			return nil
+		}
+		p, sofar := x.SyncDir, ""
+		for _, seg := range strings.Split(rel, "/") {
+			p = filepath.Join(p, seg)
+			sofar = path.Join(sofar, seg)
+			if seen[sofar] {
+				continue
+			}
+			seen[sofar] = true
+			info, err := os.Lstat(p)
+			if os.IsNotExist(err) {
+				return nil // nothing below a missing component can be a link
+			}
+			if err != nil {
+				return err
+			}
+			if info.Mode()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("%s: %s is a symlink; refusing to write through it or over it, replanning next cycle", rel, sofar)
+			}
+		}
+		return nil
+	}
+	if err := check(a.RelPath); err != nil {
+		return err
+	}
+	if err := check(a.NewRelPath); err != nil {
+		return err
+	}
+	for _, e := range a.Subtree {
+		if err := check(e.RelPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -211,7 +211,10 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		// Rows the scan could not see because a directory refused to be read
 		// (W18-G) — held harmless, never read as a local deletion.
 		UnreadableLocal: expandUnreadable(baseItems, localSkips),
-		PreferNewer:     opts.PreferNewer,
+		// Paths on disk the scan did not read — symlinks, non-regular files
+		// (S013) — held by path, never read as a local deletion.
+		UnscannedLocal: unscannedPaths(localSkips),
+		PreferNewer:    opts.PreferNewer,
 	})
 	e.warnUnreadable(localSkips)
 	res := &Result{Plan: plan}
@@ -383,6 +386,24 @@ func expandUnreadable(baseItems []statedb.Item, skips []reconcile.Skip) map[stri
 		}
 	}
 	return held
+}
+
+// unscannedPaths maps each local path the scan reported as present but not
+// read to its reason (S013, audit 2026-11-11 F07). The hold is by path, not by
+// baseline id: unlike an unreadable directory the path itself is missing from
+// the snapshot, and a remote item landing at or under it must be held too.
+func unscannedPaths(skips []reconcile.Skip) map[string]string {
+	var out map[string]string
+	for _, s := range skips {
+		if !s.Unscanned {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[s.RelPath] = s.Reason
+	}
+	return out
 }
 
 // warnUnreadable says once, per directory, that a folder cannot be read and

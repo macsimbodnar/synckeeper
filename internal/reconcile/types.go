@@ -79,6 +79,20 @@ type Input struct {
 	// believed the snapshot would trash the user's Drive copies of an entire
 	// subtree because one folder lost its read permission.
 	UnreadableLocal map[string]bool
+
+	// UnscannedLocal is the same idea for a path that IS on disk but that the
+	// scan does not read (S013, audit 2026-11-11 F07): a symlink, never
+	// followed, or a non-regular file — mapped to the scan's reason. Unlike an
+	// unreadable directory the path itself is absent from Local, so the hold
+	// is by path: nothing at or under it is decided or written. Baseline rows
+	// there are reported, never deleted, moved, downloaded or forgotten; no
+	// remote item is materialized there (under a symlinked folder that write
+	// would land outside the sync dir); and a folder holding one is never
+	// removed — nor is a folder whose Drive or local subtree holds a held
+	// row's item. When it is a plain file or folder again, the untouched rows
+	// meet it in the ordinary three-way table. Matched under CaseFold /
+	// NormFold, at the exact path only: a link elsewhere holds nothing else.
+	UnscannedLocal map[string]string
 }
 
 // Type enumerates plan actions.
@@ -189,6 +203,12 @@ type Skip struct {
 	// that is not "the user deleted it", so the engine expands this into
 	// Input.UnreadableLocal and the planner holds those rows harmless.
 	Unreadable bool
+
+	// Unscanned marks a local path that exists but the scan did not read: a
+	// symlink or a non-regular file (S013). The engine expands it into
+	// Input.UnscannedLocal, so a tracked item replaced by one is held, not
+	// read as deleted.
+	Unscanned bool
 
 	// Duplicate marks the one skip kind that means Drive itself holds two
 	// items under one name in one folder (it allows that; a filesystem does

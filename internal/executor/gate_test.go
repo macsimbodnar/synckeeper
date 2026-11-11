@@ -89,3 +89,80 @@ func TestGateNoRawFSMutationOutsideLocalwrite(t *testing.T) {
 		})
 	}
 }
+
+// S013: the symlink net (refuseLinkedPaths) sits at the one place every
+// action passes, execute's dispatch, ahead of the switch that runs the
+// primitives. Moving or dropping the call fails here, not in the field.
+func TestGateExecuteRunsTheLinkCheckFirst(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "executor.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fn *ast.FuncDecl
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == "execute" && fd.Recv != nil {
+			fn = fd
+		}
+	}
+	if fn == nil {
+		t.Fatal("executor.go has no (*Executor).execute")
+	}
+	checked := false
+	for _, st := range fn.Body.List {
+		if _, ok := st.(*ast.SwitchStmt); ok {
+			break
+		}
+		ast.Inspect(st, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "refuseLinkedPaths" {
+					checked = true
+				}
+			}
+			return true
+		})
+	}
+	if !checked {
+		t.Fatal("execute must call refuseLinkedPaths before dispatching an action (spec §7, S013)")
+	}
+}
+
+// Every action type is either a local mutation (checked by the symlink net)
+// or named here as touching no local path. A new type fails until it picks.
+func TestGateClassifiesEveryActionType(t *testing.T) {
+	noLocalWrite := map[string]bool{
+		"Upload": true, "UpdateRemote": true, "MoveRemote": true, "TrashRemote": true, "Forget": true,
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "../reconcile/types.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := map[string]bool{}
+	for typ := range localMutations {
+		local[string(typ)] = true
+	}
+	n := 0
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, sp := range gd.Specs {
+			vs := sp.(*ast.ValueSpec)
+			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Type" {
+				continue
+			}
+			for i, name := range vs.Names {
+				n++
+				lit := strings.Trim(vs.Values[i].(*ast.BasicLit).Value, `"`)
+				if local[lit] == noLocalWrite[name.Name] {
+					t.Errorf("action type %s must be exactly one of: in localMutations (localwrite.go), or listed here as writing no local path", name.Name)
+				}
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("found no reconcile.Type constants; the parse is wrong")
+	}
+}

@@ -26,6 +26,76 @@ func (in Input) localWinsName(loc LocalItem, r RemoteItem) bool {
 	return in.PreferNewer && r.ModifiedNS > 0 && loc.MtimeNS > r.ModifiedNS
 }
 
+// holds indexes Input.UnscannedLocal for the path holds (S013): paths on
+// disk the scan did not read, where nothing may be decided or written.
+// Matching honours the sync dir's name folding, like every other comparison
+// across trees — on a case-folding disk "Photos/x.jpg" lands inside "photos".
+type holds struct {
+	why   map[string]string // unscanned path → the scan's reason
+	byKey map[string]string // folded unscanned path → unscanned path
+	keys  []string          // folded unscanned paths, sorted
+	fold  func(string) string
+}
+
+func newHolds(in Input, fold func(string) string) *holds {
+	h := &holds{why: in.UnscannedLocal, byKey: map[string]string{}, fold: fold}
+	for _, u := range slices.Sorted(maps.Keys(in.UnscannedLocal)) {
+		k := fold(u)
+		h.byKey[k] = u
+		h.keys = append(h.keys, k)
+	}
+	slices.Sort(h.keys)
+	return h
+}
+
+func (h *holds) none() bool { return len(h.byKey) == 0 }
+
+// at returns the unscanned path at or above p, if any.
+func (h *holds) at(p string) (string, bool) {
+	if h.none() || p == "" {
+		return "", false
+	}
+	for q := h.fold(p); ; {
+		if u, ok := h.byKey[q]; ok {
+			return u, true
+		}
+		i := strings.LastIndexByte(q, '/')
+		if i < 0 {
+			return "", false
+		}
+		q = q[:i]
+	}
+}
+
+// atAny is at over several paths, the first match winning.
+func (h *holds) atAny(ps ...string) (string, bool) {
+	for _, p := range ps {
+		if u, ok := h.at(p); ok {
+			return u, true
+		}
+	}
+	return "", false
+}
+
+// under returns an unscanned path strictly below dir, if any.
+func (h *holds) under(dir string) (string, bool) {
+	prefix := h.fold(dir) + "/"
+	for _, k := range h.keys {
+		if strings.HasPrefix(k, prefix) {
+			return h.byKey[k], true
+		}
+	}
+	return "", false
+}
+
+// reason is the skip reason for p, held because of the unscanned path u.
+func (h *holds) reason(p, u string) string {
+	if p == u {
+		return "the scan does not read it (" + h.why[u] + "); leaving both sides alone"
+	}
+	return "under " + u + ", which the scan does not read (" + h.why[u] + "); leaving both sides alone"
+}
+
 // pinRemote is what a remote mutation expects Drive to still hold (spec §7
 // remote write gate): the snapshot entry at remotePath, which is the path of
 // the item on Drive, so its last segment is the Drive name.
@@ -83,6 +153,7 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		return strings.Join(segs, "/")
 	}
+	hold := newHolds(in, foldPath)
 	var foldRemote map[string]string
 	if folds {
 		foldRemote = make(map[string]string, len(in.Remote))
@@ -131,11 +202,17 @@ func Plan(in Input) ([]Action, []Skip) {
 			continue
 		}
 		if ra, ok := remByID[b.FileID]; ok && ra.path != p {
+			if _, held := hold.at(p); held {
+				continue // S013: the folder is a symlink (or under one); pass 4 holds it
+			}
+			if _, held := hold.at(ra.path); held {
+				continue // S013: moving it here would write through a symlink; pass 4 holds it
+			}
 			remoteDirMoves = append(remoteDirMoves, dirMove{from: p, to: ra.path})
 		}
 	}
 	rewriteRD := mkRewrite(remoteDirMoves)
-	localDirMoves := detectLocalDirMoves(in, remByID, baseIDs, rewriteRD)
+	localDirMoves := detectLocalDirMoves(in, remByID, baseIDs, rewriteRD, hold)
 
 	// rewrite maps a baseline path to its post-plan LOCAL location, applying
 	// the longest strictly-containing moved ancestor from either detector.
@@ -196,6 +273,59 @@ func Plan(in Input) ([]Action, []Skip) {
 	moveSrcs := map[string][]moveSrc{}
 	var trashCandidates []moveSrc
 
+	// S013: baseline rows held because their path is on disk but unread — a
+	// symlink or non-regular file at or above where the row lives, or where
+	// Drive now puts it. Decided once, before the passes: pass 4 must know
+	// which Drive items and local paths belong to held rows before it removes
+	// a folder that contains them.
+	held := map[string]string{} // base path → skip reason
+	heldIDs := map[string]bool{}
+	var heldLocal []string // where held rows' files sit locally, sorted
+	if !hold.none() {
+		localAt := func(q string) string {
+			if to, ok := localMoveDstOf[q]; ok {
+				return to
+			}
+			return rewriteLD(q)
+		}
+		for p, b := range in.Base {
+			remNow := ""
+			if ra, ok := remByID[b.FileID]; ok {
+				remNow = rewriteLD(ra.path)
+			}
+			if u, ok := hold.atAny(p, localAt(p), rewrite(p), remNow); ok {
+				held[p] = hold.reason(p, u)
+				heldIDs[b.FileID] = true
+				if _, ok := in.Local[localAt(p)]; ok {
+					heldLocal = append(heldLocal, localAt(p))
+				}
+			}
+		}
+		slices.Sort(heldLocal)
+	}
+	// heldOnDriveUnder: a held row's Drive item sits under dir on Drive —
+	// another machine may have moved it there, and the row, being held, never
+	// followed. Trashing dir would take it into Drive's bin.
+	heldOnDriveUnder := func(dir string) bool {
+		if len(heldIDs) == 0 {
+			return false
+		}
+		prefix := dir + "/"
+		for p, r := range in.Remote {
+			if heldIDs[r.FileID] && strings.HasPrefix(p, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	// heldLocalUnder: the local mirror — a held row's file is on disk under
+	// dir (its Drive item moved into a held path); binning dir would take it.
+	heldLocalUnder := func(dir string) bool {
+		prefix := dir + "/"
+		i, _ := slices.BinarySearch(heldLocal, prefix)
+		return i < len(heldLocal) && strings.HasPrefix(heldLocal[i], prefix)
+	}
+
 	// --- Pass 1: baseline files ---------------------------------------
 	for _, p := range slices.Sorted(maps.Keys(in.Base)) {
 		b := in.Base[p]
@@ -222,7 +352,15 @@ func Plan(in Input) ([]Action, []Skip) {
 		// Under a local-driven dir rename this row's file, if it survives,
 		// already sits at its post-rename location — every row is decided
 		// at the path the item will occupy (§4.2), on both sides.
+		if why, ok := held[p]; ok {
+			// S013: "local absent" would be a lie, and any write here would
+			// replace the user's link or land outside the sync dir; the row
+			// waits, untouched, for the path to be a plain file again.
+			skips = append(skips, Skip{RelPath: p, Reason: why})
+			continue
+		}
 		localPath := rewriteLD(p)
+		ra, remOK := remByID[b.FileID]
 		loc, locOK := in.Local[localPath]
 		if locOK && loc.IsDir {
 			// A dir now sits where the baseline had a file. Rare type
@@ -230,7 +368,6 @@ func Plan(in Input) ([]Action, []Skip) {
 			skips = append(skips, Skip{RelPath: p, Reason: "type changed from file to directory; not synced"})
 			continue
 		}
-		ra, remOK := remByID[b.FileID]
 		expected := rewrite(p) // local path after all planned dir moves execute
 		pathNow := expected
 		remoteMoved := false
@@ -578,6 +715,12 @@ func Plan(in Input) ([]Action, []Skip) {
 		// A new remote item under a locally-renamed dir materializes at its
 		// post-reparent path — never a zombie under the dead source dir.
 		target := rewriteLD(rp)
+		if u, held := hold.at(target); held {
+			// S013: a download or mkdir here would replace the user's symlink
+			// or non-regular file, or land outside the sync dir through it.
+			skips = append(skips, Skip{RelPath: target, Reason: hold.reason(target, u)})
+			continue
+		}
 		if l, ok := in.Local[target]; ok && l.IsDir != r.IsDir {
 			// C5 (R22): the path is occupied by the other type locally —
 			// a MkdirLocal would fail on the file, a Download would be
@@ -664,6 +807,12 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		_, locOK := in.Local[lp]
 		ra, remOK := remByID[b.FileID]
+		if why, ok := held[p]; ok {
+			// S013, dir flavor: not a local deletion, and trashing the folder
+			// on Drive would take the whole subtree with it.
+			skips = append(skips, Skip{RelPath: p, Reason: why})
+			continue
+		}
 		switch {
 		case locOK && remOK:
 			// Alive on both sides (a dir move was already emitted).
@@ -672,6 +821,14 @@ func Plan(in Input) ([]Action, []Skip) {
 			if hasCreateUnder(p) || hasCreateUnder(rewrite(p)) {
 				// Resurrect the container for surviving content.
 				mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: p, IsDir: true})
+			} else if u, ok := hold.under(lp); ok {
+				// S013: a symlink or non-regular file the scan did not read
+				// still sits inside; removing the folder would take it along.
+				skips = append(skips, Skip{RelPath: lp,
+					Reason: "deleted in Drive, but holds " + u + ", which the scan does not read (" + hold.why[u] + "); not removed"})
+			} else if heldLocalUnder(lp) {
+				skips = append(skips, Skip{RelPath: lp,
+					Reason: "deleted in Drive, but holds a file whose sync is on hold behind a symlink or non-regular file; not removed"})
 			} else {
 				deletes = append(deletes, Action{Type: QuarantineLocal, RelPath: lp, FileID: b.FileID, IsDir: true})
 			}
@@ -684,6 +841,15 @@ func Plan(in Input) ([]Action, []Skip) {
 			// from BOTH local paths stays a real local deletion and the
 			// trash propagates it.
 			if l, ok := in.Local[ra.path]; ok && l.IsDir {
+				continue
+			}
+			if heldOnDriveUnder(ra.path) {
+				// S013: remoteAliveUnder counts only items the baseline does
+				// not know; a held row's item is known but was never
+				// materialized here, so it reads as nothing — and would go
+				// to Drive's bin with the folder.
+				skips = append(skips, Skip{RelPath: p,
+					Reason: "gone locally, but on Drive holds a file whose sync is on hold behind a symlink or non-regular file; not trashed"})
 				continue
 			}
 			if !hasCreateUnder(ra.path) && !hasCreateUnder(rewriteLD(ra.path)) && !remoteAliveUnder(ra.path) {
@@ -826,7 +992,7 @@ func mkRewrite(lists ...[]dirMove) func(string) string {
 // The pairing here is a prediction of the pass-1/pass-2 pairing, evaluated
 // before the collapse changes what those passes see; once a dir collapses,
 // its children become ordinary post-move rows and never re-enter pairing.
-func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[string]bool, rewriteRD func(string) string) []dirMove {
+func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[string]bool, rewriteRD func(string) string, hold *holds) []dirMove {
 	// Move-source candidates exactly as pass 1 admits them: baseline files
 	// deleted locally whose remote is unchanged (content and position).
 	type cand struct{ path string }
@@ -839,6 +1005,9 @@ func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[str
 		}
 		if _, ok := in.Local[p]; ok {
 			continue
+		}
+		if _, held := hold.at(p); held {
+			continue // S013: not gone, only unread — a copy elsewhere is not its new home
 		}
 		ra, remOK := remByID[b.FileID]
 		if !remOK || ra.item.MD5 != b.DriveMD5 || ra.path != rewriteRD(p) {

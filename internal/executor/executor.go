@@ -415,6 +415,10 @@ func (x *Executor) execute(ctx context.Context, opID int64, a reconcile.Action) 
 			return fmt.Errorf("not executed: the move/backup of %s failed and this action depends on it; leaving everything alone, replanning next cycle", a.ProtectedBy)
 		}
 	}
+	// Spec §7, S013: no local mutation through or over a symlink in the tree.
+	if err := x.refuseLinkedPaths(a); err != nil {
+		return err
+	}
 	switch a.Type {
 	case reconcile.MkdirLocal:
 		return x.mkdirLocal(opID, a)

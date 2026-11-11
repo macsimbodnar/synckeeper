@@ -82,12 +82,14 @@ func Scan(root string, base map[string]reconcile.BaseItem, ignore []string) (map
 			}
 			return nil
 		}
+		// Present but not read: a tracked item replaced by one of these must
+		// be held, not read as deleted (S013, audit 2026-11-11 F07).
 		if d.Type()&fs.ModeSymlink != 0 {
-			skips = append(skips, reconcile.Skip{RelPath: rel, Reason: "symlink; not followed"})
+			skips = append(skips, reconcile.Skip{RelPath: rel, Unscanned: true, Reason: "symlink; not followed"})
 			return nil
 		}
 		if !d.IsDir() && !d.Type().IsRegular() {
-			skips = append(skips, reconcile.Skip{RelPath: rel, Reason: "not a regular file"})
+			skips = append(skips, reconcile.Skip{RelPath: rel, Unscanned: true, Reason: "not a regular file"})
 			return nil
 		}
 		if err := names.Validate(name); err != nil {

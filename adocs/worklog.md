@@ -1043,3 +1043,12 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - S019 gained a fourth item (does real Drive's `Update` reply ever reflect a concurrent foreign write?).
 - Docs: MANUAL §6/§8, specs §7, testing.md S011.1–S011.5. README checked, no change.
 - **S013 started** (`plan_todo/` → `plan_current/`).
+
+### 2026-11-11 13:30 — S013 done (audit F07): a tracked path replaced by a symlink is held — three rounds
+- **Implemented by one Opus subagent across three rounds, reviewed and committed by the coordinator** (DEC-002). Scanner marks symlink / non-regular skips `Unscanned`; the planner holds the tracked path at that same (folded) path and everything under it — no action either side, rows kept, skip reported. Executor net: `refuseLinkedPaths` refuses any local mutation with a symlink component below the sync root.
+- **Round 1 → fast check:** two holes reproduced — the hold ignored case/normalization folding (a download could write through a link), and a parent rename with only the link inside still trashed the subtree.
+- **Round 2 → second fast check (run because the fix added a planner heuristic that decides deletions):** the "same name anywhere" rule the coordinator had asked for turned file moves into copies and folder renames into full re-uploads in any tree with unrelated links (.app bundles, venvs, `node_modules/.bin`), and held deletions invisibly. Also a new hole: a held file moved on Drive into a folder deleted here was binned with it.
+- **Round 3 — coordinator's call: the same-name rule removed**; the regression risk to ordinary trees outweighs the rare route it closed. The pass-4 hole and its mirror fixed, red-first. Coordinator re-ran build, vet, gofmt, `go test -count=1 ./...`, `-race`, `GOOS=linux go build/vet`, and the 60×150 fuzz (seeds 1, 28, 45 only) after rounds 2 and 3.
+- **Honest scope, now in MANUAL §8 as one row:** the Drive folder is still trashed when the link is renamed, when its parent is renamed with nothing to pair, and — most likely in practice — when the swap is done in steps under a running daemon (a cycle in the gap reads a real deletion). Advice in MANUAL: `synckeeper pause`, swap, `synckeeper resume`. Planned as **S025**, Max decides whether and how.
+- Docs: MANUAL §6/§8/§9, specs §4.4/§5/§7, testing.md S013.1–S013.14. README checked, no change.
+- **S014 started** (`plan_todo/` → `plan_current/`), continuing the same subagent — it knows the hold machinery S014 reuses.

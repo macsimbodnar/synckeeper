@@ -294,7 +294,6 @@ func TestAudit20261111_F05_FileWrittenDuringUploadIsTruncatedAtCanonicalName(t *
 // and from there off every other machine. Under the daemon the skip is not
 // reported anywhere (S003).
 func TestAudit20261111_F07_FolderReplacedBySymlinkIsTrashedOnDrive(t *testing.T) {
-	auditRepro(t)
 	fake, root := newWorld(t)
 	a := newMachine(t, "a", fake, root)
 	b := newMachine(t, "b", fake, root)
@@ -321,6 +320,15 @@ func TestAudit20261111_F07_FolderReplacedBySymlinkIsTrashedOnDrive(t *testing.T)
 		t.Fatalf("a folder replaced by a symlink to itself was read as deleted: %d trash_remote actions, "+
 			"%d of 3 files left on Drive, %d of 3 left on machine b (skips reported: %v)",
 			n, auditDriveFiles(t, fake, root), len(b.listTree(t)), res.Skips)
+	}
+	reported := false
+	for _, s := range res.Skips {
+		if s.RelPath == "photos" {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("the symlink was not reported as a skip: %v", res.Skips)
 	}
 }
 
