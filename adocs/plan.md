@@ -20,12 +20,15 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 5. S019  Remote-write gate on real Drive: live verification, narrower window (live runs authorized by Max 2026-11-11)
 6. S015  `watch`/`sync` never check the Drive root (audit F10; live confirmation first — authorized)
 7. S016  Linux mass-delete guard probes the wrong trash (audit F11; run by a session on `pop-os`)
-8. S001  Finish the Linux port — L8 gates on `pop-os`, then L7 docs
-9. S003  Daemon surfaces skips in `activity`
-10. S004  Stored error details keep the URL and lose the cause
-11. S005  "N local changes" counts wake-ups, not files
-12. S006  Third platform: Windows
-13. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
+8. S027  `go test -race` red on Linux: the dashboard's exit races bubbletea's input reader (blocks S001's L8; found 2026-11-12)
+9. S001  Finish the Linux port — L8 gates on `pop-os`, then L7 docs (paused by S027)
+10. S029  The `internal/watch` tests reach the developer's real system bin (found 2026-11-12)
+11. S028  Linux: `status`/`doctor`/`info` name the home bin, not the sync dir's (S016 residual)
+12. S003  Daemon surfaces skips in `activity`
+13. S004  Stored error details keep the URL and lose the cause
+14. S005  "N local changes" counts wake-ups, not files
+15. S006  Third platform: Windows
+16. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
 
 **Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Max decided the six open shapes on 2026-11-11 (DEC-004..DEC-009): S002, S020, S017, S022 are runnable; **S024 and S025 are closed unbuilt, accepted by decision**. S019 and S015 run against real Drive with Max's permission. S016 and S001's L8 run on `pop-os`, in a session Max starts there.
 
