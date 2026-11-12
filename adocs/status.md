@@ -4,7 +4,7 @@ Convenience view, rewritten by hand at the end of any turn that changed plan
 state. The filesystem beats this file: on disagreement, `plan_current/` wins
 and this file is rewritten to match it.
 
-Updated: 2026-11-12 03:00, by Claude (agent) on `pop-os` at Max's direction
+Updated: 2026-11-12 02:49, by Claude (agent) on `pop-os` at Max's direction
 
 - **Audit 2026-11-11 (adversarial, commit `1cea1b7`): 11 findings, all `planned`.** Report: [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md). Steps S007–S016, plus F09 onto S002. Eight gated repro tests (`SYNCKEEPER_AUDIT_REPRO=1`); each fix removes its test's gate. MANUAL §8 carries every finding as a known bug until its fix lands.
 - **Fix campaign authorized by Max 2026-11-11 (DEC-002):** audit bugs first, in `plan.md` order; distribution (S012, the OAuth client question) deferred and uncertain. One Opus subagent implements each step, sequentially; the main session coordinates, reviews, and commits.
@@ -16,8 +16,9 @@ Updated: 2026-11-12 03:00, by Claude (agent) on `pop-os` at Max's direction
   - **S016 done** (`1019cae`): F11 reproduced on hardware first and confirmed; the guard and the executor now probe the bin the sync dir really uses (`trash.AvailableFor`). Residuals: `status`/`doctor`/`info`/daemon start line still name the home bin (S028); a mount *inside* the sync dir is not probed (testing.md S016.6). MANUAL §8 row says both.
   - **S027 done** (Max: "Fix ora, p.Quit()"): the dashboard's cancellation goes through `p.Quit()`, not `tea.WithContext`; the race was 23 of 46 runs before, 0 of 60 after.
   - **S001 done — the Linux port is closed.** L8 on hardware, inotify: build/vet/test green; `-race` red at `5c1a807` → S027 → green at `43c8c89`; 50k scale 0 of 500 dirs unwatchable (756 s); **2 h soak converged on 16,419 files** (00:38→02:38, `1019cae`, detached under `systemd-inhibit --what=sleep`). Rows: testing.md "S001 — L8 …" L8.1–L8.5, L7. L7: MANUAL §9 validation bullet cites L8, new mixed case-sensitivity bullet; README status line. specs §16.9 and the Roadmap record the pass.
+  - **Fast check of S001 → S030 (new, `plan_todo/`):** a case-insensitive folder (the Mac) holding baselined `Readme.txt` wedges when Drive gains `README.txt` and Drive's file-id order picks the newcomer — a download refused every cycle, nothing lost. Plan half confirmed by test, executor half by reading; reproducible on `pop-os` without sudo (casefold tmpfs in a user namespace, recipe in S030). Pre-existing since 2026-07-14; real now that Mac and Linux share one Drive folder. My first §9 wording overclaimed; corrected, and MANUAL §8 has the row.
   - **Deviations from the handoff's commands:** the soak ran with `XDG_DATA_HOME` in a scratch dir — **16,455 chaos files (131 MB) would otherwise have landed in `~/.local/share/Trash`** (S029, now measured); `-count=1` on every gate; scale with `-v`; logs in the session scratchpad, not repo `soak.log`; F11 reproduced in a user namespace, not with `sudo` (no password in the session).
-- **Next by plan order:** S020, S017, S022 (agents, Mac); S019 and S015 (live Drive, Mac); S029, S028 — their positions are the agent's proposal, Max reorders. Nothing left that needs `pop-os` except S028 (Linux-only display) and S029's Linux arm.
+- **Next by plan order:** S020, S017, S022 (agents, Mac); S019 and S015 (live Drive, Mac); S030, S029, S028 — their positions are the agent's proposal, Max reorders. Nothing left that needs `pop-os` except S028 (Linux-only display) and S029's Linux arm; S030 can be reproduced on either machine.
 - **Deep-fuzz command in `CLAUDE.md` is red at HEAD** — seeds 1, 28 and 45 (measured 2026-11-11 at `06df839` and with S010 alike), default crash probability, all the §4.5 wedge — F09 / S002.
 - **Last done:** S001, S027, S016 (2026-11-12, `pop-os`). Before them S007–S011, S013, S014, S018, S021, S023, S026 (2026-11-11).
 - **In `plan_current/`:** S002 (Mac session, in progress).
