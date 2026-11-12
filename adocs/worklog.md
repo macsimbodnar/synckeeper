@@ -1132,3 +1132,8 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - **S001 done** — `done:` stamp, `plan_current/` → `plan_done/`; plan.md Open drops it (13 entries), Done list gains it (S023 rotates out); plan intro: Linux is live; status.md rewritten.
 - **Fast check of S001's close-out (`69581d2`):** one real problem — my new MANUAL §9 case bullet overclaimed. A case-insensitive folder holding baselined `Readme.txt` (id B) when Drive gains `README.txt` (id A < B): `Snapshot` keeps A, reconcile plans `Download README.txt` with `LocalExists:false` (re-ran the reviewer's probe: confirmed), and the executor's guard refuses it every cycle (read: `guardedStat` `Lstat` folds onto `Readme.txt`). → **S030** in `plan_todo/`, Open #7 (agent's proposal). A casefold tmpfs in a user namespace (`chattr +F`) gives `pop-os` a case-insensitive dir without sudo — checked, recipe in S030.
 - Same commit: §9 bullet rewritten (picked by Drive file id, arbitrary; case-sensitive APFS behaves like Linux; points at §8); §8 row added; validation bullet says *simulated* two-machine soak; testing.md L7 note + L7.1 (open → S030); L8.3 notes the scale run launched 14 s before S016's first edit; status.md updated.
+
+### 2026-11-12 09:56 — commit everything for the Mac session
+> "ok, fai commit di tutto in modo che possa fare push e continuare su mac. segnala il bug o problema trovato."
+- Tree was already clean (`d66108e`); six commits unpushed since `5c1a807`.
+- status.md: a "FOR THE SESSION ON MAC" block — pull to `d66108e`, resume S002, S030's rule awaits Max, S030 can be reproduced on APFS.
