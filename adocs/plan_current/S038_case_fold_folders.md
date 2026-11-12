@@ -36,9 +36,9 @@ accepts:    Red-first, engine level, two machines on a folding disk, for the thr
             the model executor). MANUAL §8/§9; specs §5; testing.md.
 touches:    internal/reconcile, internal/executor (local write gate, directory arm),
             internal/remotedelta, tests, MANUAL.md, adocs/specs.md, adocs/testing.md
-excludes:   S030 (files: a fold winner that is not the file on disk) — same family,
-            do S030 first; S032.
+excludes:   S030 (files) — done 2026-11-12: its typed name-conflict skip, `ownCase` and
+            pinned case-only `MoveLocal` for FILES are the model to extend; S032.
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-12 (DEC-002)
 done:
