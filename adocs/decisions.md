@@ -22,6 +22,7 @@ This file has two halves, because the project kept 1233 lines of decisions befor
 - DEC-011 2026-11-12 — S030: a fold winner that is not the file on disk is a reported skip, named as a name conflict, in a form a UI can show
 - DEC-012 2026-11-12 — S032: a folder is "the same one, renamed" only when most of its non-empty files are found unchanged in it
 - DEC-013 2026-11-12 — S020 close-out: three calls by the coordinator under DEC-006 and DEC-011 (a test re-targeted; a case-fold folder clash is a reported hold; different renames keep both folders)
+- DEC-014 2026-11-12 — S038: a folder renamed only in case here and renamed to another name on Drive ends under Drive's name; the case change is dropped
 
 ## DEC-001  2026-09-03  adopt the moltke document workflow; docs/ becomes adocs/
 Tags: process, docs, workflow
@@ -89,6 +90,11 @@ Why: unrelated bytes written over a Drive file as an update is the silent corrup
 Tags: reconcile, deletes, renames, case-fold, tests, S020
 Decision: by the coordinating agent, 2026-11-12, each reported to Max in chat as his to overturn; none answered at the time of writing. (1) `TestS002OtherFolderRenamedOntoTheRenamedNameKeepsBoth` asserted `trash_remote D/other.txt` and said in its own comment that this was S020's shape, "decided to win, not built yet"; with DEC-006 built it expects `download N/other.txt`. (2) On a case-folding disk, a local folder whose name differs only in case from the name Drive renamed a deleted folder to, and that does not provably hold that folder's files, is a **name clash**: the folder, its rows, the local folder and Drive's new items under the name are reported and left alone until the user renames one — DEC-011's rule for files applied to folders. Rejected: merging into it, because the executor has no case-only directory rename and the row would sit at `E` while the disk says `e`, read as a deletion next cycle (S038). (3) A folder renamed differently on two machines ends as both folders, content in each — measured to be what a FILE renamed differently already does at `5a935a5`; before S020 the folder case ended with a failed action, the local name winning and Drive's folder in the bin. Also: the 200×150 fuzz sweep is red on seed 102 after S020 — a pre-existing case-fold defect of two files (repro red on `5a935a5`), assigned to S030, not hidden.
 Why: (1) follows from DEC-006 directly; (2) never guess which of two names the user wants on a disk that can hold one; (3) one rule for files and folders, and no rename silently discarded.
+
+## DEC-014  2026-11-12  S038: a folder renamed only in case here and renamed to another name on Drive ends under Drive's name; the case change is dropped
+Tags: reconcile, renames, case-fold, folders, S038
+Decision: by the coordinating agent, 2026-11-12, reported to Max in chat as his to overturn; not answered at the time of writing. On a case-folding disk, `D` → `d` here and `D` → `X` on Drive (same cycle): the folder moves to `X` here, ids kept, nothing copied; the local case change is not sent. Rejected: DEC-013 (3)'s "renamed differently → keep both", which would bring `X` back with D's files and upload `d` as a second folder holding copies of all of them. The mirror shape (`D` → `X` here, `D` → `d` on Drive) is not covered: it is a real rename on this side and stays under DEC-013 (3).
+Why: a case change is not a second name the user chose for different content — duplicating a whole folder to keep a capital letter costs more than the letter; and S038's own rule already gives Drive the name when two machines differ only in case.
 
 ---
 

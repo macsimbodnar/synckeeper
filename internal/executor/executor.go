@@ -508,6 +508,15 @@ func (x *Executor) execute(ctx context.Context, opID int64, a reconcile.Action) 
 }
 
 func (x *Executor) mkdirLocal(opID int64, a reconcile.Action) error {
+	// A net under the planner's name-conflict holds (S038): on a folding disk
+	// MkdirAll "succeeds" on a folder stored under another spelling — Drive's
+	// folder would then be bound to a different folder here.
+	if _, err := os.Lstat(x.abs(a.RelPath)); err != nil {
+		// absent: nothing in the way
+	} else if got, err := storedName(x.abs(a.RelPath)); err == nil && got != "" && got != path.Base(a.RelPath) {
+		return fmt.Errorf("mkdir %s: %s sits here under that name in another case or accents; leaving it alone, replanning next cycle",
+			a.RelPath, path.Join(path.Dir(a.RelPath), got))
+	}
 	if err := os.MkdirAll(x.abs(a.RelPath), 0o755); err != nil {
 		return err
 	}
@@ -557,15 +566,36 @@ func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	// the disk half is done, only the commit is owed. Nothing local is
 	// mutated on this path, so the write gate is not involved; a FILE move
 	// never takes it (files keep the full §7 guard below).
+	//
+	// "Gone" is by exact spelling: on a disk that folds case a stat of D finds d
+	// (S038). A destination folder the disk holds under another spelling is
+	// renamed to the one asked for, so Drive's name is the one on disk.
 	if a.IsDir {
-		if _, err := os.Lstat(from); os.IsNotExist(err) {
+		if goneExact(from) {
 			if info, err2 := os.Lstat(to); err2 == nil && info.IsDir() {
+				if err := fixSpelling(to, "move destination "+a.NewRelPath); err != nil {
+					return err
+				}
 				x.renamePathIDs(a.RelPath, a.NewRelPath)
 				return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 					return statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath)
 				})
 			}
 		}
+	}
+	if a.RelPath != a.NewRelPath && sameEntry(from, to) && (a.IsDir || a.LocalExists) {
+		// A case-only rename (S038): source and destination are two spellings
+		// of one entry. A file keeps its pinned stat check (§5's case arm); a
+		// folder has no content to race.
+		if !a.IsDir {
+			if _, err := guardedStat(to, "move destination "+a.NewRelPath, expFromAction(a), refuseVanished); err != nil {
+				return err
+			}
+		}
+		if err := guardedCaseRename(from, to, "move "+a.RelPath); err != nil {
+			return err
+		}
+		return x.commitMoveLocal(opID, a)
 	}
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
@@ -583,6 +613,11 @@ func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	if err := guardedRename(from, to, "move destination "+a.NewRelPath, expFromAction(a), allowVanished); err != nil {
 		return err
 	}
+	return x.commitMoveLocal(opID, a)
+}
+
+// commitMoveLocal is a local rename's commit, after the rename ran.
+func (x *Executor) commitMoveLocal(opID int64, a reconcile.Action) error {
 	x.noteApplied(opID)
 	if err := checkpoint(CPMoveBeforeCommit); err != nil {
 		return err
@@ -618,15 +653,13 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 	x.mu.Lock()
 	x.bumpedVersions[a.FileID] = f.Version
 	x.mu.Unlock()
-	// A Drive edit landing inside the remote gate's one-round-trip window
-	// rides along with the move, and the reply shows it. Recording that md5
-	// would mark the local bytes as in sync with content they never had —
-	// silent divergence. Keep the md5 the plan synced against, so the next
-	// cycle sees the remote change and downloads it.
-	driveMD5 := f.MD5
-	if w := a.RemoteWant; w != nil && !w.IsDir && f.MD5 != w.MD5 {
-		driveMD5 = w.MD5
-	}
+	// The row's Drive md5 is what the local bytes were last synced with, and
+	// a move leaves it so: a Drive edit — landing inside the remote gate's
+	// one-round-trip window and riding along with the move, or one the plan
+	// moves before it downloads it (S038: a file renamed in case here while
+	// Drive edited it) — recorded here would mark the local bytes as in sync
+	// with content they never had, and a failed download would never be
+	// planned again: silent divergence. Kept, the next cycle sees the change.
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 		// RenameItemPath renames the row — and, for a directory, every
 		// descendant row — leaving is_dir and the scanned stat/md5 intact.
@@ -637,7 +670,7 @@ func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Actio
 		if err := statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath); err != nil {
 			return err
 		}
-		if err := statedb.UpdateItemDrive(tx, a.FileID, driveMD5, f.Version); err != nil {
+		if err := statedb.UpdateItemDriveVersion(tx, a.FileID, f.Version); err != nil {
 			return err
 		}
 		// The mirror follows the move too (W16). Descendants need no rewrite:

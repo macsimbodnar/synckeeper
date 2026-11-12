@@ -207,6 +207,12 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	// Ids collapsed out of the snapshot by a duplicate or fold collision are
 	// alive on Drive; reconcile holds their baseline rows harmless (R19).
 	opts.Stage.set(StagePlanning)
+	// On a folding disk the scan may spell an unreadable folder in another
+	// case than its rows (S038): matched under the fold, as reconcile does.
+	var fold func(string) string
+	if ci, ni := e.caseInsensitive(), e.normInsensitive(); ci || ni {
+		fold = func(p string) string { return names.FoldKey(p, ci, ni) }
+	}
 	shadowed := expandShadowed(baseItems, remoteSkips)
 	shadowedAt, err := e.shadowedAt(remoteSkips)
 	if err != nil {
@@ -224,7 +230,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		ShadowedAt:     shadowedAt,
 		// Rows the scan could not see because a directory refused to be read
 		// (W18-G) — held harmless, never read as a local deletion.
-		UnreadableLocal: expandUnreadable(baseItems, localSkips),
+		UnreadableLocal: expandUnreadableFold(baseItems, localSkips, fold),
 		// Paths on disk the scan did not read — symlinks, non-regular files
 		// (S013), files it may not open (S014) — held by path, never read as
 		// a local deletion.
@@ -414,8 +420,19 @@ func deletionDestination(binAvailable bool) string {
 // FOLDER. Snapshot never walks a shadowed folder's subtree, so those rows are
 // absent from the remote snapshot; without this they read as remote-deleted
 // and get quarantined — breaking the guarantee that a name collision never
-// sends content to quarantine (spec §5).
+// sends content to quarantine (spec §5). Where the shadowed id has a row of
+// its own, rows under that row's path are held too: the baseline's spelling
+// of the folder, which Drive may now spell in another case (S038). Matched
+// byte for byte, never under the fold, so a folder that lost to ours under a
+// name differing only by the fold (d beside our D) holds none of our rows
+// (S038 round 3; round 2 folded the loser's skip path and held every row of
+// the winner). A loser under the EXACT same name still matches the winner's
+// rows by its skip path and holds them all — as at HEAD; S039.
 func expandShadowed(baseItems []statedb.Item, skips []reconcile.Skip) map[string]bool {
+	rowOf := map[string]string{}
+	for _, it := range baseItems {
+		rowOf[it.DriveFileID] = it.RelPath
+	}
 	shadowed := map[string]bool{}
 	var prefixes []string
 	for _, s := range skips {
@@ -424,6 +441,9 @@ func expandShadowed(baseItems []statedb.Item, skips []reconcile.Skip) map[string
 		}
 		shadowed[s.FileID] = true
 		prefixes = append(prefixes, s.RelPath+"/")
+		if q, ok := rowOf[s.FileID]; ok && q != s.RelPath {
+			prefixes = append(prefixes, q+"/")
+		}
 	}
 	for _, it := range baseItems {
 		for _, pre := range prefixes {
@@ -476,10 +496,20 @@ func (e *Engine) shadowedAt(skips []reconcile.Skip) (map[string]reconcile.Shadow
 // reconcile reads that as "deleted locally", and one lost read permission
 // trashes a whole subtree on Drive.
 func expandUnreadable(baseItems []statedb.Item, skips []reconcile.Skip) map[string]bool {
+	return expandUnreadableFold(baseItems, skips, nil)
+}
+
+// expandUnreadableFold is expandUnreadable with paths compared under fold
+// (nil: exact): on a folding disk the scan reports a folder under the name it
+// is stored under, which may differ in case from the baseline's (S038).
+func expandUnreadableFold(baseItems []statedb.Item, skips []reconcile.Skip, fold func(string) string) map[string]bool {
+	if fold == nil {
+		fold = func(p string) string { return p }
+	}
 	var prefixes []string
 	for _, s := range skips {
 		if s.Unreadable {
-			prefixes = append(prefixes, s.RelPath+"/")
+			prefixes = append(prefixes, fold(s.RelPath)+"/")
 		}
 	}
 	if len(prefixes) == 0 {
@@ -488,7 +518,7 @@ func expandUnreadable(baseItems []statedb.Item, skips []reconcile.Skip) map[stri
 	held := map[string]bool{}
 	for _, it := range baseItems {
 		for _, pre := range prefixes {
-			if strings.HasPrefix(it.RelPath, pre) {
+			if strings.HasPrefix(fold(it.RelPath), pre) {
 				held[it.DriveFileID] = true
 				break
 			}

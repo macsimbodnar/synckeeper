@@ -66,4 +66,4 @@ make clean        # remove dist/
 go test -race ./...
 ```
 
-Env-gated suites, exact invocations in [CLAUDE.md](CLAUDE.md): `SYNCKEEPER_LIVE_TEST` (live smoke vs a throwaway Drive folder), `SYNCKEEPER_SOAK_SECONDS` (chaos soak), `SYNCKEEPER_SCALE_FILES` (≥50k watcher scale), `SYNCKEEPER_FUZZ_*` (randomized convergence), `SYNCKEEPER_PLANFUZZ_RUNS` (random planner inputs through a model executor; a small budget runs in the plain suite).
+Env-gated suites, exact invocations in [CLAUDE.md](CLAUDE.md): `SYNCKEEPER_LIVE_TEST` (live smoke vs a throwaway Drive folder), `SYNCKEEPER_SOAK_SECONDS` (chaos soak), `SYNCKEEPER_SCALE_FILES` (≥50k watcher scale), `SYNCKEEPER_FUZZ_*` (randomized convergence), `SYNCKEEPER_PLANFUZZ_RUNS` (random planner inputs through a model executor; a small budget runs in the plain suite), `SYNCKEEPER_CRASH_MATRIX` (every commit-loss checkpoint around a case-only folder rename, two machines; a thinned matrix runs in the plain suite).

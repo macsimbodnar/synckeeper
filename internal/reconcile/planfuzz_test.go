@@ -16,7 +16,9 @@ package reconcile
 // more check on the clean run: an update_remote uploads the file that sat at
 // its row's path or at Drive's path, folder renames aside (pfCanon). S020
 // deletes a folder here in the folder and wide shapes (pfDropLocal): the outer
-// or the inner one, renamed on Drive or not.
+// or the inner one, renamed on Drive or not. S038 adds the casefold shape: the
+// folder shape on a disk that folds case (the model's disk is keyed by the
+// fold), with folder and file names respelled in case here or on Drive.
 //
 // Default budget keeps the package fast; SYNCKEEPER_PLANFUZZ_RUNS=100000 is
 // the deep run (per shape: flat, folder and wide).
@@ -43,7 +45,7 @@ func TestPlanFuzz(t *testing.T) {
 	for _, shape := range []struct {
 		name string
 		gen  func(*rand.Rand) Input
-	}{{"flat", pfGenFlat}, {"folder", pfGenFolder}, {"wide", pfGenWide}} {
+	}{{"flat", pfGenFlat}, {"folder", pfGenFolder}, {"wide", pfGenWide}, {"casefold", pfGenCaseFold}} {
 		t.Run(shape.name, func(t *testing.T) {
 			failures := 0
 			for seed := 0; seed < runs && failures < 3; seed++ {
@@ -67,6 +69,9 @@ func pfCheck(in Input) string {
 	}
 	if err := ValidateLocalOverwrites(in, plan); err != nil {
 		return err.Error()
+	}
+	if why := pfMints(in, plan); why != "" {
+		return why
 	}
 	kept := map[string]bool{}
 	for _, b := range in.Base {
@@ -138,19 +143,25 @@ func pfCanon(in Input) func(string) string {
 	for p, r := range in.Remote {
 		remByID[r.FileID] = p
 	}
+	fold := func(q string) string {
+		if in.CaseFold {
+			return strings.ToLower(q) // the generators' names are ASCII
+		}
+		return q
+	}
 	for q, b := range in.Base {
 		if rp, ok := remByID[b.FileID]; ok && b.IsDir {
-			alias[path.Base(rp)] = path.Base(q)
+			alias[fold(path.Base(rp))] = path.Base(q)
 		}
 	}
 	return func(q string) string {
 		segs := strings.Split(q, "/")
 		for i := range len(segs) - 1 {
-			if a, ok := alias[segs[i]]; ok {
+			if a, ok := alias[fold(segs[i])]; ok {
 				segs[i] = a
 			}
 		}
-		return strings.Join(segs, "/")
+		return fold(strings.Join(segs, "/"))
 	}
 }
 
@@ -161,11 +172,30 @@ func pfCanon(in Input) func(string) string {
 // returns what is on disk, the bytes uploaded or binned, and a Record that
 // would state an md5 the file at its path does not hold.
 func pfRun(in Input, plan []Action, fail, commitFail map[int]bool, crashAfter int) (map[string]pfFile, map[string]bool, string) {
+	// A folding disk holds one entry per name under the fold.
+	key := func(p string) string {
+		if in.CaseFold {
+			return strings.ToLower(p)
+		}
+		return p
+	}
 	disk := map[string]pfFile{}
+	// Folders on disk (S038 round 4): a folder move whose source is not
+	// there fails, unless the destination is already a folder (the executor
+	// replays it as a commit, R16).
+	dirs := map[string]bool{}
+	addDirs := func(p string) {
+		for d := path.Dir(p); d != "." && d != "/"; d = path.Dir(d) {
+			dirs[key(d)] = true
+		}
+	}
 	for p, l := range in.Local {
 		if !l.IsDir {
-			disk[p] = pfFile{l.MD5, l.Size, l.MtimeNS, p}
+			disk[key(p)] = pfFile{l.MD5, l.Size, l.MtimeNS, p}
+		} else {
+			dirs[key(p)] = true
 		}
+		addDirs(p)
 	}
 	canon := pfCanon(in)
 	basePath, drivePath := map[string]string{}, map[string]string{}
@@ -194,54 +224,73 @@ func pfRun(in Input, plan []Action, fail, commitFail map[int]bool, crashAfter in
 			continue
 		}
 		gate := func(p string, pinned bool, size, mtime int64) bool {
-			f, ok := disk[p]
+			f, ok := disk[key(p)]
 			return !ok || pinned && f.size == size && f.mtime == mtime
 		}
 		switch a.Type {
 		case MoveLocal:
 			if a.IsDir {
+				if !dirs[key(a.RelPath)] {
+					if !dirs[key(a.NewRelPath)] {
+						noteFail()
+					}
+					continue
+				}
+				for _, k := range slices.Sorted(maps.Keys(dirs)) {
+					if k == key(a.RelPath) || strings.HasPrefix(k, key(a.RelPath)+"/") {
+						delete(dirs, k)
+						dirs[key(a.NewRelPath)+k[len(key(a.RelPath)):]] = true
+					}
+				}
+				addDirs(a.NewRelPath)
 				for _, k := range slices.Sorted(maps.Keys(disk)) {
-					if rest, ok := strings.CutPrefix(k, a.RelPath+"/"); ok {
-						disk[a.NewRelPath+"/"+rest] = disk[k]
+					if rest, ok := strings.CutPrefix(k, key(a.RelPath)+"/"); ok {
+						f := disk[k]
 						delete(disk, k)
+						disk[key(a.NewRelPath)+"/"+rest] = f
 					}
 				}
 			} else {
-				f, ok := disk[a.RelPath]
+				f, ok := disk[key(a.RelPath)]
 				if !ok || a.RelPath != a.NewRelPath && !gate(a.NewRelPath, a.LocalExists, a.LocalSize, a.LocalMtimeNS) {
 					noteFail()
 					continue
 				}
-				delete(disk, a.RelPath)
-				disk[a.NewRelPath] = f
+				delete(disk, key(a.RelPath))
+				disk[key(a.NewRelPath)] = f
+				addDirs(a.NewRelPath)
 			}
 			if commitFail[i] {
 				noteFail()
 			}
+		case MkdirLocal, MkdirRemote:
+			dirs[key(a.RelPath)] = true
+			addDirs(a.RelPath)
 		case ConflictBackup:
-			f, ok := disk[a.RelPath]
+			f, ok := disk[key(a.RelPath)]
 			if !ok || !gate(a.NewRelPath, false, 0, 0) {
 				noteFail()
 				continue
 			}
-			delete(disk, a.RelPath)
-			disk[a.NewRelPath] = f
+			delete(disk, key(a.RelPath))
+			disk[key(a.NewRelPath)] = f
 		case QuarantineLocal:
-			if f, ok := disk[a.RelPath]; ok {
+			if f, ok := disk[key(a.RelPath)]; ok {
 				if a.LocalExists && (f.size != a.LocalSize || f.mtime != a.LocalMtimeNS) {
 					continue
 				}
 				saved[f.md5] = true // in the bin
-				delete(disk, a.RelPath)
+				delete(disk, key(a.RelPath))
 			}
 		case Download:
 			if !gate(a.RelPath, a.LocalExists, a.LocalSize, a.LocalMtimeNS) {
 				continue
 			}
 			dl++
-			disk[a.RelPath] = pfFile{a.MD5, a.Size, dl, ""}
+			disk[key(a.RelPath)] = pfFile{a.MD5, a.Size, dl, ""}
+			addDirs(a.RelPath)
 		case Upload, UpdateRemote:
-			f, ok := disk[a.RelPath]
+			f, ok := disk[key(a.RelPath)]
 			if !ok {
 				continue
 			}
@@ -256,7 +305,7 @@ func pfRun(in Input, plan []Action, fail, commitFail map[int]bool, crashAfter in
 				}
 			}
 		case Record:
-			if f, ok := disk[a.RelPath]; !a.IsDir && ok && f.size == a.LocalSize && f.mtime == a.LocalMtimeNS && f.md5 != a.MD5 && bad == "" {
+			if f, ok := disk[key(a.RelPath)]; !a.IsDir && ok && f.size == a.LocalSize && f.mtime == a.LocalMtimeNS && f.md5 != a.MD5 && bad == "" {
 				bad = fmt.Sprintf("record %s states md5 %s, the file there holds %s", a.RelPath, a.MD5, f.md5)
 			}
 		}
@@ -365,6 +414,102 @@ func pfGenFolder(r *rand.Rand) Input {
 	// the merge's N above, an unrelated folder at Drive's new name.
 	if r.Intn(4) == 0 {
 		pfDropLocal(&in, localDir)
+	}
+	return in
+}
+
+// pfMints (S038): on a folding disk, the plan run in full leaves Drive with no
+// two names differing only by the fold — none it creates (mkdir, upload, move)
+// beside one Drive keeps or one the same plan creates. Drive's side is
+// modelled by id: a trash or move acts on the item wherever it is by then.
+func pfMints(in Input, plan []Action) string {
+	if !in.CaseFold {
+		return ""
+	}
+	drive := map[string]string{} // path → id ("" for an item this plan creates)
+	for p, r := range in.Remote {
+		drive[p] = r.FileID
+	}
+	at := func(id string) (string, bool) {
+		for q, i := range drive {
+			if i == id && id != "" {
+				return q, true
+			}
+		}
+		return "", false
+	}
+	move := func(from, to string) {
+		for _, q := range slices.Sorted(maps.Keys(drive)) {
+			if q == from || strings.HasPrefix(q, from+"/") {
+				id := drive[q]
+				delete(drive, q)
+				if to != "" {
+					drive[to+q[len(from):]] = id
+				}
+			}
+		}
+	}
+	for _, a := range plan {
+		switch a.Type {
+		case MkdirRemote, Upload:
+			drive[a.RelPath] = ""
+		case TrashRemote:
+			if q, ok := at(a.FileID); ok {
+				move(q, "")
+			}
+		case MoveRemote:
+			if q, ok := at(a.FileID); ok {
+				move(q, a.NewRelPath)
+			}
+		}
+	}
+	seen := map[string]string{}
+	for _, q := range slices.Sorted(maps.Keys(drive)) {
+		if o, dup := seen[strings.ToLower(q)]; dup {
+			return fmt.Sprintf("Drive left holding %s and %s, one name on a folding disk", o, q)
+		}
+		seen[strings.ToLower(q)] = q
+	}
+	return ""
+}
+
+// pfGenCaseFold (S038): the folder shape on a folding disk, the folder's name
+// respelled in case here (d, n) and/or on Drive (Drive renamed D to d, or N to
+// n), sometimes a file's too — the shapes a folding disk meets when another
+// machine or the web UI spells a name differently.
+func pfGenCaseFold(r *rand.Rand) Input {
+	in := pfGenFolder(r)
+	in.CaseFold = true
+	respell := func(m map[string]LocalItem, rm map[string]RemoteItem, from, to string) {
+		for _, q := range slices.Sorted(maps.Keys(m)) {
+			if q == from || strings.HasPrefix(q, from+"/") {
+				m[to+q[len(from):]] = m[q]
+				delete(m, q)
+			}
+		}
+		for _, q := range slices.Sorted(maps.Keys(rm)) {
+			if q == from || strings.HasPrefix(q, from+"/") {
+				rm[to+q[len(from):]] = rm[q]
+				delete(rm, q)
+			}
+		}
+	}
+	for _, d := range []string{"D", "N"} {
+		if _, ok := in.Local[d]; ok && r.Intn(2) == 0 {
+			respell(in.Local, nil, d, strings.ToLower(d))
+		}
+		if _, ok := in.Remote[d]; ok && r.Intn(3) == 0 {
+			respell(nil, in.Remote, d, strings.ToLower(d))
+		}
+	}
+	// A file renamed in case here.
+	for _, q := range slices.Sorted(maps.Keys(in.Local)) {
+		if l := in.Local[q]; !l.IsDir && r.Intn(8) == 0 {
+			if up := path.Join(path.Dir(q), strings.ToUpper(path.Base(q))); up != q {
+				in.Local[up] = l
+				delete(in.Local, q)
+			}
+		}
 	}
 	return in
 }

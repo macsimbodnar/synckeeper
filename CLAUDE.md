@@ -45,4 +45,5 @@ SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h
 SYNCKEEPER_SCALE_FILES=50000 go test ./internal/watch/ -run 'TestScale|TestFSEventsScale' -timeout 20m  # W1-scale acceptance
 SYNCKEEPER_FUZZ_RUNS=60 SYNCKEEPER_FUZZ_STEPS=150 go test ./internal/engine -run TestFuzzConvergence  # deep fuzz (W4); SYNCKEEPER_FUZZ_CRASH is a PROBABILITY (default 0.12), not a flag — the recorded sweeps use the default
 SYNCKEEPER_PLANFUZZ_RUNS=100000 go test ./internal/reconcile -run TestPlanFuzz  # deep random plan sweep (S031): planner inputs → both §4.5 validators + a model executor; default 5000 per shape runs in the plain suite
+SYNCKEEPER_CRASH_MATRIX=1 go test -timeout 60m ./internal/engine -run TestS038CrashMatrix  # full crash matrix (S038): case-only folder renames × work inside × 8 commit-loss checkpoints × hits 1–3 × 3 targets × a user op before recovery; a thinned matrix runs in the plain suite; skips on a case-sensitive disk
 ```

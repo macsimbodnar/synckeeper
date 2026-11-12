@@ -91,6 +91,131 @@ func guardedRename(from, to, what string, exp expectation, onVanish vanishPolicy
 	return nil
 }
 
+// storedName is the name abs's last element is stored under in its parent
+// directory. On a disk that folds case or accents a stat by another spelling
+// finds the entry and does not tell its spelling (S038). An exact entry wins;
+// else the one equal under the fold. "" when there is none.
+func storedName(abs string) (string, error) {
+	want := filepath.Base(abs)
+	ents, err := os.ReadDir(filepath.Dir(abs))
+	if err != nil {
+		return "", err
+	}
+	key, found := names.FoldKey(want, true, true), ""
+	for _, e := range ents {
+		switch {
+		case e.Name() == want:
+			return want, nil
+		case found == "" && names.FoldKey(e.Name(), true, true) == key:
+			found = e.Name()
+		}
+	}
+	return found, nil
+}
+
+// goneExact: nothing is stored at abs under that exact spelling. On a folding
+// disk a stat of "D" finds "d"; after a case-only rename D → d the source is
+// gone although the stat says otherwise (S038).
+func goneExact(abs string) bool {
+	if _, err := os.Lstat(abs); err != nil {
+		return os.IsNotExist(err)
+	}
+	got, err := storedName(abs)
+	return err == nil && got != filepath.Base(abs)
+}
+
+// sameEntry: from and to name one entry on disk — two spellings of one name
+// on a folding disk: names equal under the fold, in one directory, one entry.
+// Two names that are not fold-equal never are (a hard-linked file's two names
+// are two entries; round 2's check).
+func sameEntry(from, to string) bool {
+	if names.FoldKey(filepath.Base(from), true, true) != names.FoldKey(filepath.Base(to), true, true) {
+		return false
+	}
+	same := func(x, y string) bool {
+		a, err := os.Lstat(x)
+		if err != nil {
+			return false
+		}
+		b, err := os.Lstat(y)
+		return err == nil && os.SameFile(a, b)
+	}
+	return same(filepath.Dir(from), filepath.Dir(to)) && same(from, to)
+}
+
+// caseTemp is the temporary name of a case-only rename that goes in two steps:
+// visible to the scan, so one left behind (recovery could not finish it) is
+// met as a folder or file here, never read as a deletion.
+func caseTemp(to string) string { return to + ".synckeeper-case" }
+
+// caseRenameInPlace is the one-step rename of a case-only rename; a test
+// replaces it to stand for a disk where that rename changes nothing.
+var caseRenameInPlace = os.Rename
+
+// guardedCaseRename renames from to to, two spellings of one entry on a disk
+// that folds case or accents (S038): the destination's "occupant" is the
+// source itself, which the occupant rule would refuse. Refused unless both
+// still name one entry. macOS renames in place; a case-folding Linux
+// directory (ext4, f2fs, tmpfs casefold) takes a rename onto the same entry as
+// a no-op, so when the spelling did not change it goes through caseTemp —
+// a run cut between the two steps is finished by recovery (finishCaseRename).
+func guardedCaseRename(from, to, what string) error {
+	if !sameEntry(from, to) {
+		return fmt.Errorf("%s: no longer the entry being renamed; leaving it alone, replanning next cycle", what)
+	}
+	if err := caseRenameInPlace(from, to); err != nil {
+		return err
+	}
+	got, err := storedName(to)
+	if err != nil {
+		return err
+	}
+	if got != filepath.Base(to) {
+		tmp := caseTemp(to)
+		if _, err := os.Lstat(tmp); !os.IsNotExist(err) {
+			return fmt.Errorf("%s: temporary name %s is taken; leaving both alone, replanning next cycle", what, tmp)
+		}
+		if err := os.Rename(from, tmp); err != nil {
+			return err
+		}
+		if err := os.Rename(tmp, to); err != nil {
+			return err
+		}
+	}
+	fsyncDir(filepath.Dir(to))
+	return nil
+}
+
+// finishCaseRename completes a two-step case-only rename cut between its
+// steps (S038): the entry sits at caseTemp(to) and nothing at to. Reports
+// whether it renamed anything.
+func finishCaseRename(to string, isDir bool) (bool, error) {
+	tmp := caseTemp(to)
+	info, err := os.Lstat(tmp)
+	if err != nil || info.IsDir() != isDir || !isDir && !info.Mode().IsRegular() {
+		return false, nil
+	}
+	if _, err := os.Lstat(to); !os.IsNotExist(err) {
+		return false, nil
+	}
+	if err := os.Rename(tmp, to); err != nil {
+		return false, err
+	}
+	fsyncDir(filepath.Dir(to))
+	return true, nil
+}
+
+// fixSpelling makes the entry at abs stored under abs's own spelling when the
+// disk holds it under another one equal under the fold (S038): a folder move
+// replayed as a commit whose disk half left the folder under another case.
+func fixSpelling(abs, what string) error {
+	got, err := storedName(abs)
+	if err != nil || got == "" || got == filepath.Base(abs) {
+		return err
+	}
+	return guardedCaseRename(filepath.Join(filepath.Dir(abs), got), abs, what)
+}
+
 // guardedRemoveEmptyDir removes a directory that must already be empty —
 // os.Remove's refusal of a non-empty directory is the guard: an unexpected
 // survivor means the plan is wrong, and we fail rather than lose data.

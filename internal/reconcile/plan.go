@@ -169,6 +169,13 @@ func Plan(in Input) ([]Action, []Skip) {
 		return strings.Join(segs, "/")
 	}
 	hold := newHolds(in, foldPath)
+	// S038: on a folding disk the scan is met under the names the plan knows
+	// its folders by (casefold.go); caseUp are folders renamed in case here,
+	// caseFixes case-only renames of folders adopted at Drive's spelling.
+	var fv foldView
+	if folds {
+		in, fv = foldCanon(in, remByID, baseIDs, hold, foldPath)
+	}
 	var foldRemote map[string]string
 	if folds {
 		foldRemote = make(map[string]string, len(in.Remote))
@@ -265,6 +272,76 @@ func Plan(in Input) ([]Action, []Skip) {
 				mergedDirMoves = append(mergedDirMoves, m)
 				mergedSrc[m.from] = true
 				continue
+			}
+			keep = append(keep, m)
+		}
+		remoteDirMoves = keep
+	}
+	// Every lookup here honours the disk's name folding: on a folding disk
+	// "e" is at "E".
+	var foldLocal, foldBase map[string]string
+	if folds {
+		foldLocal = make(map[string]string, len(in.Local))
+		for q := range in.Local {
+			foldLocal[foldPath(q)] = q
+		}
+		foldBase = make(map[string]string, len(in.Base))
+		for q := range in.Base {
+			foldBase[foldPath(q)] = q
+		}
+	}
+	// S038: a folder Drive moved or renamed onto a name that a different
+	// entry here holds in another case or accents, its own folder still here:
+	// the rename cannot land (one name on this disk; the gate refused it every
+	// cycle). Held as a name conflict (DEC-011, DEC-013): the folder, its rows,
+	// the entry here and Drive's new items under the name are left alone and
+	// reported until the user renames one. A folder Drive moves out of the way
+	// itself this cycle is not a holder (its move runs; S039's order).
+	foldHeld := map[string]string{} // held move's source → the entry here holding its name
+	if folds && len(remoteDirMoves) > 0 {
+		movingAway := map[string]bool{}
+		for _, m := range remoteDirMoves {
+			movingAway[m.from] = true
+		}
+		// nowAt: where the disk holds Drive's path q before the folder moves run.
+		nowAt := func(q string) string {
+			best, out := -1, q
+			for _, m := range remoteDirMoves {
+				if strings.HasPrefix(q, m.to+"/") && len(m.to) > best {
+					best, out = len(m.to), m.from+q[len(m.to):]
+				}
+			}
+			return out
+		}
+		byDepth := slices.Clone(remoteDirMoves)
+		slices.SortFunc(byDepth, func(a, b dirMove) int {
+			if c := strings.Count(a.from, "/") - strings.Count(b.from, "/"); c != 0 {
+				return c
+			}
+			return strings.Compare(a.from, b.from)
+		})
+		keep := remoteDirMoves[:0:0]
+		for _, m := range byDepth {
+			inherited := false
+			for d := range foldHeld {
+				if strings.HasPrefix(m.from, d+"/") {
+					inherited = true
+				}
+			}
+			if inherited {
+				continue // inside a held folder: waits with it
+			}
+			if src, ok := in.Local[m.from]; ok && src.IsDir {
+				t := path.Join(nowAt(path.Dir(m.to)), path.Base(m.to))
+				if path.Dir(m.to) == "." {
+					t = m.to
+				}
+				if _, exact := in.Local[t]; !exact {
+					if lq, ok := foldLocal[foldPath(t)]; ok && lq != m.from && !movingAway[lq] {
+						foldHeld[m.from] = lq
+						continue
+					}
+				}
 			}
 			keep = append(keep, m)
 		}
@@ -367,7 +444,20 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		return best, found
 	}
-	localDirMoves := detectLocalDirMoves(in, remByID, baseIDs, rewriteRD, rewriteDone, hold)
+	// S038: a renamed folder whose new name Drive holds in another case or
+	// accents (an item other than itself) is not paired as a rename: the
+	// reparent would put that name beside it. foldBlocked holds it instead.
+	var driveFoldTaken func(n, id string) (string, bool)
+	if folds {
+		driveFoldTaken = func(n, id string) (string, bool) {
+			rp, ok := foldRemote[foldPath(n)]
+			if !ok || rp == n || in.Remote[rp].FileID == id {
+				return "", false
+			}
+			return rp, true
+		}
+	}
+	localDirMoves, foldBlocked := detectLocalDirMoves(in, remByID, baseIDs, rewriteRD, rewriteDone, hold, driveFoldTaken)
 
 	// A folder deleted here that Drive renamed or moved (S020, DEC-006): the
 	// rename beats the deletion, as §4.2's "deleted | moved → download" does
@@ -384,19 +474,6 @@ func Plan(in Input) ([]Action, []Skip) {
 	// folder trashed at its new name — the rename discarded and Drive's bin
 	// holding the pieces.
 	//
-	// Every lookup here honours the disk's name folding: on a folding disk
-	// "e" is at "E".
-	var foldLocal, foldBase map[string]string
-	if folds {
-		foldLocal = make(map[string]string, len(in.Local))
-		for q := range in.Local {
-			foldLocal[foldPath(q)] = q
-		}
-		foldBase = make(map[string]string, len(in.Base))
-		for q := range in.Base {
-			foldBase[foldPath(q)] = q
-		}
-	}
 	// localNamed: the local entry at q — exact, or under the fold.
 	localNamed := func(q string) (string, LocalItem, bool) {
 		if l, ok := in.Local[q]; ok {
@@ -435,6 +512,17 @@ func Plan(in Input) ([]Action, []Skip) {
 		return s
 	}
 	restoreHeld := map[string]restoreHold{}
+	// S038's name-conflict holds of a folder move, either direction: the same
+	// hold as a restore that cannot run.
+	for from, lq := range foldHeld {
+		to := remByID[in.Base[from].FileID].path
+		s := nameConflict(from, to, lq, "moved in Drive to "+to)
+		restoreHeld[from] = restoreHold{why: s.Reason, local: lq, drive: to, clashDrive: to, clashLocal: lq}
+	}
+	for _, m := range foldBlocked {
+		s := nameConflict(m.from, m.sibling, m.to, "renamed here to "+m.to+", not renamed in Drive")
+		restoreHeld[m.from] = restoreHold{why: s.Reason, local: m.to, drive: m.sibling, clashDrive: m.sibling, clashLocal: m.to}
+	}
 	restoredDir := map[string]bool{}
 	// explainedAt: where a folder lands by its moved ancestors alone, a
 	// merge's included.
@@ -692,12 +780,16 @@ func Plan(in Input) ([]Action, []Skip) {
 	for _, m := range localDirMoves {
 		// One reparent carries the whole subtree; the per-file moves it
 		// explains are never emitted (pass 1 sees the children at their
-		// post-rename paths and finds nothing to do).
+		// post-rename paths and finds nothing to do). Its row is where an
+		// outer one of these moves put it when it runs (S038: a folder renamed
+		// inside one renamed in case).
 		id := in.Base[m.from].FileID
 		ra := remByID[id] // detectLocalDirMoves pairs only dirs the remote holds at m.from
-		moves = append(moves, Action{Type: MoveRemote, RelPath: m.from, NewRelPath: m.to,
+		moves = append(moves, Action{Type: MoveRemote, RelPath: rewriteLD(m.from), NewRelPath: m.to,
 			FileID: id, IsDir: true, RemoteWant: pinRemote(ra.path, ra.item)})
 	}
+	// S038: a folder adopted at Drive's spelling is renamed to it here.
+	moves = append(moves, fv.fixes...)
 
 	// Local move pairing candidates: baseline files deleted locally whose
 	// remote is unchanged (safe to reinterpret as the source of a move).
@@ -814,6 +906,39 @@ func Plan(in Input) ([]Action, []Skip) {
 		lq, ok := foldLocal[foldPath(q)]
 		return lq, ok && lq != q
 	}
+	// foldHolderUp: foldHolder for q, or for the nearest folder above it that
+	// the disk holds under another byte form (S038): what lands at q lands in
+	// that entry. at is the level found.
+	foldHolderUp := func(q string) (lq, at string, ok bool) {
+		if !folds {
+			return "", "", false
+		}
+		for i := 0; i <= len(q); i++ {
+			if i < len(q) && q[i] != '/' {
+				continue
+			}
+			a := q[:i]
+			if _, exact := in.Local[a]; exact {
+				continue
+			}
+			if h, ok := foldHolder(a); ok {
+				return h, a, true
+			}
+			return "", "", false
+		}
+		return "", "", false
+	}
+	// prefixLanding: the prefix of q (a path the plan writes) that lands at
+	// the local path at once the folder moves run — the Drive-side name of a
+	// folder foldHolderUp found held here (S038).
+	prefixLanding := func(q, at string, post func(string) string) string {
+		for i := 0; i <= len(q); i++ {
+			if (i == len(q) || q[i] == '/') && post(q[:i]) == at {
+				return q[:i]
+			}
+		}
+		return q
+	}
 	// ownCase: a row whose file is here under another case of its name — its
 	// path gone, a fold-equal file no row claims in its place. That is the
 	// row's own file, renamed in case here (a folding disk holds one of the
@@ -913,12 +1038,16 @@ func Plan(in Input) ([]Action, []Skip) {
 			if pathNow == rewrite(p) && (here || ra.item.MD5 == b.DriveMD5 && !strangerDone(p)) {
 				continue // nothing lands: in place, or deleted here and binned on Drive
 			}
-			lq, ok := foldHolder(localAtPost(pathNow))
+			lq, at, ok := foldHolderUp(localAtPost(pathNow))
 			if !ok {
 				continue
 			}
+			fate := holderFate(lq, b.FileID)
+			if at != localAtPost(pathNow) && fate != holderStays {
+				fate = holderBinned // a folder above it: waits for the folder (S038)
+			}
 			why := ""
-			switch holderFate(lq, b.FileID) {
+			switch fate {
 			case holderOwn, holderLeaves:
 				continue
 			case holderBinned:
@@ -929,7 +1058,7 @@ func Plan(in Input) ([]Action, []Skip) {
 				if pathNow == rewrite(p) {
 					what = "gone from its name here, changed in Drive"
 				}
-				s := nameConflict(p, pathNow, rewrite(lq), what)
+				s := nameConflict(p, prefixLanding(pathNow, at, localAtPost), rewrite(lq), what)
 				clashed[p] = s
 				why = s.Reason
 			}
@@ -947,19 +1076,32 @@ func Plan(in Input) ([]Action, []Skip) {
 	// disk cannot hold apart. driveLeaves: ids this plan takes off their Drive
 	// path (pass 1's bin-or-move candidates), not in the way.
 	driveLeaves := map[string]bool{}
-	driveSibling := func(target, id string) (string, bool) {
+	// S038: a folder above target counts too — Drive holding it under
+	// another spelling, the item would go into that folder or fail for want
+	// of its parent.
+	// at is the level of target where it is: target, or the folder above it.
+	driveSibling := func(target, id string) (dp, at string, ok bool) {
 		if !folds {
-			return "", false
+			return "", "", false
 		}
-		rt := invLD(target)
-		rp, ok := foldRemote[foldPath(rt)]
-		if !ok || rp == rt {
-			return "", false
+		for i := 0; i <= len(target); i++ {
+			if i < len(target) && target[i] != '/' {
+				continue
+			}
+			rt := invLD(target[:i])
+			rp, ok := foldRemote[foldPath(rt)]
+			if !ok {
+				return "", "", false // not on Drive: nothing below it is either
+			}
+			if rp == rt {
+				continue
+			}
+			if r := in.Remote[rp]; i == len(target) && r.FileID == id || driveLeaves[r.FileID] {
+				return "", "", false
+			}
+			return rewriteLD(rp), target[:i], true
 		}
-		if r := in.Remote[rp]; r.FileID == id || driveLeaves[r.FileID] {
-			return "", false
-		}
-		return rewriteLD(rp), true
+		return "", "", false
 	}
 	// heldOnDriveUnder: a held row's Drive item sits under dir on Drive —
 	// another machine may have moved it there, and the row, being held, never
@@ -1081,6 +1223,9 @@ func Plan(in Input) ([]Action, []Skip) {
 	// shadowSrcs: shadowed rows offered to pass 2's pairing (S030); reported
 	// as before when nothing pairs with them.
 	var shadowSrcs []Skip
+	// keptHere: local entries a name conflict leaves in place (S038) — a
+	// folder holding one is not removed (pass 4).
+	var keptHere []string
 
 	// --- Pass 1: baseline files ---------------------------------------
 	for _, p := range slices.Sorted(maps.Keys(in.Base)) {
@@ -1161,7 +1306,27 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		// S030: the row's file is here under another case of its name.
 		rehome := false
-		if lq, own := ownCase[p]; own && remOK {
+		if lq, own := ownCase[p]; own && path.Base(lq) == path.Base(p) {
+			// Only a folder above it is spelled otherwise (S038 round 3: rows of
+			// one folder in two spellings, after a crash cut the folder's case
+			// rename): the row's file, in place — the folder's own rule renames
+			// the folder. Not a file renamed in case here.
+			localPath, loc, locOK = lq, in.Local[lq], true
+			resolvedLocal[lq] = true
+			if remoteMoved && foldPath(pathNow) == foldPath(expected) && path.Base(pathNow) == path.Base(p) {
+				// Drive's path is the same place in the folder's other spelling
+				// (the row's folder spelling is stale — a crash recovery
+				// committed it before the folder's case rename), and Drive's name
+				// for the file is the row's: nothing moves; the row is re-homed
+				// by id (round 4; was: a move onto the file itself, read as an
+				// occupant and backed up, every cycle). Drive renamed the file
+				// too (in case) → the ordinary remote move below carries it here,
+				// a case-only move_local pinned to the file (round 5; a re-home
+				// at Drive's name left the disk at the old one, read next cycle
+				// as a case rename here and sent back to Drive).
+				expected, remoteMoved, rehome = pathNow, false, true
+			}
+		} else if own && remOK {
 			switch {
 			case remoteMoved && pathNow != lq && foldPath(pathNow) == foldPath(lq):
 				// Renamed in case on Drive and here, differently: a folding
@@ -1413,9 +1578,9 @@ func Plan(in Input) ([]Action, []Skip) {
 			// the reparent runs (S002).
 			replacedAt := invLD(localPath)
 			newRem, replaced := newRemoteAt(replacedAt)
-			sibling, minted := "", false
+			sibling, sibAt, minted := "", localPath, false
 			if localChanged && !replaced {
-				sibling, minted = driveSibling(localPath, "")
+				sibling, sibAt, minted = driveSibling(localPath, "")
 			}
 			switch {
 			case localChanged && replaced && newRem.MD5 == loc.MD5:
@@ -1436,7 +1601,8 @@ func Plan(in Input) ([]Action, []Skip) {
 			case minted:
 				// S030: the resurrect would put on Drive a second name beside
 				// one Drive keeps, differing only in case or accents.
-				skips = append(skips, nameConflict(localPath, sibling, localPath, "edited here, gone from Drive, not uploaded"))
+				skips = append(skips, nameConflict(localPath, sibling, sibAt, "edited here, gone from Drive, not uploaded"))
+				keptHere = append(keptHere, localPath)
 			case localChanged && heldLocalPath[localPath]:
 				// A folder deleted here comes back from Drive under this
 				// file's name (S020): a type clash (§4.2) — uploading the file
@@ -1747,7 +1913,18 @@ func Plan(in Input) ([]Action, []Skip) {
 				}
 				claimed[rt] = true
 			} else if _, taken := in.Remote[rt]; !taken {
-				mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: target, IsDir: true})
+				if dp, at, ok := driveSibling(target, ""); ok {
+					// S038: Drive holds the name (or a folder above it) in
+					// another case or accents: a second spelling there is
+					// one this disk cannot hold apart.
+					if at == target {
+						at = p
+					}
+					skips = append(skips, nameConflict(target, dp, at, "new folder here, not created in Drive"))
+					keptHere = append(keptHere, p)
+				} else {
+					mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: target, IsDir: true})
+				}
 			}
 			continue
 		}
@@ -1839,7 +2016,7 @@ func Plan(in Input) ([]Action, []Skip) {
 		if srcs := moveSrcs[key]; len(srcs) > 0 {
 			srcID = srcs[0].b.FileID
 		}
-		if dp, ok := driveSibling(target, srcID); ok {
+		if dp, at, ok := driveSibling(target, srcID); ok {
 			// S030: uploaded, or its row's Drive item renamed here, it would
 			// put on Drive a second name beside dp, differing only in case or
 			// accents. Held: a paired source is consumed so it is not binned
@@ -1849,7 +2026,11 @@ func Plan(in Input) ([]Action, []Skip) {
 				moveSrcs[key] = moveSrcs[key][1:]
 				heldIDs[srcID] = true
 			}
-			skips = append(skips, nameConflict(target, dp, p, "new here, not uploaded"))
+			if at == target {
+				at = p
+			}
+			skips = append(skips, nameConflict(target, dp, at, "new here, not uploaded"))
+			keptHere = append(keptHere, p)
 			continue
 		}
 		if srcs := moveSrcs[key]; len(srcs) > 0 {
@@ -1966,14 +2147,18 @@ func Plan(in Input) ([]Action, []Skip) {
 			skips = append(skips, holdSkip(target, "new in Drive, in a folder that waits: "+h.why, h))
 			continue
 		}
-		if lq, ok := foldHolder(localAtPost(target)); ok && !vacated[rewrite(lq)] {
+		if lq, at, ok := foldHolderUp(localAtPost(target)); ok && !vacated[rewrite(lq)] {
 			// S030: another entry here holds the place under another case —
 			// looked up where it sits on disk now, under this plan's folder
 			// moves (was: at the target only — a download into a folder
-			// renamed this cycle was refused once by the gate).
+			// renamed this cycle was refused once by the gate). S038: or a
+			// folder above it does — the item would land in that entry.
 			fate := holderFate(lq, r.FileID)
 			if fate == holderLeaves && r.IsDir {
 				fate = holderBinned // a mkdir runs before the moves stage empties it
+			}
+			if at != localAtPost(target) && fate != holderStays {
+				fate = holderBinned // waits for the folder above it
 			}
 			switch fate {
 			case holderOwn, holderLeaves:
@@ -1982,7 +2167,7 @@ func Plan(in Input) ([]Action, []Skip) {
 					", its name here in another case or accents, leaves first"})
 				continue
 			default:
-				skips = append(skips, nameConflict(target, target, rewrite(lq), "new in Drive"))
+				skips = append(skips, nameConflict(target, prefixLanding(target, at, localAtPost), rewrite(lq), "new in Drive"))
 				continue
 			}
 		}
@@ -2046,6 +2231,14 @@ func Plan(in Input) ([]Action, []Skip) {
 		prefix := dir + "/"
 		for p := range creates {
 			if strings.HasPrefix(p, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	keptUnder := func(dir string) bool {
+		for _, q := range keptHere {
+			if strings.HasPrefix(q, dir+"/") {
 				return true
 			}
 		}
@@ -2147,9 +2340,19 @@ func Plan(in Input) ([]Action, []Skip) {
 				// shadowed).
 				continue
 			}
-			if hasCreateUnder(p) || hasCreateUnder(rewrite(p)) {
+			if dp, at, ok := driveSibling(p, ""); ok && (hasCreateUnder(p) || hasCreateUnder(rewrite(p)) || keptUnder(lp)) {
+				// S038: resurrected, it would be a second spelling beside
+				// one Drive keeps; it stays here, with what it holds.
+				if at == p {
+					at = lp
+				}
+				skips = append(skips, nameConflict(p, dp, at, "deleted in Drive, holds what is kept here; not re-created in Drive"))
+			} else if hasCreateUnder(p) || hasCreateUnder(rewrite(p)) {
 				// Resurrect the container for surviving content.
 				mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: p, IsDir: true})
+			} else if keptUnder(lp) {
+				skips = append(skips, Skip{RelPath: lp,
+					Reason: "deleted in Drive, but holds an entry left alone by a name conflict; not removed"})
 			} else if u, ok := hold.under(lp); ok {
 				// S013: a symlink or non-regular file the scan did not read
 				// still sits inside; removing the folder would take it along.
@@ -2189,6 +2392,33 @@ func Plan(in Input) ([]Action, []Skip) {
 			deletes = append(deletes, Action{Type: Forget, RelPath: p, FileID: b.FileID, IsDir: true})
 		}
 	}
+
+	// S038 round 3: a Drive folder bound to a folder here that the disk spells
+	// otherwise (S035's arriving folder at a re-keyed path) — the disk renamed
+	// to Drive's spelling first, before the mkdir commits it.
+	// Keyed where the folder is once Drive's folder moves have run (round 4:
+	// keyed by its pre-move path, the fix missed a folder under a parent Drive
+	// renamed, and ran on one Drive's rename had already moved away).
+	if len(fv.respelled) > 0 {
+		movedAway := map[string]bool{}
+		for _, m := range remoteDirMoves {
+			movedAway[m.from] = true
+		}
+		post := map[string]string{} // post-move path → post-move path in the disk's spelling
+		for want, disk := range fv.respelled {
+			if movedAway[want] {
+				continue
+			}
+			pw := rewrite(want)
+			post[pw] = path.Join(path.Dir(pw), path.Base(disk))
+		}
+		for _, a := range mkdirs {
+			if disk, ok := post[a.RelPath]; ok && a.Type == MkdirLocal && disk != a.RelPath {
+				moves = append(moves, Action{Type: MoveLocal, RelPath: disk, NewRelPath: a.RelPath, IsDir: true})
+			}
+		}
+	}
+	skips = append(skips, fv.upHeld...)
 
 	// --- Ordering -------------------------------------------------------
 	depth := func(p string) int { return strings.Count(p, "/") }
@@ -2290,6 +2520,23 @@ func Plan(in Input) ([]Action, []Skip) {
 	plan = append(plan, moveFiles...)
 	plan = append(plan, transfers...)
 	plan = append(plan, deletes...)
+	// S038: a folder renamed in case here goes up last, deepest first: every
+	// action and commit before it works in the rows' spelling, which names
+	// the folder on this disk too; its commit then renames the rows. Failing,
+	// it is planned again next cycle; nothing depends on it.
+	ups := slices.Clone(fv.caseUp)
+	slices.SortStableFunc(ups, func(a, b dirMove) int {
+		if c := strings.Count(b.from, "/") - strings.Count(a.from, "/"); c != 0 {
+			return c
+		}
+		return strings.Compare(a.from, b.from)
+	})
+	for _, m := range ups {
+		id := in.Base[m.from].FileID
+		ra := remByID[id]
+		plan = append(plan, Action{Type: MoveRemote, RelPath: m.from, NewRelPath: m.to,
+			FileID: id, IsDir: true, RemoteWant: pinRemote(ra.path, ra.item)})
+	}
 	sort.Slice(skips, func(i, j int) bool { return skips[i].RelPath < skips[j].RelPath })
 	return plan, skips
 }
@@ -2333,7 +2580,8 @@ func mkRewrite(lists ...[]dirMove) func(string) string {
 // The pairing here is a prediction of the pass-1/pass-2 pairing, evaluated
 // before the collapse changes what those passes see; once a dir collapses,
 // its children become ordinary post-move rows and never re-enter pairing.
-func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[string]bool, rewriteRD, rewriteDone func(string) string, hold *holds) []dirMove {
+func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[string]bool, rewriteRD, rewriteDone func(string) string, hold *holds,
+	driveFoldTaken func(n, id string) (string, bool)) ([]dirMove, []foldBlock) {
 	// Move-source candidates exactly as pass 1 admits them: baseline files
 	// deleted locally whose remote is unchanged (content and position). A
 	// file under a remote folder rename the disk already shows is found
@@ -2364,7 +2612,7 @@ func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[str
 		candidates++
 	}
 	if candidates == 0 {
-		return nil
+		return nil, nil
 	}
 	// Destinations a remote-driven move will reclaim by backing up the
 	// occupant (pass 1's occupant preserve): those files never pair.
@@ -2421,6 +2669,7 @@ func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[str
 	}
 
 	var out []dirMove
+	var blocked []foldBlock
 	for _, d := range slices.Sorted(maps.Keys(in.Base)) {
 		b := in.Base[d]
 		if !b.IsDir {
@@ -2475,9 +2724,31 @@ func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[str
 		if _, taken := in.Remote[n]; taken {
 			continue // remote name occupied: a reparent would mint a duplicate
 		}
+		if driveFoldTaken != nil {
+			if sib, taken := driveFoldTaken(n, b.FileID); taken {
+				// S038: Drive holds the name in another case or accents; the
+				// reparent would put a second spelling beside it.
+				blocked = append(blocked, foldBlock{dirMove: dirMove{from: d, to: n}, sibling: sib})
+				out = append(out, dirMove{from: d, to: d}) // carries its subtree: no inner pairing
+				continue
+			}
+		}
 		out = append(out, dirMove{from: d, to: n})
 	}
-	return out
+	keep := out[:0]
+	for _, m := range out {
+		if m.from != m.to {
+			keep = append(keep, m)
+		}
+	}
+	return keep, blocked
+}
+
+// foldBlock is a local folder rename that Drive cannot take (S038): its new
+// name differs only by the fold from sibling, an item Drive keeps there.
+type foldBlock struct {
+	dirMove
+	sibling string
 }
 
 func itoa(n int64) string {

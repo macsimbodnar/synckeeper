@@ -13,13 +13,13 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S038  Case-insensitive folder: FOLDER names differing only in case mint a sibling on Drive; a file added elsewhere can end only in a system bin (PRE-EXISTING, reproduced 2026-11-12; the parked directory arm)
-2. S003  Daemon surfaces skips — `status`, dashboard, `activity`; a name-conflict hold is invisible under the daemon today (moved up 2026-11-12, DEC-011)
-3. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
-4. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
-5. S032  How strong must rename evidence be — one identical file is enough today (DEC-012: most of the folder's non-empty files must be found unchanged)
-6. S037  Actions planned at a path the same plan moves away fail once, then the next cycle is right (four folder-rename shapes; nothing lost)
-7. S039  A machine that changed nothing loops on a Drive-side folder swap or on two Drive folders of one name (PRE-EXISTING; nothing lost)
+1. S003  Daemon surfaces skips — `status`, dashboard, `activity`; a name-conflict hold is invisible under the daemon today (moved up 2026-11-12, DEC-011)
+2. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
+3. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
+4. S032  How strong must rename evidence be — one identical file is enough today (DEC-012: most of the folder's non-empty files must be found unchanged)
+5. S037  Actions planned at a path the same plan moves away fail once, then the next cycle is right (seven folder-rename shapes, three from S038's checks; nothing lost)
+6. S039  Two Drive folders of one name, or a Drive-side folder swap: a machine that changed nothing loops; a row can be re-bound to the other folder; edits in the kept one stop uploading (PRE-EXISTING, also on Linux; nothing lost; widened 2026-11-12)
+7. S040  A new Drive file inside a local folder that cannot be read fails its download every cycle (PRE-EXISTING; found 2026-11-12)
 8. S019  Remote-write gate on real Drive: live verification, narrower window (live runs authorized by Max 2026-11-11)
 9. S015  `watch`/`sync` never check the Drive root (audit F10; live confirmation first — authorized)
 10. S029  The `internal/watch` tests reach the developer's real system bin (found 2026-11-12)
@@ -47,10 +47,10 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
+- S038  Case-insensitive folder, folders: a case-only folder rename syncs as a rename, two machines differing in case end under Drive's name, two different fold-equal entries are a typed, reported hold; a crash matrix is a permanent test — fixed 2026-11-12 (DEC-014; five rounds, four independent checks; residuals S037, S039, S040)
 - S030  Case-insensitive folder, files: a name conflict is a typed, reported hold — nothing written over or beside the file on disk; a case-only rename syncs as a rename — fixed 2026-11-12 (DEC-011; fuzz seed 102 green; residual S038, S003)
 - S020  A folder renamed or moved on Drive beats its deletion here: it comes back under the new name, nothing trashed — built 2026-11-12 (DEC-006; DEC-013; residuals S030, S038, S039)
 - S036  A subfolder renamed here inside a folder renamed on Drive is recognized as the same rename — the one cause behind 1,014 of 60,000 refused plans; the wide generator is a permanent shape of `TestPlanFuzz` — fixed 2026-11-12 (residual S037)
 - S035  A local rename or download whose commit is lost is recorded on recovery; a Drive folder arriving where a folder still sits here is merged; a deleted-and-remade folder no longer doubles on Drive — fixed 2026-11-12 (nine fuzz seeds, four causes; both 200-seed sweeps green again)
-- S031  The moves stage: no local file replaced unless its bytes are kept (rule O1, checked on every plan), file moves in dependency order, swaps through a temporary name — fixed 2026-11-12 (pre-existing data loss; residuals S035, S036; DEC-010)
 
 Earlier work: [plan_history.md](plan_history.md), W1–W21.

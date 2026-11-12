@@ -165,7 +165,12 @@ func RenameItemPath(tx *sql.Tx, oldPath, newPath string) error {
 			rows.Close()
 			return err
 		}
-		rens = append(rens, r)
+		// LIKE is ASCII case-insensitive: it narrows, the byte compare decides
+		// (S038; was: a row under "D/S" renamed by "d/S" kept its old path
+		// whole under the new one).
+		if strings.HasPrefix(r.path, prefix) {
+			rens = append(rens, r)
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -193,12 +198,13 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// UpdateItemDrive refreshes only the Drive-side fields of an item row.
-// Deliberately narrow (R18, spec §7): a move's commit must never restate
-// the row's local truth — the scanned size/mtime/md5 stay untouched, so an
-// edit landing after the scan remains visibly dirty to the next scan.
-func UpdateItemDrive(tx *sql.Tx, driveFileID, driveMD5 string, version int64) error {
-	_, err := tx.Exec(`update items set drive_md5 = ?, drive_version = ? where drive_file_id = ?`,
-		driveMD5, version, driveFileID)
+// UpdateItemDriveVersion refreshes only the Drive version of an item row: a
+// move's commit. Deliberately narrow (R18, spec §7): it never restates the
+// row's local truth — the scanned size/mtime/md5 stay, so an edit landing
+// after the scan remains visibly dirty — nor its Drive md5, the bytes the
+// local file was last synced with, so a Drive edit not yet downloaded stays
+// visible (S038; was: UpdateItemDrive stamped Drive's current md5).
+func UpdateItemDriveVersion(tx *sql.Tx, driveFileID string, version int64) error {
+	_, err := tx.Exec(`update items set drive_version = ? where drive_file_id = ?`, version, driveFileID)
 	return err
 }

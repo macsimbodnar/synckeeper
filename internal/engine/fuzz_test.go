@@ -30,15 +30,17 @@ package engine
 // Op menu covers the classes that have shipped bugs and whose correct outcome
 // is convergence: concurrent edits (S4), delete/recreate churn (C4), local
 // file/dir renames (S7/A1), move-onto-occupied (R7), swaps (R6), new files
-// under moved dirs (A4), and cross-machine fold-equal *file* names (C2/R19).
+// under moved dirs (A4), cross-machine fold-equal *file* names (C2/R19), and —
+// on a folding disk — case-only renames of files and folders (S030, S038).
 // Deliberately excluded, each covered by its own dedicated regression test
 // because its correct outcome is *not* clean convergence (decisions.md "W4"):
-// type clashes (C5/R22 — a by-design standoff, both sides left alone) and the
-// deferred directory-arm gaps (fold-equal *folders*; tracked case-only
-// renames — decisions.md "W1.9.1").
+// type clashes (C5/R22 — a by-design standoff, both sides left alone). A name
+// conflict (S030, S038) is a hold, excused only on the machine reporting it.
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"maps"
@@ -57,6 +59,7 @@ import (
 	"github.com/macsimbodnar/synckeeper/internal/executor"
 	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
+	"github.com/macsimbodnar/synckeeper/internal/statedb"
 )
 
 // fuzzParams is one fuzzer configuration; env vars widen it for long runs.
@@ -123,6 +126,7 @@ type fuzzer struct {
 	// Shared namespaces so machines collide on the same rel_paths.
 	filePaths []string // candidate file rel-paths (slash-separated)
 	dirPaths  []string // candidate pool dir names (distinct fold keys)
+	folds     bool     // the test disk folds case: case-only renames are in the menu
 
 	// tracing: SYNCKEEPER_FUZZ_TRACE set — every op and every cycle's plan and
 	// failures are logged (2: each cycle's input too; 3: and the plan as
@@ -233,6 +237,7 @@ func runFuzz(t *testing.T, seed int64, p fuzzParams) {
 		dirPaths: []string{"da", "db", "dc"},
 		now:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
+	fz.folds = names.CaseInsensitiveFS(t.TempDir())
 	fz.disarmed = map[string]bool{}
 	for _, cp := range strings.Split(os.Getenv("SYNCKEEPER_FUZZ_DISARM"), ",") {
 		fz.disarmed[strings.TrimSpace(cp)] = true
@@ -340,7 +345,42 @@ func (fz *fuzzer) applyOp(m *machine) {
 		fz.opSwap,
 		fz.opMoveIntoDir,
 	}
+	if fz.folds {
+		ops = append(ops, fz.opCaseRename) // S038; the menu is unchanged on a case-sensitive disk
+	}
 	ops[fz.rng.Intn(len(ops))](m)
+}
+
+// opCaseRename renames a file or folder here to another case of its own name
+// (S030, S038): on a folding disk the same entry, renamed — its own rename,
+// synced as one; Drive's name wins over another case made elsewhere.
+func (fz *fuzzer) opCaseRename(m *machine) {
+	all := fz.localFiles(m)
+	for d := range fz.localDirs(m) {
+		all = append(all, d)
+	}
+	sort.Strings(all)
+	if len(all) == 0 {
+		return
+	}
+	rel := all[fz.rng.Intn(len(all))]
+	dir, leaf := filepath.Dir(filepath.FromSlash(rel)), filepath.Base(rel)
+	var to string
+	switch fz.rng.Intn(3) {
+	case 0:
+		to = strings.ToUpper(leaf)
+	case 1:
+		to = strings.ToLower(leaf)
+	default:
+		to = strings.ToUpper(leaf[:1]) + strings.ToLower(leaf[1:])
+	}
+	if to == leaf {
+		return
+	}
+	if dir != "." {
+		to = filepath.ToSlash(filepath.Join(dir, to))
+	}
+	fz.rawRename(m, rel, to)
 }
 
 // opWrite creates-or-edits a random pool path (drives concurrent edits, C4
@@ -502,7 +542,7 @@ func (fz *fuzzer) syncMaybeCrash(m *machine) *Result {
 		}
 		defer func() { executor.FaultHook = nil }()
 	}
-	res, err := m.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+	res, err := fz.syncHolding(m)
 	fz.traceCycle(m, what, res)
 	if err != nil {
 		// A crash is a soft failure (res.Failed), never a returned error. Any
@@ -511,6 +551,143 @@ func (fz *fuzzer) syncMaybeCrash(m *machine) *Result {
 	}
 	fz.checkPlan(m, res)
 	return res
+}
+
+// syncHolding runs one cycle of m and checks that what it holds stays (S038
+// round 2): a name conflict excuses its paths from the trees' equality at the
+// fixed point (nameConflictExcuses), never from survival. Every file at or
+// under a path the cycle reports as held — here (LocalPath, RelPath) or on
+// Drive (DrivePath) — is still on that side with its bytes after the cycle:
+// at its path, or wherever a folder move of the plan carried it (every write
+// of the fuzzer is unique content, so the bytes find it). Only
+// m's own plan runs in a cycle, so anything gone is that plan's doing; it may
+// remove one only by §4.2's deletion rows: a file here whose Drive item was
+// already gone (binned), a Drive file whose row's file was already gone here
+// (trashed). On a folding disk only, where name conflicts arise.
+func (fz *fuzzer) syncHolding(m *machine) (*Result, error) {
+	if !fz.folds {
+		return m.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+	}
+	var before holdState
+	before.local = m.listTree(fz.t)
+	before.drive, before.driveIDs = fz.driveFiles()
+	before.rows, _ = m.db.AllItems()
+	res, err := m.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+	if res == nil {
+		return res, err
+	}
+	var localAfter, driveAfter map[string]string
+	for _, s := range res.Skips {
+		if s.Kind != reconcile.SkipNameConflict {
+			continue
+		}
+		if localAfter == nil {
+			localAfter = m.listTree(fz.t)
+			driveAfter, _ = fz.driveFiles()
+		}
+		if why := heldLost(s, before, localAfter, driveAfter); why != "" {
+			fz.dumpAndFail("[%s] %s (held as %+v) by the cycle that holds it", m.name, why, s)
+		}
+	}
+	return res, err
+}
+
+func fuzzMD5(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// holdState is what syncHolding reads before a cycle: m's files, Drive's
+// files and their ids, m's rows.
+type holdState struct {
+	local, drive, driveIDs map[string]string
+	rows                   []statedb.Item
+}
+
+// heldLost returns what the cycle lost of what skip s holds, or "" (S038).
+// A held file must still be on its side with its bytes — at its path or
+// wherever a folder move carried it (fuzz writes are unique content). The
+// only exemptions are §4.2's deletions: a file here whose Drive item was gone
+// before the cycle AND whose bytes were the synced ones (edit beats delete:
+// an edited file is never binned), and a Drive file whose row's file was gone
+// here before the cycle — looked up under the fold (a folder renamed in case
+// here holds the row's file under the disk's spelling; round 3).
+func heldLost(s reconcile.Skip, before holdState, localAfter, driveAfter map[string]string) string {
+	under := func(p, root string) bool { return root != "" && (p == root || strings.HasPrefix(p, root+"/")) }
+	has := func(m map[string]string) map[string]bool {
+		out := map[string]bool{}
+		for _, c := range m {
+			out[c] = true
+		}
+		return out
+	}
+	fold := func(p string) string { return names.FoldKey(p, true, true) }
+	localHas, driveHas := has(localAfter), has(driveAfter)
+	live := map[string]bool{}
+	for _, id := range before.driveIDs {
+		live[id] = true
+	}
+	rowAt, rowByID := map[string]statedb.Item{}, map[string]statedb.Item{}
+	for _, it := range before.rows {
+		rowAt[it.RelPath], rowByID[it.DriveFileID] = it, it
+	}
+	hereFold := map[string]bool{}
+	for p := range before.local {
+		hereFold[fold(p)] = true
+	}
+	for _, p := range slices.Sorted(maps.Keys(before.local)) {
+		c := before.local[p]
+		if !under(p, s.LocalPath) && !under(p, s.RelPath) || localHas[c] {
+			continue
+		}
+		if it, ok := rowAt[p]; ok && !live[it.DriveFileID] && fuzzMD5(c) == it.ContentMD5 {
+			continue // unchanged here, gone from Drive before the cycle: binned (§4.2)
+		}
+		return fmt.Sprintf("held here: %s (%q) is gone or changed", p, c)
+	}
+	for _, p := range slices.Sorted(maps.Keys(before.drive)) {
+		c := before.drive[p]
+		if !under(p, s.DrivePath) || driveHas[c] {
+			continue
+		}
+		if it, ok := rowByID[before.driveIDs[p]]; ok && !hereFold[fold(it.RelPath)] {
+			continue // deleted here before the cycle: trashed on Drive (§4.2)
+		}
+		return fmt.Sprintf("held on Drive: %s (%q) is gone or changed", p, c)
+	}
+	return ""
+}
+
+// driveFiles is driveTree's files with each one's Drive id.
+func (fz *fuzzer) driveFiles() (map[string]string, map[string]string) {
+	files, ids := map[string]string{}, map[string]string{}
+	ctx := context.Background()
+	var walk func(parentID, prefix string)
+	walk = func(parentID, prefix string) {
+		children, err := fz.fake.List(ctx, parentID)
+		if err != nil {
+			fz.t.Fatalf("seed %d: drive list %s: %v", fz.seed, parentID, err)
+		}
+		for _, c := range children {
+			rel := prefix + c.Name
+			if c.IsDir() {
+				walk(c.ID, rel+"/")
+				continue
+			}
+			rc, err := fz.fake.Download(ctx, c.ID)
+			if err != nil {
+				fz.t.Fatalf("seed %d: drive download %s: %v", fz.seed, c.ID, err)
+			}
+			data, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				fz.t.Fatalf("seed %d: drive read %s: %v", fz.seed, c.ID, err)
+			}
+			files[rel], ids[rel] = string(data), c.ID
+		}
+	}
+	walk(fz.root, "")
+	return files, ids
 }
 
 // syncWithheldFeed runs two back-to-back cycles with Drive's change feed
@@ -574,7 +751,7 @@ func (fz *fuzzer) quiesce() {
 	for round := 0; round < fz.maxRounds; round++ {
 		activity := 0
 		for _, m := range fz.ms {
-			res, err := m.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+			res, err := fz.syncHolding(m)
 			fz.traceCycle(m, fmt.Sprintf("quiesce %d", round), res)
 			if err != nil {
 				fz.t.Fatalf("seed %d: quiesce sync [%s] round %d: %v", fz.seed, m.name, round, err)
@@ -730,23 +907,34 @@ func (fz *fuzzer) assertTreeEqual(what string, mFiles, dFiles map[string]string,
 		}
 		return false
 	}
+	// A name conflict on a folder (S038) excuses what is under it too.
+	covered := func(allowed map[string]bool, p string) bool {
+		for q := p; ; q = filepath.ToSlash(filepath.Dir(q)) {
+			if allowed[q] {
+				return true
+			}
+			if !strings.Contains(q, "/") {
+				return false
+			}
+		}
+	}
 	for p, c := range mFiles {
-		if dc, ok := dFiles[p]; ok && dc != c || !ok && !lackDrive[p] {
+		if dc, ok := dFiles[p]; ok && dc != c || !ok && !covered(lackDrive, p) {
 			fz.dumpAndFail("%s: %q differs: %q vs %q\n  %v\n  %v", what, p, c, dc, sortedKeys(mFiles), sortedKeys(dFiles))
 		}
 	}
 	for p := range dFiles {
-		if _, ok := mFiles[p]; !ok && !lackHere[p] {
+		if _, ok := mFiles[p]; !ok && !covered(lackHere, p) {
 			fz.dumpAndFail("%s: %q only on Drive\n  %v\n  %v", what, p, sortedKeys(mFiles), sortedKeys(dFiles))
 		}
 	}
 	for d := range mDirs {
-		if !dDirs[d] && !holds(lackDrive, d) {
+		if !dDirs[d] && !holds(lackDrive, d) && !covered(lackDrive, d) {
 			fz.dumpAndFail("%s: dir %q missing on one side", what, d)
 		}
 	}
 	for d := range dDirs {
-		if !mDirs[d] && !holds(lackHere, d) {
+		if !mDirs[d] && !holds(lackHere, d) && !covered(lackHere, d) {
 			fz.dumpAndFail("%s: dir %q missing on one side", what, d)
 		}
 	}

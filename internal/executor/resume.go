@@ -71,7 +71,14 @@ func finishOwedCommits(db *statedb.DB, syncDir string, stale []statedb.PendingOp
 			if a.NewRelPath == "" || a.NewRelPath == a.RelPath {
 				continue
 			}
-			if _, err := os.Lstat(abs(a.RelPath)); !applied && !os.IsNotExist(err) {
+			// A case-only rename cut between its two steps (S038): finished
+			// here, then judged like any other.
+			if _, err := finishCaseRename(abs(a.NewRelPath), a.IsDir); err != nil {
+				return err
+			}
+			// Gone by exact spelling: after a case-only rename D → d on a
+			// folding disk a stat of D still finds the folder (S038).
+			if !applied && !goneExact(abs(a.RelPath)) {
 				// Not journaled as done, and the source is still there: the
 				// rename never ran, or failed — nothing owed.
 				continue

@@ -22,6 +22,17 @@ goal:       In a few folder-rename shapes the plan carries actions at a path tha
                 move, an `update_remote`, an upload), then it merges. Pre-existing;
                 merge detection looks up the destination only at Drive's path
                 (testing.md S036.9).
+            From S038's independent checks (2026-11-12), folding disk:
+            (5) Drive renames `D`→`d` (case only) while this disk renames
+                `D/x.txt`→`D/X.txt`: `move_remote D/x.txt->D/X.txt` fails once ("no
+                drive id known for parent folder"). Did not converge before S038.
+            (6) Drive renames `P`→`Q`, deletes `Q/D`, re-creates `Q/D/z.txt`; here
+                `P/D`→`P/d`: three one-time failures, same before S038 (testing.md,
+                S038's `…RecreatedUnderRenamedParent…` row).
+            (7) Here `P`→`Q` and `P/D`→`Q/d` in one cycle (parent renamed, child
+                renamed in case): `mkdir_remote Q; move_remote P/D->Q/d; trash_remote
+                P` — no failure, but `P`'s Drive id is lost and the empty `P` is
+                binned. Same before S038; shape (3)'s Drive-side outcome again.
 accepts:    Each shape a named test, red first (reconcile where the plan shows it,
             engine with two machines for the end state): zero failed actions, same end
             state as today's second cycle. Actions emitted by pass 1 for a file under a
@@ -29,7 +40,9 @@ accepts:    Each shape a named test, red first (reconcile where the plan shows i
             (or ordered before the move). `TestPlanFuzz`'s model executor counts a
             planned action that fails on a clean run as a finding, on all three shapes
             (today it checks lost bytes and refusals, not clean-run failures) — or a
-            reason why not. testing.md rows; MANUAL §8 row removed.
+            reason why not. testing.md rows; MANUAL §8 row removed. Shape (5) fixed →
+            the `t.Skip("S037: …")` in `internal/engine/s038_crashmatrix_test.go` (10
+            cases of the full matrix) is removed and the matrix stays green.
 touches:    internal/reconcile, internal/engine (tests), MANUAL.md, adocs/specs.md,
             adocs/testing.md
 excludes:   S032 (rename evidence), S020. Shape (3)'s Drive-side outcome (new folder +
