@@ -36,5 +36,5 @@ excludes:   S032 (rename evidence standard), S020 (rename vs delete outcome). Th
             runs) is a different defect: note it here if met, do not fix it in this step.
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-12 (DEC-002)
 done:
