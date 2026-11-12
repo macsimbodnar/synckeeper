@@ -73,6 +73,13 @@ type Input struct {
 	// harmless — surfaced as a skip, never read as remote-deleted (C2b).
 	ShadowedRemote map[string]bool
 
+	// ShadowedAt is, for a shadowed id the snapshot skipped by name (not one
+	// under a shadowed folder), where Drive holds it and its mirror entry
+	// (S030). A held row whose file was renamed here pairs with it like any
+	// local rename: the Drive item follows (MoveRemote), and the name
+	// conflict that held it is gone.
+	ShadowedAt map[string]ShadowedItem
+
 	// UnreadableLocal is the same idea on the local side (W18-G): baseline
 	// file ids that live under a directory the scan could not read. They are
 	// absent from Local for a reason that is not deletion, so a plan that
@@ -106,6 +113,12 @@ type Input struct {
 	// mtime equal those of an unreadable file with no baseline row of its own
 	// is that file renamed, and is held rather than read as deleted.
 	UnreadableFiles map[string]LocalItem
+}
+
+// ShadowedItem is a shadowed Drive item: its path on Drive and its entry.
+type ShadowedItem struct {
+	Path string
+	Item RemoteItem
 }
 
 // Type enumerates plan actions.
@@ -272,4 +285,27 @@ type Skip struct {
 	// `doctor` reports it separately (W17). Fold collisions are NOT this:
 	// those are two distinct Drive names this filesystem cannot tell apart.
 	Duplicate bool
+
+	// Kind types the skip for a UI that renders it on its own terms (S030,
+	// DEC-011); "" for every skip without one. Reason is always set.
+	Kind SkipKind
+
+	// DrivePath and LocalPath are, on a SkipNameConflict, the two names: the
+	// item on Drive's side (there now, or where this plan would put it) and
+	// the file or folder on this disk that keeps the place. RelPath is the
+	// item the skip is about, which may be a third path (a row whose move
+	// waits, a file inside a folder that waits).
+	DrivePath string
+	LocalPath string
 }
+
+// SkipKind classifies a skip; see Skip.Kind.
+type SkipKind string
+
+// SkipNameConflict: on a disk that folds case or Unicode normalization (§5),
+// two different items want one place under names that differ only in that
+// fold — one on Drive, one here. Neither is written over the other, nor
+// uploaded beside it as a second name on Drive; both stay as they are, and
+// the hold releases by itself once the user renames one of them (DEC-011;
+// folders: DEC-013's name clash).
+const SkipNameConflict SkipKind = "name_conflict"

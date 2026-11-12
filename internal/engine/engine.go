@@ -208,6 +208,10 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	// alive on Drive; reconcile holds their baseline rows harmless (R19).
 	opts.Stage.set(StagePlanning)
 	shadowed := expandShadowed(baseItems, remoteSkips)
+	shadowedAt, err := e.shadowedAt(remoteSkips)
+	if err != nil {
+		return nil, err
+	}
 	in := reconcile.Input{
 		Base:           base,
 		Local:          local,
@@ -217,6 +221,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		CaseFold:       e.caseInsensitive(),
 		NormFold:       e.normInsensitive(),
 		ShadowedRemote: shadowed,
+		ShadowedAt:     shadowedAt,
 		// Rows the scan could not see because a directory refused to be read
 		// (W18-G) — held harmless, never read as a local deletion.
 		UnreadableLocal: expandUnreadable(baseItems, localSkips),
@@ -429,6 +434,38 @@ func expandShadowed(baseItems []statedb.Item, skips []reconcile.Skip) map[string
 		}
 	}
 	return shadowed
+}
+
+// shadowedAt returns, for each id the snapshot skipped by name as shadowed,
+// its Drive path and mirror entry (S030): a held row whose file was renamed
+// here is then released as a Drive rename of that item, pinned like any other.
+// Reads the mirror only when something is shadowed.
+func (e *Engine) shadowedAt(skips []reconcile.Skip) (map[string]reconcile.ShadowedItem, error) {
+	paths := map[string]string{}
+	for _, s := range skips {
+		if s.FileID != "" {
+			paths[s.FileID] = s.RelPath
+		}
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	nodes, err := e.DB.AllRemoteNodes()
+	if err != nil {
+		return nil, fmt.Errorf("read remote mirror for shadowed items: %w", err)
+	}
+	out := map[string]reconcile.ShadowedItem{}
+	for _, n := range nodes {
+		p, ok := paths[n.FileID]
+		if !ok || n.Trashed {
+			continue
+		}
+		out[n.FileID] = reconcile.ShadowedItem{Path: p, Item: reconcile.RemoteItem{
+			FileID: n.FileID, IsDir: n.MimeType == driveclient.FolderMimeType, Size: n.Size, MD5: n.MD5,
+			Version: n.Version, ParentID: n.ParentID, ModifiedNS: n.ModifiedNS,
+		}}
+	}
+	return out, nil
 }
 
 // expandUnreadable returns the baseline file ids whose LOCAL side the scan

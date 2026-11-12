@@ -14,6 +14,15 @@ touches:    internal/engine (Result.Skips already exists), internal/watch/status
             (`cycleDone` currently drops skips), internal/status (a direction-neutral
             `skip` kind and its label), adocs/testing.md, adocs/specs.md §5/§8.2
             dated note
+            ADDED 2026-11-12 (S030 close-out, DEC-011: a name conflict must be shown
+            clearly, in a form a UI can render): skips now carry a typed kind
+            (`reconcile.Skip.Kind`, e.g. `name_conflict`, with `DrivePath` and
+            `LocalPath`). Under the daemon a name-conflict hold is invisible today —
+            only `sync` with the daemon stopped and `init` print skips; meta
+            `last_skipped` is written every cycle and read by nothing. This step must
+            make standing skips visible while the daemon runs: `status` (plain and
+            `--json`, typed fields included), the dashboard, and `activity` on change —
+            not once per cycle.
 excludes:   No sync-behavior change — this is a new observability surface only.
 closes:
 paused_by:

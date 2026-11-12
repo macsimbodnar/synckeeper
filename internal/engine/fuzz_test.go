@@ -55,6 +55,7 @@ import (
 
 	"github.com/macsimbodnar/synckeeper/internal/driveclient"
 	"github.com/macsimbodnar/synckeeper/internal/executor"
+	"github.com/macsimbodnar/synckeeper/internal/names"
 	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 )
 
@@ -132,6 +133,10 @@ type fuzzer struct {
 	// (SYNCKEEPER_FUZZ_DISARM, comma-separated) — the same run with one window
 	// closed, to tell whether a red seed needs it.
 	disarmed map[string]bool
+
+	// settled: each machine's result in quiesce's last round — the fixed
+	// point's skips, which the convergence oracle reads (S030).
+	settled map[string]*Result
 }
 
 // trace logs one line of the replay when SYNCKEEPER_FUZZ_TRACE is set.
@@ -565,6 +570,7 @@ func (fz *fuzzer) machineDump(m *machine, res *Result) string {
 // until a full round plans nothing and fails nothing. Crashes are never armed
 // here, so repairs from op-phase crashes settle.
 func (fz *fuzzer) quiesce() {
+	fz.settled = map[string]*Result{}
 	for round := 0; round < fz.maxRounds; round++ {
 		activity := 0
 		for _, m := range fz.ms {
@@ -575,6 +581,7 @@ func (fz *fuzzer) quiesce() {
 			}
 			fz.checkPlan(m, res)
 			activity += len(res.Plan) + res.Failed
+			fz.settled[m.name] = res
 		}
 		if activity == 0 {
 			return
@@ -659,14 +666,19 @@ func (fz *fuzzer) baselineID(m *machine, rel string) string {
 // ---- convergence oracle ---------------------------------------------------
 
 func (fz *fuzzer) assertConverged() {
-	ref := fz.ms[0]
-	refFiles := ref.listTree(fz.t)
-	refDirs := fz.localDirs(ref)
-	for _, m := range fz.ms[1:] {
-		fz.assertTreeEqual(fmt.Sprintf("machine %s vs %s", ref.name, m.name), refFiles, m.listTree(fz.t), refDirs, fz.localDirs(m))
-	}
+	// Every machine against Drive: with no name-conflict hold that is the old
+	// machine-vs-machine check by transitivity, and a hold excuses only the
+	// machine that reports it (S030).
 	driveFiles, driveDirs := fz.driveTree()
-	fz.assertTreeEqual(fmt.Sprintf("machine %s vs Drive", ref.name), refFiles, driveFiles, refDirs, driveDirs)
+	for _, m := range fz.ms {
+		lackHere, lackDrive := fz.nameConflictExcuses(m)
+		if len(lackHere)+len(lackDrive) > 0 {
+			fz.t.Logf("seed %d: [%s] name-conflict hold at the fixed point: may lack %v; Drive may lack %v",
+				fz.seed, m.name, slices.Sorted(maps.Keys(lackHere)), slices.Sorted(maps.Keys(lackDrive)))
+		}
+		fz.assertTreeEqual(fmt.Sprintf("machine %s vs Drive", m.name), m.listTree(fz.t), driveFiles,
+			fz.localDirs(m), driveDirs, lackHere, lackDrive)
+	}
 	// W16-E4: at the fixed point the state DB's two sides agree on every
 	// machine. Asserted here rather than per cycle because mid-fuzz a failed
 	// (crashed) delete legitimately leaves a baseline row whose remote is
@@ -674,22 +686,67 @@ func (fz *fuzzer) assertConverged() {
 	assertMirrorCoversBaseline(fz.t, fz.ms...)
 }
 
-func (fz *fuzzer) assertTreeEqual(what string, aFiles, bFiles map[string]string, aDirs, bDirs map[string]bool) {
-	if len(aFiles) != len(bFiles) {
-		fz.dumpAndFail("%s: file count %d vs %d\n  %v\n  %v", what, len(aFiles), len(bFiles), sortedKeys(aFiles), sortedKeys(bFiles))
+// nameConflictExcuses reads m's settled name-conflict skips (S030, DEC-011):
+// on a folding disk m keeps its own file under its name and the incoming item
+// where it was, so m may lack what Drive holds under Drive's name (DrivePath),
+// and Drive may lack what waits here (LocalPath: the file here, a newcomer not
+// uploaded; RelPath, when not DrivePath: a row whose move there waits).
+// Each skip is checked to be one: the two names differ and fold together, and
+// m holds LocalPath.
+func (fz *fuzzer) nameConflictExcuses(m *machine) (lackHere, lackDrive map[string]bool) {
+	lackHere, lackDrive = map[string]bool{}, map[string]bool{}
+	res := fz.settled[m.name]
+	if res == nil {
+		return
 	}
-	for p, c := range aFiles {
-		if bFiles[p] != c {
-			fz.dumpAndFail("%s: content differs at %q: %q vs %q", what, p, c, bFiles[p])
+	files, dirs := m.listTree(fz.t), fz.localDirs(m)
+	for _, s := range res.Skips {
+		if s.Kind != reconcile.SkipNameConflict {
+			continue
+		}
+		_, f := files[s.LocalPath]
+		if !f && !dirs[s.LocalPath] || s.DrivePath == s.LocalPath ||
+			names.FoldKey(s.DrivePath, true, true) != names.FoldKey(s.LocalPath, true, true) {
+			fz.dumpAndFail("[%s] name-conflict skip %+v: want LocalPath here, DrivePath another case of it", m.name, s)
+		}
+		lackHere[s.DrivePath], lackDrive[s.LocalPath] = true, true
+		if s.RelPath != s.DrivePath {
+			lackDrive[s.RelPath] = true // a row here whose move to DrivePath waits
 		}
 	}
-	for d := range aDirs {
-		if !bDirs[d] {
+	return
+}
+
+// assertTreeEqual compares machine m's tree with Drive's. A file only on Drive
+// is allowed if lackHere names it, one only on m if lackDrive names it; a file
+// on both must have one content. A folder on one side only is allowed only as
+// an ancestor of such an allowed file on the side that holds it.
+func (fz *fuzzer) assertTreeEqual(what string, mFiles, dFiles map[string]string, mDirs, dDirs, lackHere, lackDrive map[string]bool) {
+	holds := func(allowed map[string]bool, d string) bool {
+		for p := range allowed {
+			if strings.HasPrefix(p, d+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	for p, c := range mFiles {
+		if dc, ok := dFiles[p]; ok && dc != c || !ok && !lackDrive[p] {
+			fz.dumpAndFail("%s: %q differs: %q vs %q\n  %v\n  %v", what, p, c, dc, sortedKeys(mFiles), sortedKeys(dFiles))
+		}
+	}
+	for p := range dFiles {
+		if _, ok := mFiles[p]; !ok && !lackHere[p] {
+			fz.dumpAndFail("%s: %q only on Drive\n  %v\n  %v", what, p, sortedKeys(mFiles), sortedKeys(dFiles))
+		}
+	}
+	for d := range mDirs {
+		if !dDirs[d] && !holds(lackDrive, d) {
 			fz.dumpAndFail("%s: dir %q missing on one side", what, d)
 		}
 	}
-	for d := range bDirs {
-		if !aDirs[d] {
+	for d := range dDirs {
+		if !mDirs[d] && !holds(lackHere, d) {
 			fz.dumpAndFail("%s: dir %q missing on one side", what, d)
 		}
 	}

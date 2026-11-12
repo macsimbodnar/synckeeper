@@ -424,15 +424,23 @@ func Plan(in Input) ([]Action, []Skip) {
 	}
 	// restoreHeld: a restore that cannot run, left alone and reported with
 	// its rows (S020): why, the local path in its way, the Drive path whose
-	// new items wait with it.
-	type restoreHold struct{ why, local, drive string }
+	// new items wait with it; on a name clash (DEC-013) also the two names,
+	// which type every skip of the hold as SkipNameConflict (S030).
+	type restoreHold struct{ why, local, drive, clashDrive, clashLocal string }
+	holdSkip := func(rel, why string, h restoreHold) Skip {
+		s := Skip{RelPath: rel, Reason: why}
+		if h.clashDrive != "" {
+			s.Kind, s.DrivePath, s.LocalPath = SkipNameConflict, h.clashDrive, h.clashLocal
+		}
+		return s
+	}
 	restoreHeld := map[string]restoreHold{}
 	restoredDir := map[string]bool{}
 	// explainedAt: where a folder lands by its moved ancestors alone, a
 	// merge's included.
 	explainedAt := mkRewrite(remoteDirMoves, mergedDirMoves)
-	heldLocalPath := map[string]bool{}   // local paths a held restore leaves alone, content included
-	heldDrivePath := map[string]string{} // Drive paths whose new items wait with it → why
+	heldLocalPath := map[string]bool{}        // local paths a held restore leaves alone, content included
+	heldDrivePath := map[string]restoreHold{} // Drive paths whose new items wait with it
 	{
 		doneFrom := map[string]bool{}
 		for _, m := range doneDirMoves {
@@ -517,11 +525,12 @@ func Plan(in Input) ([]Action, []Skip) {
 				case !ok:
 					continue
 				case !l.IsDir:
-					restoreHeld[m.from] = restoreHold{"type clash: deleted here and moved in Drive to " + t +
-						", where the file " + lq + " sits here; not synced", lq, q}
+					restoreHeld[m.from] = restoreHold{why: "type clash: deleted here and moved in Drive to " + t +
+						", where the file " + lq + " sits here; not synced", local: lq, drive: q}
 				case lq != q:
-					restoreHeld[m.from] = restoreHold{"name clash: deleted here and moved in Drive to " + t +
-						", which this disk holds as " + lq + " (names differing only in case or accents); not synced", lq, q}
+					restoreHeld[m.from] = restoreHold{why: "name clash: deleted here and moved in Drive to " + t +
+						", which this disk holds as " + lq + " (names differing only in case or accents); not synced",
+						local: lq, drive: q, clashDrive: q, clashLocal: lq}
 				default:
 					continue
 				}
@@ -539,8 +548,8 @@ func Plan(in Input) ([]Action, []Skip) {
 				id := in.Base[bq].FileID
 				r, onDrive := remByID[id]
 				if in.ShadowedRemote[id] || in.UnreadableLocal[id] || onDrive && foldPath(r.path) == foldPath(m.to) {
-					restoreHeld[m.from] = restoreHold{"deleted here and moved in Drive to " + t +
-						", where Drive holds another folder of that name; leaving both alone", "", t}
+					restoreHeld[m.from] = restoreHold{why: "deleted here and moved in Drive to " + t +
+						", where Drive holds another folder of that name; leaving both alone", drive: t}
 					continue
 				}
 			}
@@ -551,8 +560,9 @@ func Plan(in Input) ([]Action, []Skip) {
 					continue
 				}
 				if lq, _, ok := localNamed(rewriteLDNow(rp)); ok && lq != rewriteLDNow(rp) {
-					restoreHeld[m.from] = restoreHold{"name clash: deleted here and moved in Drive to " + t +
-						", where " + lq + " sits here under another case of " + rp + "; not synced", lq, t}
+					restoreHeld[m.from] = restoreHold{why: "name clash: deleted here and moved in Drive to " + t +
+						", where " + lq + " sits here under another case of " + rp + "; not synced",
+						local: lq, drive: t, clashDrive: rewriteLDNow(rp), clashLocal: lq}
 					break
 				}
 			}
@@ -571,7 +581,7 @@ func Plan(in Input) ([]Action, []Skip) {
 			if h.local != "" {
 				heldLocalPath[h.local] = true
 			}
-			heldDrivePath[h.drive] = h.why
+			heldDrivePath[h.drive] = h
 		}
 	}
 	// restoreHoldOf: the held restore that holds base path p — a folder that
@@ -584,13 +594,13 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		return restoreHold{}, false
 	}
-	heldDriveUnder := func(q string) (string, bool) {
-		for d, why := range heldDrivePath {
+	heldDriveUnder := func(q string) (restoreHold, bool) {
+		for d, h := range heldDrivePath {
 			if strings.HasPrefix(q, d+"/") {
-				return why, true
+				return h, true
 			}
 		}
-		return "", false
+		return restoreHold{}, false
 	}
 	underAny := func(q string, set map[string]bool) bool {
 		for c := range set {
@@ -782,6 +792,175 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		slices.Sort(heldLocal)
 	}
+
+	// S030 (DEC-011): on a disk that folds case or normalization, a place can
+	// be held here under another byte form of its name — README.txt is
+	// Readme.txt. A download or move to README.txt meets that file: the gate
+	// refuses it every cycle (§7, "a file appeared after the scan"). When the
+	// file there is not the incoming item itself, nothing is planned onto the
+	// place: the row or Drive item waits, the file here stays, and the two are
+	// reported as one name conflict naming both. Likewise no upload or Drive
+	// rename puts a name on Drive that differs only by the fold from one Drive
+	// keeps there. Released by itself once the user renames one of the two.
+	//
+	// foldHolder: the local entry holding q's place under another byte form.
+	foldHolder := func(q string) (string, bool) {
+		if !folds {
+			return "", false
+		}
+		if _, exact := in.Local[q]; exact {
+			return "", false
+		}
+		lq, ok := foldLocal[foldPath(q)]
+		return lq, ok && lq != q
+	}
+	// ownCase: a row whose file is here under another case of its name — its
+	// path gone, a fold-equal file no row claims in its place. That is the
+	// row's own file, renamed in case here (a folding disk holds one of the
+	// two names): never a name conflict. ownedBy is the inverse.
+	ownCase, ownedBy := map[string]string{}, map[string]string{}
+	if folds {
+		// Content beats the name: a file holding the bytes of another row
+		// whose file is gone here is that row's file renamed (pass 2 pairs
+		// it), not this row's.
+		goneBy := map[string]int{} // content key → rows whose file is gone here
+		for q, b := range in.Base {
+			if _, here := in.Local[rewriteLocal(q)]; !here && !b.IsDir {
+				goneBy[pairKey(b.MD5, b.Size)]++
+			}
+		}
+		for _, p := range slices.Sorted(maps.Keys(in.Base)) {
+			b := in.Base[p]
+			if b.IsDir || in.ShadowedRemote[b.FileID] || in.UnreadableLocal[b.FileID] {
+				continue
+			}
+			if _, h := held[p]; h {
+				continue
+			}
+			lq, ok := foldHolder(rewriteLocal(p))
+			if !ok || in.Local[lq].IsDir {
+				continue
+			}
+			if _, tracked := in.Base[invLocal(lq)]; tracked {
+				continue
+			}
+			if _, taken := ownedBy[lq]; taken {
+				continue
+			}
+			if l := in.Local[lq]; l.MD5 != b.MD5 && goneBy[pairKey(l.MD5, l.Size)] > 0 {
+				continue
+			}
+			ownCase[p], ownedBy[lq] = lq, p
+		}
+	}
+	const (
+		holderStays  = iota // there this cycle and after: a name conflict
+		holderOwn           // the incoming item's own file, its name in another case: no conflict
+		holderLeaves        // its own row moves it away in the moves stage
+		holderBinned        // its Drive item gone and it unchanged: binned this cycle (deletes stage)
+	)
+	// holderFate: what becomes of lq, the fold holder of a place item id is
+	// due at. Only a row this plan certainly takes away is not in the way.
+	holderFate := func(lq, id string) int {
+		oq := invLocal(lq)
+		if q, ok := ownedBy[lq]; ok {
+			oq = q // a row's own file under another case: judged as that row's
+		}
+		ob, tracked := in.Base[oq]
+		l := in.Local[lq]
+		if !tracked || ob.IsDir || l.IsDir {
+			return holderStays
+		}
+		if ob.FileID == id {
+			return holderOwn
+		}
+		if _, h := held[oq]; h || in.ShadowedRemote[ob.FileID] || in.UnreadableLocal[ob.FileID] {
+			return holderStays
+		}
+		if _, h := restoreHoldOf(oq); h {
+			return holderStays
+		}
+		ora, live := remByID[ob.FileID]
+		switch {
+		case !live && l.MD5 == ob.MD5:
+			return holderBinned
+		case live && rewriteLD(ora.path) != rewrite(oq):
+			return holderLeaves
+		}
+		return holderStays
+	}
+	// Rows due at a place a fold holder keeps: held like S013's (nothing
+	// moved, downloaded, binned or forgotten; their Drive items protected).
+	clashed := map[string]Skip{} // base path → its name-conflict skip
+	if folds {
+		for _, p := range slices.Sorted(maps.Keys(in.Base)) {
+			b := in.Base[p]
+			if b.IsDir || in.ShadowedRemote[b.FileID] || in.UnreadableLocal[b.FileID] {
+				continue
+			}
+			if _, h := held[p]; h {
+				continue
+			}
+			if _, h := restoreHoldOf(p); h {
+				continue
+			}
+			ra, ok := remByID[b.FileID]
+			if !ok {
+				continue
+			}
+			pathNow := rewriteLD(ra.path)
+			_, here := in.Local[rewriteLocal(p)]
+			if pathNow == rewrite(p) && (here || ra.item.MD5 == b.DriveMD5 && !strangerDone(p)) {
+				continue // nothing lands: in place, or deleted here and binned on Drive
+			}
+			lq, ok := foldHolder(localAtPost(pathNow))
+			if !ok {
+				continue
+			}
+			why := ""
+			switch holderFate(lq, b.FileID) {
+			case holderOwn, holderLeaves:
+				continue
+			case holderBinned:
+				why = "due at " + pathNow + " from Drive; waits a cycle: " + lq +
+					", its name here in another case or accents, goes to the bin first"
+			default:
+				what := "moved in Drive to " + pathNow
+				if pathNow == rewrite(p) {
+					what = "gone from its name here, changed in Drive"
+				}
+				s := nameConflict(p, pathNow, rewrite(lq), what)
+				clashed[p] = s
+				why = s.Reason
+			}
+			held[p] = why
+			heldIDs[b.FileID] = true
+			if here {
+				heldLocal = append(heldLocal, rewriteLocal(p))
+			}
+		}
+		slices.Sort(heldLocal)
+	}
+	// driveSibling: the Drive item, other than id, that keeps target's place
+	// on Drive under another byte form of its name through this plan — an
+	// upload or Drive rename to target would put beside it a second name this
+	// disk cannot hold apart. driveLeaves: ids this plan takes off their Drive
+	// path (pass 1's bin-or-move candidates), not in the way.
+	driveLeaves := map[string]bool{}
+	driveSibling := func(target, id string) (string, bool) {
+		if !folds {
+			return "", false
+		}
+		rt := invLD(target)
+		rp, ok := foldRemote[foldPath(rt)]
+		if !ok || rp == rt {
+			return "", false
+		}
+		if r := in.Remote[rp]; r.FileID == id || driveLeaves[r.FileID] {
+			return "", false
+		}
+		return rewriteLD(rp), true
+	}
 	// heldOnDriveUnder: a held row's Drive item sits under dir on Drive —
 	// another machine may have moved it there, and the row, being held, never
 	// followed. Trashing dir would take it into Drive's bin.
@@ -899,6 +1078,10 @@ func Plan(in Input) ([]Action, []Skip) {
 		return h || in.ShadowedRemote[b.FileID] || in.UnreadableLocal[b.FileID]
 	}
 
+	// shadowSrcs: shadowed rows offered to pass 2's pairing (S030); reported
+	// as before when nothing pairs with them.
+	var shadowSrcs []Skip
+
 	// --- Pass 1: baseline files ---------------------------------------
 	for _, p := range slices.Sorted(maps.Keys(in.Base)) {
 		b := in.Base[p]
@@ -910,8 +1093,23 @@ func Plan(in Input) ([]Action, []Skip) {
 			// fold-colliding sibling shadows it out of the snapshot.
 			// "Remote absent" would be a lie — hold the row harmless
 			// until the Drive-side collision is resolved.
-			skips = append(skips, Skip{RelPath: p, FileID: b.FileID,
-				Reason: "remote copy is shadowed by a duplicate or fold-colliding name in Drive; leaving both sides alone"})
+			shadowSkip := Skip{RelPath: p, FileID: b.FileID,
+				Reason: "remote copy is shadowed by a duplicate or fold-colliding name in Drive; leaving both sides alone"}
+			// S030: its file gone from its name here, its Drive item as
+			// synced — a local rename pairs with it like any other (pass 2),
+			// and the Drive item follows to the new name, which ends the
+			// collision. Unpaired, the row stays held: never binned.
+			if sh, ok := in.ShadowedAt[b.FileID]; ok && !sh.Item.IsDir && sh.Item.MD5 == b.DriveMD5 {
+				if _, here := in.Local[rewriteLocal(p)]; !here {
+					if _, own := ownCase[p]; !own {
+						src := moveSrc{path: p, b: b, remote: remoteRef{path: sh.Path, item: sh.Item}}
+						moveSrcs[pairKey(b.MD5, b.Size)] = append(moveSrcs[pairKey(b.MD5, b.Size)], src)
+						shadowSrcs = append(shadowSrcs, shadowSkip)
+						continue
+					}
+				}
+			}
+			skips = append(skips, shadowSkip)
 			continue
 		}
 		if in.UnreadableLocal[b.FileID] {
@@ -920,6 +1118,10 @@ func Plan(in Input) ([]Action, []Skip) {
 			// trash the Drive copy of a file that is sitting right there.
 			skips = append(skips, Skip{RelPath: p,
 				Reason: "local copy is inside a directory that could not be read; leaving both sides alone"})
+			continue
+		}
+		if s, ok := clashed[p]; ok {
+			skips = append(skips, s) // S030: due where another file here holds its name
 			continue
 		}
 		// Under a local-driven dir rename this row's file, if it survives,
@@ -936,7 +1138,7 @@ func Plan(in Input) ([]Action, []Skip) {
 			continue // its local file is another row's, moved over it (cause D)
 		}
 		if h, ok := restoreHoldOf(p); ok {
-			skips = append(skips, Skip{RelPath: p, Reason: "in a folder that waits: " + h.why})
+			skips = append(skips, holdSkip(p, "in a folder that waits: "+h.why, h))
 			continue
 		}
 		localPath := rewriteLocal(p)
@@ -956,6 +1158,59 @@ func Plan(in Input) ([]Action, []Skip) {
 			// judge and emit at its post-reparent path.
 			pathNow = rewriteLD(ra.path)
 			remoteMoved = pathNow != expected
+		}
+		// S030: the row's file is here under another case of its name.
+		rehome := false
+		if lq, own := ownCase[p]; own && remOK {
+			switch {
+			case remoteMoved && pathNow != lq && foldPath(pathNow) == foldPath(lq):
+				// Renamed in case on Drive and here, differently: a folding
+				// disk holds one of the two; Drive's keeps it, as Drive's
+				// name does in a conflict (§4.2) and in §5's fold pair. The
+				// file is met where it sits; its move commits by path, so
+				// the row is re-homed by id after it.
+				localPath, expected, loc, locOK = lq, lq, in.Local[lq], true
+				resolvedLocal[lq] = true
+				rehome = true
+			case !remoteMoved:
+				// Renamed in case here, Drive's name unchanged: the rename
+				// goes up as the item's own rename (as pairing would make it),
+				// then §4.2 meets the file at its new name — Drive changed
+				// it: downloaded ("moved | changed"); edited here: uploaded
+				// over the id; both, differently: conflict copy. Was, Drive
+				// changed: a name conflict (round 1), a refused download
+				// every cycle (HEAD); edited here only: a new upload, the old
+				// item binned.
+				l := in.Local[lq]
+				moves = append(moves, Action{Type: MoveRemote, RelPath: p, NewRelPath: lq,
+					FileID: b.FileID, MD5: l.MD5, Size: l.Size, RemoteWant: pinRemote(ra.path, ra.item)})
+				remoteChanged := ra.item.MD5 != b.DriveMD5
+				switch {
+				case !remoteChanged && l.MD5 == b.MD5:
+				case !remoteChanged:
+					// The Drive item carries the new name once the move ran.
+					want := pinRemote(lq, ra.item)
+					transfers = append(transfers, Action{Type: UpdateRemote, RelPath: lq, FileID: b.FileID,
+						RemoteWant: want, ProtectedBy: p})
+				case l.MD5 == ra.item.MD5:
+					transfers = append(transfers, Action{Type: Record, RelPath: lq, FileID: b.FileID,
+						MD5: l.MD5, Size: l.Size, Version: ra.item.Version, ProtectedBy: p,
+						LocalExists: true, LocalSize: l.Size, LocalMtimeNS: l.MtimeNS})
+				case l.MD5 == b.MD5 && keptOnDrive(l.MD5):
+					transfers = append(transfers, Action{Type: Download, RelPath: lq, FileID: b.FileID,
+						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version, ProtectedBy: p,
+						LocalExists: true, LocalSize: l.Size, LocalMtimeNS: l.MtimeNS})
+				default:
+					cp := conflicts.Path(lq, in.Machine, in.Now)
+					moves = append(moves, Action{Type: ConflictBackup, RelPath: lq, NewRelPath: cp})
+					transfers = append(transfers,
+						Action{Type: Upload, RelPath: cp, ProtectedBy: lq},
+						Action{Type: Download, RelPath: lq, FileID: b.FileID,
+							MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version, ProtectedBy: lq})
+				}
+				resolvedLocal[lq] = true
+				continue
+			}
 		}
 		// The local file may already sit at the remote's new path: the user
 		// made the same rename the remote reports, or a crashed MoveLocal left
@@ -1120,6 +1375,12 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 		if remoteMoved && locOK && !trueConflict {
 			mv := Action{Type: MoveLocal, RelPath: expected, NewRelPath: pathNow, FileID: b.FileID}
+			if folds && foldPath(expected) == foldPath(pathNow) {
+				// A case-only rename: the "occupant" of the destination is
+				// the file itself under the fold, so the gate pins to its own
+				// stat (as for §5's fold adopt). Was: refused every cycle.
+				mv.LocalExists, mv.LocalSize, mv.LocalMtimeNS = true, loc.Size, loc.MtimeNS
+			}
 			if occAt != "" {
 				occChecks = append(occChecks, occCheck{mv: len(moves), at: occAt, dst: pathNow})
 			}
@@ -1143,6 +1404,7 @@ func Plan(in Input) ([]Action, []Skip) {
 				src := moveSrc{path: p, b: b, remote: ra}
 				moveSrcs[pairKey(b.MD5, b.Size)] = append(moveSrcs[pairKey(b.MD5, b.Size)], src)
 				trashCandidates = append(trashCandidates, src)
+				driveLeaves[b.FileID] = true
 			}
 
 		case !remOK: // remote deleted, local exists
@@ -1151,6 +1413,10 @@ func Plan(in Input) ([]Action, []Skip) {
 			// the reparent runs (S002).
 			replacedAt := invLD(localPath)
 			newRem, replaced := newRemoteAt(replacedAt)
+			sibling, minted := "", false
+			if localChanged && !replaced {
+				sibling, minted = driveSibling(localPath, "")
+			}
 			switch {
 			case localChanged && replaced && newRem.MD5 == loc.MD5:
 				// Same new content arrived on both sides independently.
@@ -1167,6 +1433,10 @@ func Plan(in Input) ([]Action, []Skip) {
 						MD5: newRem.MD5, Size: newRem.Size, Version: newRem.Version,
 						ProtectedBy: localPath})
 				claimed[replacedAt] = true
+			case minted:
+				// S030: the resurrect would put on Drive a second name beside
+				// one Drive keeps, differing only in case or accents.
+				skips = append(skips, nameConflict(localPath, sibling, localPath, "edited here, gone from Drive, not uploaded"))
 			case localChanged && heldLocalPath[localPath]:
 				// A folder deleted here comes back from Drive under this
 				// file's name (S020): a type clash (§4.2) — uploading the file
@@ -1192,7 +1462,7 @@ func Plan(in Input) ([]Action, []Skip) {
 		default: // both exist
 			switch {
 			case !localChanged && !remoteContentChanged:
-				if b.MtimeNS != loc.MtimeNS || b.Size != loc.Size || b.DriveVersion != ra.item.Version {
+				if rehome || b.MtimeNS != loc.MtimeNS || b.Size != loc.Size || b.DriveVersion != ra.item.Version {
 					act := Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
 						MD5: b.MD5, Size: loc.Size, Version: ra.item.Version,
 						LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS}
@@ -1412,6 +1682,7 @@ func Plan(in Input) ([]Action, []Skip) {
 
 	// --- Pass 2: new local paths ---------------------------------------
 	pairedSrc := map[string]bool{} // baseline path consumed as a move source
+	movedSrc := map[string]bool{}  // ...and moved on Drive to it
 	for _, p := range slices.Sorted(maps.Keys(in.Local)) {
 		// A file where a folder deleted here sat (S020): the folder comes
 		// back at Drive's path, its row with it; the file is new.
@@ -1564,10 +1835,28 @@ func Plan(in Input) ([]Action, []Skip) {
 		// Move pairing: a deleted baseline file with identical content
 		// becomes a remote move instead of delete + re-upload.
 		key := pairKey(loc.MD5, loc.Size)
+		srcID := ""
+		if srcs := moveSrcs[key]; len(srcs) > 0 {
+			srcID = srcs[0].b.FileID
+		}
+		if dp, ok := driveSibling(target, srcID); ok {
+			// S030: uploaded, or its row's Drive item renamed here, it would
+			// put on Drive a second name beside dp, differing only in case or
+			// accents. Held: a paired source is consumed so it is not binned
+			// on Drive (its file is this one, renamed), nor with its folder.
+			if srcID != "" {
+				pairedSrc[moveSrcs[key][0].path] = true
+				moveSrcs[key] = moveSrcs[key][1:]
+				heldIDs[srcID] = true
+			}
+			skips = append(skips, nameConflict(target, dp, p, "new here, not uploaded"))
+			continue
+		}
 		if srcs := moveSrcs[key]; len(srcs) > 0 {
 			src := srcs[0]
 			moveSrcs[key] = srcs[1:]
 			pairedSrc[src.path] = true
+			movedSrc[src.path] = true
 			moves = append(moves, Action{Type: MoveRemote, RelPath: src.path, NewRelPath: target,
 				FileID: src.b.FileID, MD5: loc.MD5, Size: loc.Size,
 				RemoteWant: pinRemote(src.remote.path, src.remote.item)})
@@ -1579,6 +1868,11 @@ func Plan(in Input) ([]Action, []Skip) {
 	// Drive renamed, that is in the renamed folder, where a trash of the
 	// folder itself absorbs it — one Drive-bin entry (§4.2's collapse; S020:
 	// at the old path the files escaped it and went to the bin one by one).
+	for _, sk := range shadowSrcs {
+		if !movedSrc[sk.RelPath] {
+			skips = append(skips, sk)
+		}
+	}
 	for _, src := range trashCandidates {
 		if !pairedSrc[src.path] {
 			deletes = append(deletes, Action{Type: TrashRemote, RelPath: src.remote.path, FileID: src.b.FileID,
@@ -1666,11 +1960,31 @@ func Plan(in Input) ([]Action, []Skip) {
 			skips = append(skips, Skip{RelPath: target, Reason: hold.reason(target, u)})
 			continue
 		}
-		if why, ok := heldDriveUnder(target); ok {
+		if h, ok := heldDriveUnder(target); ok {
 			// Inside a folder deleted here whose restore waits (S020): it
 			// waits with the folder.
-			skips = append(skips, Skip{RelPath: target, Reason: "new in Drive, in a folder that waits: " + why})
+			skips = append(skips, holdSkip(target, "new in Drive, in a folder that waits: "+h.why, h))
 			continue
+		}
+		if lq, ok := foldHolder(localAtPost(target)); ok && !vacated[rewrite(lq)] {
+			// S030: another entry here holds the place under another case —
+			// looked up where it sits on disk now, under this plan's folder
+			// moves (was: at the target only — a download into a folder
+			// renamed this cycle was refused once by the gate).
+			fate := holderFate(lq, r.FileID)
+			if fate == holderLeaves && r.IsDir {
+				fate = holderBinned // a mkdir runs before the moves stage empties it
+			}
+			switch fate {
+			case holderOwn, holderLeaves:
+			case holderBinned:
+				skips = append(skips, Skip{RelPath: target, Reason: "new in Drive; waits a cycle: " + rewrite(lq) +
+					", its name here in another case or accents, leaves first"})
+				continue
+			default:
+				skips = append(skips, nameConflict(target, target, rewrite(lq), "new in Drive"))
+				continue
+			}
 		}
 		if l, ok := in.Local[target]; ok && l.IsDir != r.IsDir {
 			// C5 (R22): the path is occupied by the other type locally —
@@ -1782,7 +2096,7 @@ func Plan(in Input) ([]Action, []Skip) {
 			continue
 		}
 		if h, ok := restoreHoldOf(p); ok {
-			skips = append(skips, Skip{RelPath: p, Reason: h.why})
+			skips = append(skips, holdSkip(p, h.why, h))
 			continue
 		}
 		if restoredDir[p] {
@@ -1843,7 +2157,7 @@ func Plan(in Input) ([]Action, []Skip) {
 					Reason: "deleted in Drive, but holds " + u + ", which the scan does not read (" + hold.why[u] + "); not removed"})
 			} else if heldLocalUnder(lp) {
 				skips = append(skips, Skip{RelPath: lp,
-					Reason: "deleted in Drive, but holds a file whose sync is on hold behind a symlink or non-regular file; not removed"})
+					Reason: "deleted in Drive, but holds a file whose sync is on hold; not removed"})
 			} else {
 				deletes = append(deletes, Action{Type: QuarantineLocal, RelPath: lp, FileID: b.FileID, IsDir: true})
 			}
@@ -1864,7 +2178,7 @@ func Plan(in Input) ([]Action, []Skip) {
 				// materialized here, so it reads as nothing — and would go
 				// to Drive's bin with the folder.
 				skips = append(skips, Skip{RelPath: p,
-					Reason: "gone locally, but on Drive holds a file whose sync is on hold behind a symlink or non-regular file; not trashed"})
+					Reason: "gone locally, but on Drive holds a file whose sync is on hold; not trashed"})
 				continue
 			}
 			if !hasCreateUnder(ra.path) && !hasCreateUnder(rewriteLD(ra.path)) && !remoteAliveUnder(ra.path) {
@@ -2187,4 +2501,12 @@ func itoa(n int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// nameConflict is the reported skip of a name conflict (S030, DEC-011): rel is
+// what is not synced, drive and local the two names, what why rel was due.
+func nameConflict(rel, drive, local, what string) Skip {
+	return Skip{RelPath: rel, Kind: SkipNameConflict, DrivePath: drive, LocalPath: local,
+		Reason: "name conflict: " + what + "; " + drive + " in Drive and " + local +
+			" here differ only in case or accents, one name on this disk; neither synced onto the other until one is renamed"}
 }
