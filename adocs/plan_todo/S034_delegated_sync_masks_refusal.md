@@ -1,4 +1,4 @@
-id:         S030
+id:         S034
 goal:       A one-shot `synckeeper sync` run while the daemon is running delegates the
             cycle to it (`delegateSync`, cmd/synckeeper) and checks for a changed cycle
             summary before it checks `last error` — so a cycle the daemon refused

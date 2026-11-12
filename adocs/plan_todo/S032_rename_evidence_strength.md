@@ -1,4 +1,4 @@
-id:         S028
+id:         S032
 goal:       How much evidence makes a folder "the same folder, renamed"? Today one
             paired child is enough. In `detectLocalDirMoves` (a LOCAL folder rename —
             pre-existing, confirmed on `5f61255` by S002's implementer, testing.md

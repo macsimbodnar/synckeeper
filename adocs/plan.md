@@ -13,17 +13,17 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S027  The moves stage can destroy an unsynced local edit — occupant safety + dependency order (PRE-EXISTING data loss, found 2026-11-12; plus what S002 left open)
+1. S031  The moves stage can destroy an unsynced local edit — occupant safety + dependency order (PRE-EXISTING data loss, found 2026-11-12; plus what S002 left open)
 2. S020  A folder renamed on Drive beats its local deletion (DEC-006)
 3. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
 4. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
-5. S028  How strong must rename evidence be — one identical file is enough today (Max picks the standard first)
+5. S032  How strong must rename evidence be — one identical file is enough today (Max picks the standard first)
 6. S019  Remote-write gate on real Drive: live verification, narrower window (live runs authorized by Max 2026-11-11)
 7. S015  `watch`/`sync` never check the Drive root (audit F10; live confirmation first — authorized)
 8. S016  Linux mass-delete guard probes the wrong trash (audit F11; run by a session on `pop-os`)
 9. S001  Finish the Linux port — L8 gates on `pop-os`, then L7 docs
-10. S029  A flaky `-race` failure in `internal/tui` (pre-existing)
-11. S030  A delegated `sync` may print `Done.` for a refused cycle (from reading)
+10. S033  A flaky `-race` failure in `internal/tui` (pre-existing)
+11. S034  A delegated `sync` may print `Done.` for a refused cycle (from reading)
 12. S003  Daemon surfaces skips in `activity`
 13. S004  Stored error details keep the URL and lose the cause
 14. S005  "N local changes" counts wake-ups, not files
@@ -45,7 +45,7 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
-- S002  The §4.5 rename wedge — four planner causes fixed, a repeating refused plan shown as stuck — 2026-11-12 (audit F09, DEC-004; residuals S027)
+- S002  The §4.5 rename wedge — four planner causes fixed, a repeating refused plan shown as stuck — 2026-11-12 (audit F09, DEC-004; residuals S031)
 - S025  Held paths keep no memory — NOT BUILT, accepted (DEC-009)
 - S024  Partial-upload crash window — NOT BUILT, accepted (DEC-007)
 - S023  A file renamed the same way on both sides and edited on one is an update, not a conflict — fixed 2026-11-11 (DEC-003)

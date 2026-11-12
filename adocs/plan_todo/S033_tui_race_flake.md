@@ -1,4 +1,4 @@
-id:         S029
+id:         S033
 goal:       `TestRunTreatsCancellationAsCleanExit` in `internal/tui` is flaky under
             `-race`: it sometimes reports a data race inside bubbletea's cancelreader.
             Seen by S002's implementer about once in 6 runs, and on an untouched copy of

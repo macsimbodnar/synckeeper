@@ -1,4 +1,4 @@
-id:         S027
+id:         S031
 goal:       The moves stage can destroy an unsynced local edit. (F4, PRE-EXISTING —
             the same plan on `5f61255`, reproduced at plan level by S002's third fast
             check, 2026-11-12.) File moves are sorted by depth, then path
@@ -42,7 +42,7 @@ accepts:    Red-first, reconcile level and engine level (two machines), for F4 f
 touches:    internal/reconcile (moves-stage ordering, occupant check, the forget arm),
             internal/executor (protectors), MANUAL.md, adocs/specs.md, adocs/testing.md
 excludes:   S020 (folder deleted here vs renamed there). How strong rename evidence must
-            be (S028). A folder rename differing only in case (Parked directory arm).
+            be (S032). A folder rename differing only in case (Parked directory arm).
 closes:
 paused_by:
 author:     Opus subagent, coordinated by Claude (agent); started 2026-11-12 at Max's direction (DEC-002)
