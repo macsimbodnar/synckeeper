@@ -77,6 +77,11 @@ type Executor struct {
 	// for every build and failure that has no usable trash.
 	Trash trash.Trasher
 
+	// LiveFolders: the Drive folder ids the snapshot holds (and held ones).
+	// A baseline folder outside it is gone from Drive, and its path never
+	// resolves to it as a parent (S035). nil: no such check.
+	LiveFolders map[string]bool
+
 	mu               sync.Mutex
 	pathIDs          map[string]string // rel_path -> drive file id, for parent lookup
 	failedProtectors map[string]bool   // failed ConflictBackup/MoveLocal sources (invariant 7)
@@ -88,6 +93,10 @@ type Executor struct {
 	// behind the mirror, and the next cycle would plan a pointless metadata
 	// refresh. Only W18-E's init merge plans both on one file in one cycle.
 	bumpedVersions map[string]int64
+
+	// deferredSeeds: folder ids the plan knows, at or under a folder a
+	// MoveLocal moves away — applied once that move has run (S035).
+	deferredSeeds map[string]string
 }
 
 // Summary reports what happened.
@@ -117,7 +126,21 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 		return Summary{}, err
 	}
 	x.pathIDs = map[string]string{"": x.RootID}
+	// A folder Drive no longer holds, or one this plan trashes or forgets, is
+	// never a parent (S035): an upload or mkdir under its path fails for want
+	// of a parent and is replanned, instead of going up into Drive's bin with
+	// the folder. Was: an edit resurrected under a folder deleted on Drive went
+	// into the trashed folder, and the next cycle read it as deleted.
+	doomed := map[string]bool{}
+	for _, a := range plan {
+		if a.IsDir && a.FileID != "" && (a.Type == reconcile.TrashRemote || a.Type == reconcile.Forget) {
+			doomed[a.FileID] = true
+		}
+	}
 	for _, it := range items {
+		if it.IsDir && (doomed[it.DriveFileID] || x.LiveFolders != nil && !x.LiveFolders[it.DriveFileID]) {
+			continue
+		}
 		x.pathIDs[it.RelPath] = it.DriveFileID
 	}
 	// Folders the plan already knows the Drive id of are seeded before anything
@@ -129,9 +152,27 @@ func (x *Executor) Apply(ctx context.Context, plan []reconcile.Action) (Summary,
 	// fails in the moves stage, which runs before any Record; a child upload in
 	// the same folder merely races the Record inside the parallel transfer
 	// stage and usually wins. Both are the same missing fact.
+	//
+	// Not at or under the source of a folder MoveLocal (S035): there the path
+	// names the moving folder until its move runs, and renamePathIDs would
+	// carry the seed along to the destination — a reparent into the
+	// destination then lands in the NEW folder that took the old name (Drive
+	// renamed D to N and made a new D: N/x went into D). Those seeds apply
+	// when the move has run.
+	var movedDirs []string
+	for _, a := range plan {
+		if a.Type == reconcile.MoveLocal && a.IsDir {
+			movedDirs = append(movedDirs, a.RelPath)
+		}
+	}
+	x.deferredSeeds = map[string]string{}
 	for _, a := range plan {
 		if a.IsDir && a.FileID != "" && (a.Type == reconcile.Record || a.Type == reconcile.MkdirLocal) {
-			x.pathIDs[a.RelPath] = a.FileID
+			if underAny(a.RelPath, movedDirs) {
+				x.deferredSeeds[a.RelPath] = a.FileID
+				continue
+			}
+			x.seedPathID(a.RelPath, a.FileID)
 		}
 	}
 	x.failedProtectors = map[string]bool{}
@@ -241,6 +282,9 @@ func CleanStaleState(ctx context.Context, db *statedb.DB, client driveclient.Cli
 	if len(stale) > 0 {
 		slog.Info("discarding stale pending ops from a previous run; replanning", "count", len(stale))
 		if err := seedOrphanCreates(ctx, db, client, rootID, stale); err != nil {
+			return err
+		}
+		if err := finishOwedCommits(db, syncDir, stale); err != nil {
 			return err
 		}
 	}
@@ -430,7 +474,11 @@ func (x *Executor) execute(ctx context.Context, opID int64, a reconcile.Action) 
 	case reconcile.MkdirRemote:
 		return x.mkdirRemote(ctx, opID, a)
 	case reconcile.MoveLocal:
-		return x.moveLocal(opID, a)
+		err := x.moveLocal(opID, a)
+		if a.IsDir {
+			x.applyDeferredSeeds(a.RelPath)
+		}
+		return err
 	case reconcile.MoveRemote:
 		return x.moveRemote(ctx, opID, a)
 	case reconcile.ConflictBackup:
@@ -535,6 +583,7 @@ func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	if err := guardedRename(from, to, "move destination "+a.NewRelPath, expFromAction(a), allowVanished); err != nil {
 		return err
 	}
+	x.noteApplied(opID)
 	if err := checkpoint(CPMoveBeforeCommit); err != nil {
 		return err
 	}
@@ -542,6 +591,18 @@ func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 		return statedb.RenameItemPath(tx, a.RelPath, a.NewRelPath)
 	})
+}
+
+// noteApplied journals that a local rename is done and its commit owed
+// (S035): crash recovery then commits it although the disk alone could not
+// prove the rename happened — a new folder or file has taken the old name. A
+// download needs no mark: its bytes (md5) prove it.
+// Best effort: if this write fails too, recovery falls back to the disk's own
+// evidence (source gone, destination there).
+func (x *Executor) noteApplied(opID int64) {
+	if err := x.DB.SetOpState(opID, statedb.OpApplied); err != nil {
+		slog.Warn("could not journal a done rename; recovery will judge it from the disk", "op", opID, "err", err)
+	}
 }
 
 func (x *Executor) moveRemote(ctx context.Context, opID int64, a reconcile.Action) error {
@@ -1030,6 +1091,44 @@ func (x *Executor) removeDirPerItem(a reconcile.Action) error {
 		}
 	}
 	return nil
+}
+
+// underAny reports whether p is one of dirs or below one.
+func underAny(p string, dirs []string) bool {
+	for _, d := range dirs {
+		if p == d || strings.HasPrefix(p, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// applyDeferredSeeds seeds the folder ids deferred at or under dir, now that
+// the folder move out of dir has run — or failed, when the seeds name what the
+// rest of the plan creates there all the same.
+func (x *Executor) applyDeferredSeeds(dir string) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for p, id := range x.deferredSeeds {
+		if underAny(p, []string{dir}) {
+			x.seedPathID(p, id)
+			delete(x.deferredSeeds, p)
+		}
+	}
+}
+
+// seedPathID puts a folder id the plan knows at its path, and takes it off
+// any other path: a folder lives at one path. Without that, a merged folder
+// move (S035: Drive's D now at N, a new local D) left the baseline's D naming
+// the folder now at N, and an upload into the new D whose creation failed
+// went into N on Drive. Caller holds x.mu or runs before the stages start.
+func (x *Executor) seedPathID(p, id string) {
+	for q, other := range x.pathIDs {
+		if other == id && q != p {
+			delete(x.pathIDs, q)
+		}
+	}
+	x.pathIDs[p] = id
 }
 
 func (x *Executor) renamePathIDs(from, to string) {

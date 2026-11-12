@@ -13,23 +13,22 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S035  A local rename whose state-DB commit is lost: machines can end up with different content, a missing file, or a refused plan (PRE-EXISTING; nine fuzz seeds, exposed by S031's two new crash checkpoints)
-2. S036  Plans still refused every cycle in wider shapes — two folder levels, held rows, long chains (PRE-EXISTING; 1,014 of 60,000 generated inputs)
-3. S020  A folder renamed on Drive beats its local deletion (DEC-006)
-4. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
-5. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
-6. S032  How strong must rename evidence be — one identical file is enough today (DEC-012: most of the folder's non-empty files must be found unchanged)
-7. S019  Remote-write gate on real Drive: live verification, narrower window (live runs authorized by Max 2026-11-11)
-8. S015  `watch`/`sync` never check the Drive root (audit F10; live confirmation first — authorized)
-9. S030  Case-insensitive folder: a Drive newcomer winning the fold wedges a download against the file on disk (found 2026-11-12) — rule decided, DEC-011: a reported skip, named as a name conflict
-10. S029  The `internal/watch` tests reach the developer's real system bin (found 2026-11-12)
-11. S028  Linux: `status`/`doctor`/`info` name the home bin, not the sync dir's (S016 residual)
-12. S034  A delegated `sync` may print `Done.` for a refused cycle (from reading)
-13. S003  Daemon surfaces skips in `activity`
-14. S004  Stored error details keep the URL and lose the cause
-15. S005  "N local changes" counts wake-ups, not files
-16. S006  Third platform: Windows
-17. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
+1. S036  Plans still refused every cycle in wider shapes — two folder levels, held rows, long chains (PRE-EXISTING; 1,014 of 60,000 generated inputs)
+2. S020  A folder renamed on Drive beats its local deletion (DEC-006)
+3. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
+4. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
+5. S032  How strong must rename evidence be — one identical file is enough today (DEC-012: most of the folder's non-empty files must be found unchanged)
+6. S019  Remote-write gate on real Drive: live verification, narrower window (live runs authorized by Max 2026-11-11)
+7. S015  `watch`/`sync` never check the Drive root (audit F10; live confirmation first — authorized)
+8. S030  Case-insensitive folder: a Drive newcomer winning the fold wedges a download against the file on disk (found 2026-11-12) — rule decided, DEC-011: a reported skip, named as a name conflict
+9. S029  The `internal/watch` tests reach the developer's real system bin (found 2026-11-12)
+10. S028  Linux: `status`/`doctor`/`info` name the home bin, not the sync dir's (S016 residual)
+11. S034  A delegated `sync` may print `Done.` for a refused cycle (from reading)
+12. S003  Daemon surfaces skips in `activity`
+13. S004  Stored error details keep the URL and lose the cause
+14. S005  "N local changes" counts wake-ups, not files
+15. S006  Third platform: Windows
+16. S012  Add a LICENSE (audit F06) — distribution, deferred and uncertain
 
 **Order is Max's, 2026-11-11 (DEC-002): audit bugs first, distribution last and possibly never.** S007–S016 come from the audit [audit/2026-11-11_adversarial.md](audit/2026-11-11_adversarial.md), one step per finding (F09 maps onto the existing S002). Fixes are implemented by Opus subagents, one per step, sequentially, coordinated by the main session. Max decided the six open shapes on 2026-11-11 (DEC-004..DEC-009): S002, S020, S017, S022 are runnable; **S024 and S025 are closed unbuilt, accepted by decision**. S019 and S015 run against real Drive with Max's permission. S016 and S001's L8 run on `pop-os`, in a session Max starts there.
 
@@ -48,10 +47,10 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
+- S035  A local rename or download whose commit is lost is recorded on recovery; a Drive folder arriving where a folder still sits here is merged; a deleted-and-remade folder no longer doubles on Drive — fixed 2026-11-12 (nine fuzz seeds, four causes; both 200-seed sweeps green again)
 - S031  The moves stage: no local file replaced unless its bytes are kept (rule O1, checked on every plan), file moves in dependency order, swaps through a temporary name — fixed 2026-11-12 (pre-existing data loss; residuals S035, S036; DEC-010)
 - S033  A flaky `-race` failure in `internal/tui` — closed 2026-11-12 as a duplicate of S027 (fixed on `pop-os`); 50 `-race` runs green on the Mac
 - S001  Finish the Linux port — L8 hardware gates passed on `pop-os` (2 h soak converged on 16,419 files), L7 docs — done 2026-11-12
 - S027  `go test -race` green on Linux: the dashboard's cancellation takes bubbletea's graceful path — fixed 2026-11-12 on `pop-os`
-- S002  The §4.5 rename wedge — four planner causes fixed, a repeating refused plan shown as stuck — 2026-11-12 (audit F09, DEC-004; residuals S031)
 
 Earlier work: [plan_history.md](plan_history.md), W1–W21.

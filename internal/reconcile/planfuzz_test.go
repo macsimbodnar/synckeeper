@@ -8,7 +8,8 @@ package reconcile
 // with no failure, each single and each pair of failed actions, each crash
 // point, and each move's commit lost after its rename: no local file's bytes
 // may end up nowhere — not on Drive, not on disk, not uploaded, not in the
-// bin. Adapted from the independent check's harness; it found the round-2
+// bin. S035 adds the folder merge's start state (Drive renamed D to N, N and
+// D both here). Adapted from the independent check's harness; it found the round-2
 // regression (a pinned download onto a released file) and the pre-existing
 // download-onto-an-occupant overlap.
 //
@@ -290,6 +291,25 @@ func pfGenFolder(r *rand.Rand) Input {
 		return s
 	}
 	pfDriveAndLocal(r, &in, slots, in2, driveDir, localDir)
+	// S035: Drive renamed D to N while a folder N also sits here, untracked —
+	// made here, or the files came down into it while D was renamed otherwise
+	// — with D still here: the merge (specs §4.3). Sometimes N holds one of
+	// D's files already, at Drive's name, or a new file.
+	if driveDir == "N" && localDir == "D" && r.Intn(3) == 0 {
+		in.Local["N"] = LocalItem{IsDir: true}
+		for _, q := range slices.Sorted(maps.Keys(in.Remote)) {
+			if rest, ok := strings.CutPrefix(q, "N/"); ok && r.Intn(2) == 0 {
+				if _, here := in.Local["N/"+rest]; !here {
+					rm := in.Remote[q]
+					in.Local["N/"+rest] = LocalItem{MD5: rm.MD5, Size: rm.Size, MtimeNS: 5000}
+					break
+				}
+			}
+		}
+		if r.Intn(2) == 0 {
+			in.Local["N/new.txt"] = LocalItem{MD5: "NN", Size: 77, MtimeNS: 5001}
+		}
+	}
 	return in
 }
 

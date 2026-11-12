@@ -174,6 +174,11 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	if err := executor.CleanStaleState(ctx, e.DB, e.Client, e.RootID, root); err != nil {
 		return nil, err
 	}
+	// Recovery may have committed what an interrupted run owed (S035): plan on
+	// the baseline as it is now.
+	if baseItems, err = e.DB.AllItems(); err != nil {
+		return nil, err
+	}
 
 	// The network stage: the one that can hang for a long time and the reason a
 	// stage indicator is worth having at all.
@@ -277,10 +282,23 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		return res, nil
 	}
 
+	// The folders Drive holds now — the snapshot's, and shadowed ones, which
+	// are alive though hidden (S035): a baseline folder outside this set is
+	// never resolved as a parent.
+	live := map[string]bool{e.RootID: true}
+	for _, r := range remote {
+		if r.IsDir {
+			live[r.FileID] = true
+		}
+	}
+	for id := range shadowed {
+		live[id] = true
+	}
 	x := &executor.Executor{
 		DB: e.DB, Client: e.Client, SyncDir: root,
 		QuarantineDir: e.QuarantineDir, RootID: e.RootID,
 		Ignore: e.Cfg.Engine.Ignore, Trash: e.trasher(),
+		LiveFolders: live,
 	}
 	// The plan's size is known here, so the total comes free; only a done-of-
 	// total counter would need the executor, which is deliberately not

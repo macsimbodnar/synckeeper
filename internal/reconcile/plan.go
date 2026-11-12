@@ -226,6 +226,50 @@ func Plan(in Input) ([]Action, []Skip) {
 			remoteDirMoves = append(remoteDirMoves, dirMove{from: p, to: ra.path})
 		}
 	}
+	// A remote folder move onto a folder that already sits at the destination
+	// here and that no live row claims — untracked, or its own row's Drive
+	// item gone (another machine deleted that folder, then renamed this one
+	// onto its name) — while the source is still here too (S035): the folder
+	// rename cannot run — refused every cycle, never converging — so it is
+	// carried out as a merge. Each row under the source meets §4.3 on its own
+	// (its file moved into the destination, or found there already: R25);
+	// each row of the folder that was there meets §4.2 at its own path
+	// (unchanged → binned, edited → resurrected into the arriving folder); the
+	// folder's row is re-homed at the destination by a commit, which also
+	// drops the gone folder's row. The local folder left at the source is new
+	// when it still holds something (created on Drive, its untracked content
+	// uploaded into it), else removed here. Reached by two machines renaming
+	// one folder differently, the files then coming down into Drive's name,
+	// and a new folder made under the old name; by a new folder made here
+	// under the name Drive renamed to; by a folder deleted on Drive and
+	// another renamed onto its name.
+	var mergedDirMoves []dirMove
+	mergedSrc := map[string]bool{}
+	{
+		// A folder row whose Drive item is gone: the one deleted on Drive.
+		// Shadowed or unreadable is not gone (the row is held).
+		goneDir := func(q string) bool {
+			b, ok := in.Base[q]
+			if !ok || !b.IsDir || in.ShadowedRemote[b.FileID] || in.UnreadableLocal[b.FileID] {
+				return false
+			}
+			_, live := remByID[b.FileID]
+			return !live
+		}
+		keep := remoteDirMoves[:0]
+		for _, m := range remoteDirMoves {
+			src, srcOK := in.Local[m.from]
+			dst, dstOK := in.Local[m.to]
+			_, dstTracked := in.Base[m.to]
+			if srcOK && src.IsDir && dstOK && dst.IsDir && (!dstTracked || goneDir(m.to)) {
+				mergedDirMoves = append(mergedDirMoves, m)
+				mergedSrc[m.from] = true
+				continue
+			}
+			keep = append(keep, m)
+		}
+		remoteDirMoves = keep
+	}
 	rewriteRD := mkRewrite(remoteDirMoves)
 	// A remote-driven move the disk already shows: the source is gone locally
 	// and a folder sits at the destination — the user made the same rename, or
@@ -340,6 +384,13 @@ func Plan(in Input) ([]Action, []Skip) {
 		if from != m.to {
 			moves = append(moves, Action{Type: MoveLocal, RelPath: from, NewRelPath: m.to, IsDir: true})
 		}
+	}
+	for _, m := range mergedDirMoves {
+		// The merge's commit: the folder's row re-homed where Drive holds it
+		// (a directory Record writes the DB row only).
+		b := in.Base[m.from]
+		transfers = append(transfers, Action{Type: Record, RelPath: m.to, FileID: b.FileID,
+			IsDir: true, Version: remByID[b.FileID].item.Version})
 	}
 	for _, m := range localDirMoves {
 		// One reparent carries the whole subtree; the per-file moves it
@@ -1015,15 +1066,52 @@ func Plan(in Input) ([]Action, []Skip) {
 		transfers = kept
 	}
 
+	// emptiedByMoves: every local entry under dir leaves it by a planned move —
+	// a file's own move, a folder moved out, or a merge's source inside that
+	// the plan empties too. Anything else (an untracked file, an empty new
+	// folder) is something new here.
+	var emptiedByMoves func(dir string) bool
+	emptiedByMoves = func(dir string) bool {
+		movedOut := map[string]bool{}
+		for _, m := range moves {
+			if m.Type == MoveLocal {
+				movedOut[m.RelPath] = true
+			}
+		}
+		under := func(q, d string) bool { return strings.HasPrefix(q, d+"/") }
+		for q, l := range in.Local {
+			if !under(q, dir) || movedOut[q] {
+				continue
+			}
+			carried := false
+			for src := range movedOut {
+				if under(q, src) {
+					carried = true
+					break
+				}
+			}
+			if carried {
+				continue
+			}
+			if l.IsDir && mergedSrc[q] && emptiedByMoves(q) {
+				continue
+			}
+			return false // a file or folder that stays: something new here
+		}
+		return true
+	}
+
 	// --- Pass 2: new local paths ---------------------------------------
 	pairedSrc := map[string]bool{} // baseline path consumed as a move source
 	for _, p := range slices.Sorted(maps.Keys(in.Local)) {
-		if _, inBase := in.Base[p]; inBase && !released[p] {
+		if _, inBase := in.Base[p]; inBase && !released[p] && !mergedSrc[p] {
 			// A released path is new although its row is still there: the row's
 			// file is elsewhere (R25), and its commit re-homes the row by id. Met
 			// here like any new file — upload, or §4.2's both-new rows with a new
 			// Drive item at the name (S031 round 2: pass 3 pinned that item's
-			// download to the new file, and rule O1 refused every cycle).
+			// download to the new file, and rule O1 refused every cycle). So is a
+			// merged folder's source (S035): its row goes to the destination, the
+			// folder left here is created on Drive.
 			continue
 		}
 		if deferred[p] {
@@ -1050,6 +1138,15 @@ func Plan(in Input) ([]Action, []Skip) {
 		// holds the other way (S002): under a folder renamed here, the Drive
 		// item that lands at target is still at the old folder's path.
 		rt := invLD(target)
+		if loc.IsDir && mergedSrc[p] && emptiedByMoves(p) {
+			// A merge's source the plan empties: removed here, not created on
+			// Drive (S035). Expected empty — the removal refuses anything else
+			// (a racing write keeps it, the next cycle meets it as new). No
+			// row: the folder's row is the merge's, re-homed at its
+			// destination.
+			deletes = append(deletes, Action{Type: QuarantineLocal, RelPath: p, IsDir: true})
+			continue
+		}
 		if loc.IsDir {
 			if r, ok := newRemoteAt(rt); ok {
 				if r.IsDir {
@@ -1351,6 +1448,15 @@ func Plan(in Input) ([]Action, []Skip) {
 			// Alive on both sides (a dir move was already emitted).
 			_ = ra
 		case locOK && !remOK:
+			if r, taken := in.Remote[p]; taken && r.IsDir && r.FileID != b.FileID {
+				// Drive holds another folder under this name: another machine
+				// deleted this one and made a new one (S035). Pass 3
+				// materializes it and this folder's content lands in it; its
+				// commit takes over this row's path. A resurrect here would
+				// put a second folder under one name on Drive (§5: one is then
+				// shadowed).
+				continue
+			}
 			if hasCreateUnder(p) || hasCreateUnder(rewrite(p)) {
 				// Resurrect the container for surviving content.
 				mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: p, IsDir: true})

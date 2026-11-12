@@ -19,6 +19,13 @@ goal:       Plans still refused every cycle (§4.5 transfer overlap → `stuck`)
               (at `e27c8bc`: folder seeds 5671, 22476) — add it refined, or say why not;
             - folder seed 5671's plan carries `forget h.txt id=I2` twice (moves stage and
               deletes) — harmless, remove the duplicate.
+            - from S035's second check: the removal of a merge source the plan empties
+              (`quarantine_local`, a folder with no row) is decided from scanned files
+              only; a source still holding a symlink or another unscanned entry gets one
+              failed action ("directory not empty"), then converges as a new folder —
+              do not plan the removal when anything unscanned sits under the source.
+            - S035's author thought merge rule D may share causes with these overlaps;
+              not checked.
 accepts:    The wide generator is a third shape of `TestPlanFuzz`; each distinct overlap
             cause has a named test, red first; deep run
             (`SYNCKEEPER_PLANFUZZ_RUNS=100000`) reports zero refusals and zero losses on

@@ -6,7 +6,11 @@ import "database/sql"
 const (
 	OpPlanned    = "planned"
 	OpInProgress = "in_progress"
-	OpDone       = "done"
+	// OpApplied: a local rename is done on disk and its commit owed (S035) —
+	// written between the two, so crash recovery knows the rename happened
+	// even where the disk alone cannot tell.
+	OpApplied = "applied"
+	OpDone    = "done"
 )
 
 // PendingOp is one journal row for crash resume.

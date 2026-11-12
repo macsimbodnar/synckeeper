@@ -41,9 +41,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -120,6 +122,79 @@ type fuzzer struct {
 	// Shared namespaces so machines collide on the same rel_paths.
 	filePaths []string // candidate file rel-paths (slash-separated)
 	dirPaths  []string // candidate pool dir names (distinct fold keys)
+
+	// tracing: SYNCKEEPER_FUZZ_TRACE set — every op and every cycle's plan and
+	// failures are logged (2: each cycle's input too; 3: and the plan as
+	// Plan returns it, before the collapse), so a red seed can be
+	// minimized by hand. Reads no randomness: a traced replay is the same run.
+	tracing int
+	// disarmed: checkpoints drawn as usual but never fired
+	// (SYNCKEEPER_FUZZ_DISARM, comma-separated) — the same run with one window
+	// closed, to tell whether a red seed needs it.
+	disarmed map[string]bool
+}
+
+// trace logs one line of the replay when SYNCKEEPER_FUZZ_TRACE is set.
+func (fz *fuzzer) trace(format string, args ...any) {
+	if fz.tracing > 0 {
+		fz.t.Logf(format, args...)
+	}
+}
+
+// traceCycle logs what one cycle planned and what failed.
+func (fz *fuzzer) traceCycle(m *machine, what string, res *Result) {
+	if fz.tracing == 0 || res == nil {
+		return
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s [%s]: %d actions, %d failed", what, m.name, len(res.Plan), res.Failed)
+	if fz.tracing > 1 {
+		in := res.input
+		fmt.Fprintf(&sb, "\n    fold case=%v norm=%v", in.CaseFold, in.NormFold)
+		if len(in.ShadowedRemote)+len(in.UnreadableLocal)+len(in.UnscannedLocal)+len(in.UnreadableDirs)+len(in.UnreadableFiles) > 0 {
+			fmt.Fprintf(&sb, "\n    held shadowed=%v unreadable=%v unscanned=%v udirs=%v ufiles=%v", in.ShadowedRemote, in.UnreadableLocal, in.UnscannedLocal, in.UnreadableDirs, in.UnreadableFiles)
+		}
+		for _, k := range slices.Sorted(maps.Keys(in.Base)) {
+			b := in.Base[k]
+			fmt.Fprintf(&sb, "\n    base   %q id=%s dir=%v md5=%s drive=%s size=%d mtime=%d", k, b.FileID, b.IsDir, b.MD5, b.DriveMD5, b.Size, b.MtimeNS)
+		}
+		for _, k := range slices.Sorted(maps.Keys(in.Local)) {
+			l := in.Local[k]
+			fmt.Fprintf(&sb, "\n    local  %q dir=%v md5=%s size=%d mtime=%d", k, l.IsDir, l.MD5, l.Size, l.MtimeNS)
+		}
+		for _, k := range slices.Sorted(maps.Keys(in.Remote)) {
+			r := in.Remote[k]
+			fmt.Fprintf(&sb, "\n    remote %q id=%s dir=%v md5=%s size=%d", k, r.FileID, r.IsDir, r.MD5, r.Size)
+		}
+	}
+	if fz.tracing > 2 {
+		raw, _ := reconcile.Plan(res.input)
+		for _, a := range raw {
+			fmt.Fprintf(&sb, "\n    raw %s %q -> %q", a.Type, a.RelPath, a.NewRelPath)
+		}
+	}
+	for _, a := range res.Plan {
+		fmt.Fprintf(&sb, "\n    %s %q", a.Type, a.RelPath)
+		if a.NewRelPath != "" {
+			fmt.Fprintf(&sb, " -> %q", a.NewRelPath)
+		}
+		if a.FileID != "" {
+			fmt.Fprintf(&sb, " id=%s", a.FileID)
+		}
+		if a.ProtectedBy != "" {
+			fmt.Fprintf(&sb, " protectedBy=%q", a.ProtectedBy)
+		}
+		if a.LocalExists {
+			sb.WriteString(" pinned")
+		}
+	}
+	for _, e := range res.Errors {
+		fmt.Fprintf(&sb, "\n    ERR %s", e)
+	}
+	for _, k := range res.Skips {
+		fmt.Fprintf(&sb, "\n    SKIP %s: %s", k.RelPath, k.Reason)
+	}
+	fz.t.Log(sb.String())
 }
 
 var crashCheckpoints = []string{
@@ -153,6 +228,14 @@ func runFuzz(t *testing.T, seed int64, p fuzzParams) {
 		dirPaths: []string{"da", "db", "dc"},
 		now:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
+	fz.disarmed = map[string]bool{}
+	for _, cp := range strings.Split(os.Getenv("SYNCKEEPER_FUZZ_DISARM"), ",") {
+		fz.disarmed[strings.TrimSpace(cp)] = true
+	}
+	if v := os.Getenv("SYNCKEEPER_FUZZ_TRACE"); v != "" {
+		fz.tracing, _ = strconv.Atoi(v)
+		fz.tracing = max(fz.tracing, 1)
+	}
 	// Deterministic conflict-copy timestamps: the clock advances one minute per
 	// op step (below) and is frozen during quiesce, so replay from a seed is
 	// exact. Restored after the run.
@@ -182,6 +265,7 @@ func runFuzz(t *testing.T, seed int64, p fuzzParams) {
 
 	for step := 0; step < p.steps; step++ {
 		fz.now = fz.now.Add(time.Minute)
+		fz.trace("step %d", step)
 		m := fz.ms[fz.rng.Intn(len(fz.ms))]
 		fz.applyOp(m)
 		// Sometimes replay W16's shape: a cycle writes to Drive and a second
@@ -235,6 +319,7 @@ func (fz *fuzzer) rawWrite(m *machine, rel, content string) {
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		fz.t.Fatalf("seed %d: write %s: %v", fz.seed, rel, err)
 	}
+	fz.trace("op [%s] write %q = %q", m.name, rel, content)
 	fz.clockN++
 	mt := time.Unix(1_700_000_000+fz.clockN, 0)
 	os.Chtimes(p, mt, mt)
@@ -267,6 +352,7 @@ func (fz *fuzzer) opDelete(m *machine) {
 	}
 	rel := files[fz.rng.Intn(len(files))]
 	os.RemoveAll(filepath.Join(m.dir, filepath.FromSlash(rel)))
+	fz.trace("op [%s] delete %q", m.name, rel)
 }
 
 func (fz *fuzzer) opRenameFile(m *machine) {
@@ -288,6 +374,7 @@ func (fz *fuzzer) opMkdir(m *machine) {
 	// A fresh empty dir (exercises empty-folder propagation, S8).
 	rel := fz.freshDirName()
 	os.MkdirAll(filepath.Join(m.dir, filepath.FromSlash(rel)), 0o755)
+	fz.trace("op [%s] mkdir %q", m.name, rel)
 }
 
 func (fz *fuzzer) opRenameDir(m *machine) {
@@ -344,7 +431,9 @@ func (fz *fuzzer) rawRename(m *machine, from, to string) bool {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return false
 	}
-	return os.Rename(src, dst) == nil
+	err := os.Rename(src, dst)
+	fz.trace("op [%s] rename %q -> %q (err=%v)", m.name, from, to, err)
+	return err == nil
 }
 
 // ---- machine introspection -----------------------------------------------
@@ -393,13 +482,15 @@ func (fz *fuzzer) shuffledMachines() []*machine {
 // at a random checkpoint. A crash is a soft failure (recorded, not returned);
 // a hard error here would be a real finding.
 func (fz *fuzzer) syncMaybeCrash(m *machine) *Result {
+	what := "sync"
 	if fz.rng.Float64() < fz.crashProb {
 		cp := crashCheckpoints[fz.rng.Intn(len(crashCheckpoints))]
+		what = "sync crash@" + cp
 		// The transfer stage calls the hook from several workers at once, so
 		// the one-shot latch must be atomic: exactly one worker crashes.
 		var fired atomic.Bool
 		executor.FaultHook = func(name string) error {
-			if name == cp && fired.CompareAndSwap(false, true) {
+			if name == cp && !fz.disarmed[cp] && fired.CompareAndSwap(false, true) {
 				return fmt.Errorf("injected crash at %s", name)
 			}
 			return nil
@@ -407,6 +498,7 @@ func (fz *fuzzer) syncMaybeCrash(m *machine) *Result {
 		defer func() { executor.FaultHook = nil }()
 	}
 	res, err := m.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+	fz.traceCycle(m, what, res)
 	if err != nil {
 		// A crash is a soft failure (res.Failed), never a returned error. Any
 		// hard error here — a §4.5-refused plan, a guard mis-fire — is a finding.
@@ -477,6 +569,7 @@ func (fz *fuzzer) quiesce() {
 		activity := 0
 		for _, m := range fz.ms {
 			res, err := m.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+			fz.traceCycle(m, fmt.Sprintf("quiesce %d", round), res)
 			if err != nil {
 				fz.t.Fatalf("seed %d: quiesce sync [%s] round %d: %v", fz.seed, m.name, round, err)
 			}
@@ -518,6 +611,7 @@ func (fz *fuzzer) quietRenameProbe() {
 		return
 	}
 	res, err := m.eng.Sync(context.Background(), Options{ConfirmDeletes: true})
+	fz.traceCycle(m, "probe", res)
 	if err != nil {
 		fz.t.Fatalf("seed %d: identity probe sync [%s] errored: %v", fz.seed, m.name, err)
 	}
