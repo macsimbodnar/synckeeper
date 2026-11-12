@@ -224,7 +224,8 @@ Details in [adocs/decisions.md](adocs/decisions.md) and [adocs/audit/2026-11-11_
 - **Linux syncs only while you are logged in.** The systemd user unit dies with your last session; nothing syncs until you log in again. `service install` neither enables nor offers *linger*. Want it running logged-out: `loginctl enable-linger`. macOS launchd runs whenever the machine is on.
 - **Symlinks inside the folder are never followed** — content behind one doesn't sync (§6).
 - All files kept on disk; no online-only placeholders.
-- **macOS and Linux** are validated on hardware. **Windows is not** — it also has no recycle-bin backend yet, so local rescue copies there fall back to quarantine (§6).
+- **Mixed case-sensitivity.** Linux (ext4) holds `Readme.txt` and `README.txt` in one folder; macOS (APFS) can't — it syncs the lowest Drive file id and skips the rest as a case-collision (reported like "Not synced", §6). Drive and Linux keep both.
+- **macOS and Linux** are validated on hardware — Linux by S001's gates on inotify (2026-11-12: full suite incl. `-race`, 50k files with 0 of 500 folders unwatchable, 2 h two-machine soak) plus field use since 2026-07. **Windows is not** — it also has no recycle-bin backend yet, so local rescue copies there fall back to quarantine (§6).
 
 ## 10. Live dashboard (`synckeeper status`)
 

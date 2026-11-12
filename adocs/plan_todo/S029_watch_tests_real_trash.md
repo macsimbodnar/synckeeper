@@ -7,8 +7,8 @@ goal:       The `internal/watch` tests reach the developer's real system bin. Th
             `TestSoak` propagates chaos deletions between its two machines as
             `quarantine_local`, i.e. `MoveToTrash` into `~/.local/share/Trash` (Linux,
             sync dir under `/tmp` on the home filesystem) or Finder's Trash (darwin+cgo):
-            by chaos rates, thousands of `f-a-*.txt` per 2 h run (estimate; the L8 run
-            measures it). Found 2026-11-12 reading the soak before S001's L8 run; that
+            measured: 16,455 items (131 MB) in S001's 2 h L8 run (testing.md S001
+            L8.5). Found 2026-11-12 reading the soak before S001's L8 run; that
             run was isolated with `XDG_DATA_HOME` pointed at a scratch dir. No test
             artifact found in `pop-os`'s real trash.
 accepts:    No `internal/watch` test can reach the real bin on any platform: a decision

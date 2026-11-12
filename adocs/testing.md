@@ -76,6 +76,7 @@ Names criteria N1–N3 are spec §16.5; they live in the regression table below 
 | 2-hour random-edit soak, both sides, no divergence | passing (2026-07-09, macOS, fsnotify) — converged on 10,858 files; late-stage fd exhaustion degraded to polling as designed and still converged (see decisions.md 2026-07-12) |
 | Cache-prune + polling-latch regression tests (`internal/remotedelta`, `internal/watch`) + 90 s soak re-run | passing (2026-07-12) |
 | Soak re-run on the FSEvents backend (W3.5) — the full 2 h gate | **passing (2026-07-24, macOS, FSEvents)** — `SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 10h -v`, code `aefe4fe`, two live FSEvents streams under 2 h of create/edit/rename/delete chaos on both sides: `--- PASS: TestSoak (7216.68s)`, **converged on 16,344 files** (both machines byte-identical), clean `doctor` on both, no divergence, no panic. The 3,488 transient `lstat … no such file` retries (chaos racing the scanner) are expected and converged as designed. Ran continuously for the full 2 h; earlier attempts under the harness task manager were killed mid-run by the machine's 1-min idle-sleep (not test failures) — the passing run was launched detached (reparented to launchd) so machine sleep suspends-and-resumes it instead of tearing it down. See decisions.md 2026-07-24. Closes W3 |
+| 2 h soak on Linux, inotify (S001-L8) | **passing (2026-11-12, linux `pop-os`, code `1019cae`)** — converged on 16,419 files; details S001-L8.4 |
 
 ## Monitoring (phase 6, stage 1)
 
@@ -550,6 +551,19 @@ Layout: sync dir writable, on a filesystem whose mount root this user cannot wri
 | ID | Case | Status |
 |---|---|---|
 | S027.1 | A cancelled context ends `tui.Run` with no error and no data race: cancellation reaches bubbletea as `p.Quit()` (graceful `shutdown`, which waits for the input read loop before closing the reader), not through `tea.WithContext` (kill path: reader closed under the epoll `wait()` still calling `File.Fd()`) | passing (2026-11-12, linux) — `TestRunTreatsCancellationAsCleanExit` (`internal/tui/run_test.go`, unchanged) under `-race`. Red first, before the fix, separate processes: 4/8, 1/8 and 18/30 runs DATA RACE (23/46). After: 20/20 runs of the test and 40/40 of the whole package clean; `make test` green; `GOOS=darwin go vet`, `GOOS=windows go build` clean |
+
+## S001 — L8 Linux hardware gates (`pop-os`, inotify), then L7 docs
+
+Host: Pop!_OS, kernel 7.2.15, go 1.26.4, ext4; sync dirs under `/tmp` (same filesystem as home). Logs kept in the session scratchpad, not the repo. Every run `-count=1`.
+
+| ID | Case | Status |
+|---|---|---|
+| L8.1 | `go build ./... && go vet ./... && go test ./...` | passing (2026-11-12, linux, code `5c1a807`) — 22 packages `ok`; re-run inside the `-race` pass below at `43c8c89` |
+| L8.2 | `go test -race ./...` | **red at `5c1a807`** — `internal/tui` `TestRunTreatsCancellationAsCleanExit`, `DATA RACE` in bubbletea's kill path (S027); **passing at `43c8c89`** (after S027), 22 packages, run under `nice -n 19 ionice -c3` alongside the soak |
+| L8.3 | 50k scale on inotify: `SYNCKEEPER_SCALE_FILES=50000 go test ./internal/watch/ -run 'TestScale\|TestFSEventsScale' -timeout 20m` (`-v` added), expect ≈0 unwatchable dirs | passing (2026-11-12, linux, code `5c1a807`) — 50 000 files in 500 dirs, open-file soft limit 1048576, 50 500 planned actions / 50 500 executed, **0 of 500 directories unwatchable**, `--- PASS: TestScale (756.14s)`. `TestFSEventsScale` is darwin-only |
+| L8.4 | 2 h soak on the production backend (`productionBackend` = fsnotify/inotify off darwin): `nohup systemd-inhibit --what=sleep env SYNCKEEPER_SOAK_SECONDS=7200 go test ./internal/watch/ -run TestSoak -timeout 3h -v`, detached, plus `XDG_DATA_HOME=<scratch>/soak_xdg` (S029) | **passing (2026-11-12 00:38→02:38, linux, code `1019cae`)** — **converged on 16,419 files**, `--- PASS: TestSoak (7206.71s)`. 22 665 cycles; 858 `ERROR` lines, all retried chaos races: 836 `scan local dir: lstat … no such file` (cycle retried), 12 action `stat … no such file` (file vanished before upload), 10 download md5 mismatch (`changed remotely mid-sync?`); 22 failed actions total; 0 `WARN`. Applies at `43c8c89`: S027 touched only `internal/tui`. The test's `t.Log` still says "(FSEvents on darwin+cgo)" — cosmetic |
+| L8.5 | Soak side effect, measured for S029: chaos deletions propagated as `quarantine_local` into the freedesktop bin | **16,455 items, 131 MB** in the scratch bin (`files/` and `info/` paired). Without the `XDG_DATA_HOME` override they land in `~/.local/share/Trash` — S029 |
+| L7 | Docs only after L8 (plan_history W7 item 7). MANUAL §1 "macOS primary" and §3/§4 `service` rows (systemd unit, log path, `journalctl --user`) and §9 "not yet validated" were already corrected early (decisions.md, W18-I D2); now: §9 validation bullet cites L8.1–L8.4; new §9 mixed case-sensitivity bullet; README status line drops S001 | done (2026-11-12) — doc check. Case-collision claim traced to code: `internal/remotedelta/remotedelta.go:323` sorts siblings by `FileID`, first wins; `:258` skip reason `case-collision with %q on a case-insensitive filesystem; not synced here` |
 
 ## Live smoke (any phase, manual)
 
