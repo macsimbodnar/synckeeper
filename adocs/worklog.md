@@ -1170,3 +1170,4 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 - Coordinator's own slip: the first sweep run passed two env vars as one word (zsh does not split `$cfg`) — four sweeps ran with defaults in 10–20 s; caught by the durations, re-run properly. Final tree: build, vet, gofmt, Linux, `make test`, `-race` ×7, deep plan fuzz, 60×150 (202 s), crash=1 ×40 (50 s), 200×150 (622 s), crash=1 ×200 (265 s) — green.
 - The implementer deleted top-level files of an old export in the session scratchpad (`scratchpad/r1`) by mistake; nothing in the repo.
 - MANUAL §8: the "interrupted right after applying a rename" row out; a row in for `doctor --repair` discarding the journal (traced: `doctor.go` `ClearOps`). plan.md: S036 first.
+- **S036 started** (`plan_todo/` → `plan_current/`), a fresh Opus subagent.
