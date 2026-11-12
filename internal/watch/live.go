@@ -60,7 +60,7 @@ type liveState struct {
 	retryAt    time.Time
 
 	// refused is the run of cycles in a row whose plan ValidateTransferStage
-	// refused (S002). A refusal executes nothing and changes no state, so the
+	// or ValidateLocalOverwrites refused (S002, S031). A refusal executes nothing and changes no state, so the
 	// next cycle plans the same thing: from the second one on the daemon is at
 	// a standstill, which `status` must name rather than leave to a `last
 	// error` that merely repeats. Any refusal extends the run, whatever its
@@ -219,16 +219,17 @@ func (l *liveState) cycleBegin(at time.Time, number int) {
 	l.wakePending, l.pendingChanges = false, 0
 }
 
-// noteRefused records a cycle whose plan §4.5 refused and returns the run's
-// length. The run keeps its start; paths and message are the latest cycle's.
-func (l *liveState) noteRefused(at time.Time, e *reconcile.TransferOverlapError) int {
+// noteRefused records a cycle whose plan §4.5 refused — either check — and
+// returns the run's length. The run keeps its start; paths and message are
+// the latest cycle's.
+func (l *liveState) noteRefused(at time.Time, e reconcile.RefusedPlan) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.refused.cycles == 0 {
 		l.refused.since = at
 	}
 	l.refused.cycles++
-	l.refused.reason, l.refused.paths = e.Error(), slices.Clone(e.Paths)
+	l.refused.reason, l.refused.paths = e.Error(), slices.Clone(e.RefusedPaths())
 	return l.refused.cycles
 }
 

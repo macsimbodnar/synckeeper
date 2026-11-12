@@ -130,6 +130,21 @@ func Plan(in Input) ([]Action, []Skip) {
 	for _, b := range in.Base {
 		baseIDs[b.FileID] = true
 	}
+	// keptOnDrive: bytes Drive holds now or held at the last sync — §4.5 rule
+	// O1's "kept". The only local files a pinned download may replace (S031
+	// round 2); any other file at a download's target is kept first.
+	onDrive := map[string]bool{}
+	for _, b := range in.Base {
+		if !b.IsDir && b.MD5 != "" && b.MD5 == b.DriveMD5 {
+			onDrive[b.MD5] = true
+		}
+	}
+	for _, r := range in.Remote {
+		if !r.IsDir && r.MD5 != "" {
+			onDrive[r.MD5] = true
+		}
+	}
+	keptOnDrive := func(md5 string) bool { return onDrive[md5] }
 	// newRemoteAt: a remote item at path p that is not a baseline item —
 	// i.e. brand-new remote content, possibly replacing a baseline path.
 	newRemoteAt := func(p string) (RemoteItem, bool) {
@@ -515,6 +530,31 @@ func Plan(in Input) ([]Action, []Skip) {
 	// be new (the row's file sits at Drive's path); pass 2 treats it as new.
 	// deferred: local files left alone this cycle (an unrelated pair).
 	released, deferred := map[string]bool{}, map[string]bool{}
+	// occChecks: local moves whose destination is occupied, by the move's
+	// index in moves; resolved after pass 1 (S031).
+	type occCheck struct {
+		mv  int    // -1: a download lands there, not a move
+		at  string // where the occupant sits now
+		dst string // the move's destination, where the moves stage meets it
+	}
+	var occChecks []occCheck
+	// rowAt: the baseline file row whose DB row sits at a path once the
+	// folder moves have committed — what a file move's commit meets there.
+	rowAt := map[string]string{}
+	for q, b := range in.Base {
+		if !b.IsDir {
+			rowAt[rewrite(q)] = q
+		}
+	}
+	// heldRow: a row pass 1 only reports — never moved, backed up, forgotten.
+	heldRow := func(q string) bool {
+		b, ok := in.Base[q]
+		if !ok || b.IsDir {
+			return false
+		}
+		_, h := held[q]
+		return h || in.ShadowedRemote[b.FileID] || in.UnreadableLocal[b.FileID]
+	}
 
 	// --- Pass 1: baseline files ---------------------------------------
 	for _, p := range slices.Sorted(maps.Keys(in.Base)) {
@@ -582,31 +622,41 @@ func Plan(in Input) ([]Action, []Skip) {
 		// folder moves run: under a folder Drive renamed and the disk has not
 		// yet, it still sits at the old folder's path (S002). It must be one no
 		// baseline row explains — that one is its own row's file.
-		if m, viaDone := doneMoveOf(p); viaDone && locOK && remOK && loc.MD5 != b.MD5 && loc.MD5 != ra.item.MD5 {
-			// Under a remote folder rename the disk already shows, N/rel is
-			// D/rel's file by name only, and its bytes are neither side's.
-			// Drive renamed the file too: if the file at Drive's path carries
-			// the row's bytes, that is the row's file (both machines renamed
-			// it), met by R25's branch below; N/rel is then a new file.
+		if locOK && remOK && remoteMoved && loc.MD5 != b.MD5 && loc.MD5 != ra.item.MD5 {
+			// The file at the row's path holds neither side's bytes, and Drive
+			// renamed the file: if the file at Drive's path carries the row's
+			// bytes and no row explains it, that is the row's file — moved there
+			// too, by the user or by a move whose commit was lost (S031) —
+			// met by R25's branch below; the file at the old path is new. Under
+			// a remote folder rename the disk already shows, N/rel is D/rel's
+			// file by name only (S002). Elsewhere the old path keeps its row
+			// until the R25 commit re-homes it; pass 2 meets the new file there
+			// all the same. Was (S031): taken for the row's file — an edit, or a
+			// true conflict — so a file written at the old name after an
+			// interrupted move went up into the row's Drive item, the row's own
+			// bytes to a conflict copy; with Drive edited, §4.5 refused every
+			// cycle.
 			alt := localAtPost(pathNow)
 			_, altIsBase := in.Base[invLocal(alt)]
 			_, pathNowTracked := in.Base[pathNow]
-			if l2, ok := in.Local[alt]; ok && remoteMoved && !l2.IsDir && !altIsBase && !pathNowTracked &&
+			if l2, ok := in.Local[alt]; ok && !l2.IsDir && !altIsBase && !pathNowTracked &&
 				(l2.MD5 == b.MD5 || l2.MD5 == ra.item.MD5) {
 				released[localPath] = true
 				locOK = false
-			} else if !doneEvidenced[m.from] {
-				// No evidence the two are one file: they are strangers. The row
-				// stops claiming Drive's item, before the folder's commit in
-				// the same plan, and the files stay untouched this cycle. From
-				// then on Drive's item is Drive-only and the local file new:
-				// §4.2's both-new rows keep both (a conflict copy), and no
-				// interruption can leave a row that reads as a local deletion —
-				// none claims Drive's item.
-				forgets = append(forgets, Action{Type: Forget, RelPath: p, FileID: b.FileID})
-				deferred[alt] = true
-				continue
 			}
+		}
+		if m, viaDone := doneMoveOf(p); viaDone && locOK && remOK && loc.MD5 != b.MD5 && loc.MD5 != ra.item.MD5 &&
+			!doneEvidenced[m.from] {
+			// No evidence the two are one file: they are strangers. The row
+			// stops claiming Drive's item, before the folder's commit in
+			// the same plan, and the files stay untouched this cycle. From
+			// then on Drive's item is Drive-only and the local file new:
+			// §4.2's both-new rows keep both (a conflict copy), and no
+			// interruption can leave a row that reads as a local deletion —
+			// none claims Drive's item.
+			forgets = append(forgets, Action{Type: Forget, RelPath: p, FileID: b.FileID})
+			deferred[localAtPost(pathNow)] = true
+			continue
 		}
 		lp := localAtPost(pathNow)
 		over := invLocal(lp) // the baseline row the local file would otherwise be
@@ -625,7 +675,7 @@ func Plan(in Input) ([]Action, []Skip) {
 				// Moved over another file (cause D), the local bytes only say
 				// whose they are when they match one side exactly; anything
 				// else is an edit of one of the two, no telling which.
-				overUntouched := movedOver && ln.MD5 == in.Base[over].MD5
+				overUntouched := movedOver && ln.MD5 == in.Base[over].MD5 && keptOnDrive(ln.MD5)
 				overEdited := movedOver && localChanged && !overUntouched
 				switch {
 				case ln.MD5 == ra.item.MD5:
@@ -649,10 +699,12 @@ func Plan(in Input) ([]Action, []Skip) {
 					// this very file.
 					transfers = append(transfers, Action{Type: UpdateRemote, RelPath: pathNow, FileID: b.FileID,
 						RemoteWant: pinRemote(ra.path, ra.item)})
-				case !localChanged && remoteContentChanged:
+				case !localChanged && remoteContentChanged && keptOnDrive(ln.MD5):
 					// Only Drive's content changed; the local file is the
 					// baseline's, so the download replaces it — pinned to the
 					// scanned stat, so an edit landing meanwhile wins (§7).
+					// Bytes never confirmed on Drive (a row whose two md5s
+					// disagree) are not replaced: the conflict below keeps them.
 					transfers = append(transfers, Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
 						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
 						LocalExists: true, LocalSize: ln.Size, LocalMtimeNS: ln.MtimeNS})
@@ -679,61 +731,56 @@ func Plan(in Input) ([]Action, []Skip) {
 		// (invariant 7): routing it through a move first would make the
 		// backup depend on an ordering the plan must never get wrong.
 		trueConflict := locOK && remOK && localChanged && remoteContentChanged && loc.MD5 != ra.item.MD5
-		if remoteMoved && locOK && !trueConflict {
-			mv := Action{Type: MoveLocal, RelPath: expected, NewRelPath: pathNow, FileID: b.FileID}
-			// The move's destination may already be occupied locally. Never let
-			// the rename silently clobber it (invariant 7). The occupant is what
-			// sits there once the folder moves run: under a folder Drive renamed
-			// it is still at the old folder's path (S002).
-			occAt := localAtPost(pathNow)
-			if occ, occupied := in.Local[occAt]; occupied && pathNow != expected {
-				// The occupant's own row, read through the folder moves the disk
-				// already shows: under a done move N/x is row D/x's file (S002).
-				owner := invLocal(occAt)
-				ob, tracked := in.Base[owner]
-				_, ownerOnDrive := remByID[ob.FileID]
-				_, ownerHeld := held[owner]
-				// Its row's Drive item is gone: its bytes are not "safe on
-				// Drive", so it is never clobbered.
-				ownerGone := tracked && !ob.IsDir && !ownerOnDrive && !in.ShadowedRemote[ob.FileID] &&
-					!in.UnreadableLocal[ob.FileID] && !ownerHeld
-				switch {
-				case !occ.IsDir && ownerGone && occ.MD5 == ob.MD5:
-					// Unchanged here, deleted on Drive: §4.2 bins it. The bin runs
-					// before the move instead of after it (see vacateFirst), and
-					// the move expects the path empty — a bin that fails leaves
-					// the file there, and the move is refused (§7).
-					vacateFirst[occAt] = vacate{vacateBin, pathNow}
-				case !occ.IsDir && (!tracked || ownerGone):
-					// Untracked local-only file, or a tracked one edited here
-					// whose Drive item is gone: its only copy lives here.
-					// Preserve it as a conflict copy before the move vacates the
-					// path, and refuse the move if that backup fails. The copy's
-					// upload is the edit's resurrection (edit beats delete).
-					cp := conflicts.Path(pathNow, in.Machine, in.Now)
-					moves = append(moves, Action{Type: ConflictBackup, RelPath: pathNow, NewRelPath: cp})
-					transfers = append(transfers, Action{Type: Upload, RelPath: cp, ProtectedBy: pathNow})
-					mv.ProtectedBy = pathNow
-					backedUp[occAt] = true
-					if ownerGone {
-						vacateFirst[occAt] = vacate{vacateCopied, pathNow}
-						// The row has nothing left: its Drive item is gone, its
-						// bytes go to the copy. Dropped before the move, so the
-						// move's commit finds the path free in the baseline.
-						moves = append(moves, Action{Type: Forget, RelPath: owner, FileID: ob.FileID})
-					}
-				case !occ.IsDir && tracked:
-					// Tracked content (bytes safe on Drive, e.g. a swap): the
-					// executor may clobber it, but must first confirm it is
-					// still the file the scan saw so a racing write wins (§7).
-					mv.LocalExists, mv.LocalSize, mv.LocalMtimeNS = true, occ.Size, occ.MtimeNS
-				default:
-					// A directory occupies a file's destination — a type clash
-					// never resolved by clobbering; the executor refuses it
-					// (LocalExists stays false), leaving both sides intact.
+		// The local file is the baseline's but its bytes were never confirmed
+		// on Drive (a row whose two md5s disagree): a download may not replace
+		// them (§4.5 rule O1), so Drive's change meets them as a conflict.
+		unkeptBase := locOK && remOK && !localChanged && remoteContentChanged && loc.MD5 != ra.item.MD5 &&
+			!keptOnDrive(loc.MD5)
+		trueConflict = trueConflict || unkeptBase
+		// Drive moved the row: something lands at pathNow — this row's file by
+		// a local move, or Drive's bytes by a download (a true conflict, or the
+		// file deleted here). The path may already be occupied locally. Never
+		// let the rename or the download silently clobber it (invariant 7). The
+		// occupant is what sits there once the folder moves run: under a folder
+		// Drive renamed it is still at the old folder's path (S002). How it is
+		// kept is decided after pass 1 (resolveOccupants below), once every row
+		// has said what it does with its own file — moves it away, backs it up,
+		// releases it, forgets its row — whichever row the sort reached first
+		// (S031). Only a row on hold is decided here: it is never moved, backed
+		// up or forgotten, and its row keeps the name, which a move's commit
+		// needs — so this row waits with it.
+		occAt := ""
+		if remoteMoved {
+			occAt = localAtPost(pathNow)
+			_, occupied := in.Local[occAt]
+			waits := ""
+			if q, ok := rowAt[pathNow]; ok && q != p && heldRow(q) {
+				waits = q // its row keeps the name, its file elsewhere or gone
+			}
+			if occupied {
+				if owner := invLocal(occAt); owner != p && heldRow(owner) {
+					waits = owner
 				}
 			}
+			if waits != "" {
+				skips = append(skips, Skip{RelPath: p,
+					Reason: "moved in Drive to " + pathNow + ", which " + waits + " holds, whose sync is on hold; leaving both alone"})
+				continue
+			}
+			if !occupied {
+				occAt = ""
+			}
+		}
+		if remoteMoved && locOK && !trueConflict {
+			mv := Action{Type: MoveLocal, RelPath: expected, NewRelPath: pathNow, FileID: b.FileID}
+			if occAt != "" {
+				occChecks = append(occChecks, occCheck{mv: len(moves), at: occAt, dst: pathNow})
+			}
 			moves = append(moves, mv)
+		} else if occAt != "" {
+			// The download expects the path empty (no pin): the occupant is
+			// kept the same way, and a keep that fails refuses the download.
+			occChecks = append(occChecks, occCheck{mv: -1, at: occAt, dst: pathNow})
 		}
 
 		switch {
@@ -807,12 +854,18 @@ func Plan(in Input) ([]Action, []Skip) {
 					act.ProtectedBy = expected // upload must read the moved file, not a stranger
 				}
 				transfers = append(transfers, act)
-			case !localChanged && remoteContentChanged:
+			case !localChanged && remoteContentChanged && !unkeptBase:
 				// The download replaces the scanned local file (moved into
 				// place first when the remote also renamed it).
-				transfers = append(transfers, Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
+				act := Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
 					MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
-					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
+					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS}
+				if remoteMoved {
+					// Replaces the moved file only: if the move failed, whatever
+					// is at pathNow is not the file the pin names (S031).
+					act.ProtectedBy = expected
+				}
+				transfers = append(transfers, act)
 			case loc.MD5 == ra.item.MD5:
 				// Both changed to identical content; record, no transfer.
 				act := Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
@@ -834,6 +887,108 @@ func Plan(in Input) ([]Action, []Skip) {
 					Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
 						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
 						ProtectedBy: expected})
+			}
+		}
+	}
+
+	// resolveOccupants: each occupied move destination, now that every row has
+	// decided (S031). Rule O1 (§4.5): a local file is never renamed over unless
+	// its bytes are kept — and the planner never relies on that, it keeps the
+	// occupant itself:
+	//   - a row that still claims it and moves or backs it up in this plan:
+	//     that action vacates the path first (dependency order), the move
+	//     expects the path empty and depends on it;
+	//   - a row whose Drive item is gone: unchanged → binned first, edited →
+	//     conflict copy and the row forgotten (S002);
+	//   - nobody's (untracked, released to pass 2, or its row forgotten as an
+	//     unrelated pair's): conflict copy, uploaded, before the move.
+	// Was: a tracked occupant with a live Drive item was taken for "safe on
+	// Drive" — the move was pinned to its stat and renamed over it, edited or
+	// not, and whether its own move ran first was left to the path sort.
+	forgotten := map[string]bool{}
+	for _, f := range forgets {
+		forgotten[f.RelPath] = true
+	}
+	vacater := map[string]int{} // path → index in moves of the action that empties it
+	for i, m := range moves {
+		if !m.IsDir && (m.Type == MoveLocal || m.Type == ConflictBackup) {
+			vacater[m.RelPath] = i
+		}
+	}
+	for _, c := range occChecks {
+		occ := in.Local[c.at]
+		owner := invLocal(c.at)
+		ob, tracked := in.Base[owner]
+		tracked = tracked && !ob.IsDir && !released[c.at] && !forgotten[owner]
+		_, ownerOnDrive := remByID[ob.FileID]
+		// Its row's Drive item is gone: its bytes are not on Drive, so it is
+		// never clobbered. (Held rows waited in pass 1.)
+		ownerGone := tracked && !ownerOnDrive
+		// dependsOn: the move into the path depends on what empties it. A
+		// download needs no protector: it expects the path empty, so its guard
+		// refuses it if the occupant is still there.
+		dependsOn := func(q string) {
+			if c.mv >= 0 {
+				moves[c.mv].ProtectedBy = q
+			}
+		}
+		backup := func() {
+			cp := conflicts.Path(c.dst, in.Machine, in.Now)
+			moves = append(moves, Action{Type: ConflictBackup, RelPath: c.dst, NewRelPath: cp})
+			transfers = append(transfers, Action{Type: Upload, RelPath: cp, ProtectedBy: c.dst})
+			dependsOn(c.dst)
+			backedUp[c.at] = true
+		}
+		switch {
+		case occ.IsDir:
+			// A directory occupies a file's destination — a type clash
+			// never resolved by clobbering; the executor refuses it
+			// (LocalExists stays false), leaving both sides intact.
+		case ownerGone && occ.MD5 == ob.MD5:
+			// Unchanged here, deleted on Drive: §4.2 bins it. The bin runs
+			// before the move instead of after it (see vacateFirst), and
+			// the move expects the path empty — a bin that fails leaves
+			// the file there, and the move is refused (§7).
+			vacateFirst[c.at] = vacate{vacateBin, c.dst}
+		case ownerGone:
+			// Edited here, its Drive item gone: its only copy lives here.
+			// Preserved as a conflict copy before the move vacates the path,
+			// and the move refused if that backup fails. The copy's upload is
+			// the edit's resurrection (edit beats delete). The row has
+			// nothing left: dropped after the backup and before the move, so
+			// the move's commit finds the path free in the baseline.
+			backup()
+			vacateFirst[c.at] = vacate{vacateCopied, c.dst}
+			moves = append(moves, Action{Type: Forget, RelPath: owner, FileID: ob.FileID, ProtectedBy: c.dst})
+			dependsOn(owner)
+		case !tracked:
+			// Untracked local-only content, or a file whose row this plan
+			// lets go: its only claim is here.
+			backup()
+		default:
+			v, ok := vacater[c.dst]
+			switch {
+			case ok && moves[v].Type == MoveLocal:
+				// Its own move takes it where its row says it goes, first.
+				// A vacate that fails — at its rename or at its commit —
+				// refuses this move, so no row ever meets another file's bytes
+				// at its name.
+				dependsOn(c.dst)
+			case ok && c.mv < 0:
+				// Its row's true conflict backs it up first; the download's
+				// commit (keyed on id and path) takes the name in the baseline.
+			case ok:
+				// Its row's true conflict backs it up first (the copy is
+				// uploaded by that row). The row keeps the name in the
+				// baseline until its download re-homes it in the transfer
+				// stage — after this move's commit, which needs the name free —
+				// so it is dropped first; the download re-creates it by id.
+				moves = append(moves, Action{Type: Forget, RelPath: owner, FileID: ob.FileID, ProtectedBy: c.dst})
+				dependsOn(owner)
+			default:
+				// A row that claims the file but does nothing with it: keep the
+				// bytes like an untracked occupant's.
+				backup()
 			}
 		}
 	}
@@ -863,7 +1018,12 @@ func Plan(in Input) ([]Action, []Skip) {
 	// --- Pass 2: new local paths ---------------------------------------
 	pairedSrc := map[string]bool{} // baseline path consumed as a move source
 	for _, p := range slices.Sorted(maps.Keys(in.Local)) {
-		if _, inBase := in.Base[p]; inBase {
+		if _, inBase := in.Base[p]; inBase && !released[p] {
+			// A released path is new although its row is still there: the row's
+			// file is elsewhere (R25), and its commit re-homes the row by id. Met
+			// here like any new file — upload, or §4.2's both-new rows with a new
+			// Drive item at the name (S031 round 2: pass 3 pinned that item's
+			// download to the new file, and rule O1 refused every cycle).
 			continue
 		}
 		if deferred[p] {
@@ -1010,6 +1170,41 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 	}
 
+	// A file move's commit renames its row onto the destination, and rows are
+	// unique per path (S031). A row still sitting there must have left by then:
+	// moved by its own move, binned, or forgotten in the moves stage. One whose
+	// file is elsewhere or gone — re-homed by its transfer, dropped by a
+	// delete, both later — is forgotten first, the move depending on it; its
+	// transfer re-creates the row by id. Was: the move renamed on disk, its
+	// commit failed (`UNIQUE constraint failed: items.rel_path`), and the next
+	// cycle met the moved bytes under the other row's name — read as an edit
+	// of that file (the swap, a chain interrupted between two moves).
+	leaves := map[string]bool{} // rows the moves stage takes off their path
+	for _, m := range slices.Concat(forgets, moves) {
+		switch {
+		case m.Type == Forget || m.Type == QuarantineLocal:
+			leaves[m.FileID] = true
+		case m.Type == MoveRemote && !m.IsDir:
+			leaves[m.FileID] = true
+		case isFileMove(m) && m.FileID != "":
+			leaves[m.FileID] = true
+		}
+	}
+	for i := range moves {
+		m := moves[i]
+		if !(isFileMove(m) || m.Type == MoveRemote && !m.IsDir) || m.FileID == "" {
+			continue // a remote file move commits its row onto the path too
+		}
+		q, ok := rowAt[m.NewRelPath]
+		if !ok || in.Base[q].FileID == m.FileID || leaves[in.Base[q].FileID] {
+			continue
+		}
+		id := in.Base[q].FileID
+		moves = append(moves, Action{Type: Forget, RelPath: q, FileID: id, ProtectedBy: m.ProtectedBy})
+		moves[i].ProtectedBy = q
+		leaves[id] = true
+	}
+
 	// --- Pass 3: new remote items not yet claimed ----------------------
 	// Local paths an already-planned move or backup empties before the
 	// transfers run. A download onto such a path must expect it ABSENT: the
@@ -1060,9 +1255,26 @@ func Plan(in Input) ([]Action, []Skip) {
 				MD5: r.MD5, Size: r.Size, Version: r.Version}
 			// Replaced-in-place: an unchanged local file sits where the new
 			// remote item lands; the guard pins the replace to its scanned
-			// stat so a mid-cycle edit is never clobbered.
+			// stat so a mid-cycle edit is never clobbered. Only the file of
+			// the row at that path, with its baseline bytes, kept on Drive
+			// (S031 round 2): any other file there — new, released, edited —
+			// is kept as a conflict copy first, and a held row's waits.
 			if l, ok := in.Local[target]; ok && !l.IsDir && !vacated[target] {
-				act.LocalExists, act.LocalSize, act.LocalMtimeNS = true, l.Size, l.MtimeNS
+				q := invLocal(target)
+				ob, tracked := in.Base[q]
+				switch {
+				case tracked && heldRow(q):
+					skips = append(skips, Skip{RelPath: target,
+						Reason: "new in Drive at " + target + ", where " + q + "'s file sits, whose sync is on hold; leaving both alone"})
+					continue
+				case tracked && !ob.IsDir && !released[target] && l.MD5 == ob.MD5 && keptOnDrive(l.MD5):
+					act.LocalExists, act.LocalSize, act.LocalMtimeNS = true, l.Size, l.MtimeNS
+				default:
+					cp := conflicts.Path(target, in.Machine, in.Now)
+					moves = append(moves, Action{Type: ConflictBackup, RelPath: target, NewRelPath: cp})
+					transfers = append(transfers, Action{Type: Upload, RelPath: cp, ProtectedBy: target})
+					act.ProtectedBy = target
+				}
 			}
 			transfers = append(transfers, act)
 		}
@@ -1223,18 +1435,27 @@ func Plan(in Input) ([]Action, []Skip) {
 	}
 	sort.SliceStable(moveLocalDirs, byDepthThenPath(moveLocalDirs))
 	sort.SliceStable(moveRemoteDirs, byDepthThenPath(moveRemoteDirs))
-	// Conflict backups — and the bins vacateFirst moves here — vacate a path
-	// before the move that fills it, so they must precede the file moves
-	// within the stage (a move may be ProtectedBy a backup that reclaims its
-	// destination, or expect the path a bin emptied).
-	moveFilesLess := byDepthThenPath(moveFiles)
-	sort.SliceStable(moveFiles, func(i, j int) bool {
-		vacates := func(t Type) bool { return t == ConflictBackup || t == QuarantineLocal || t == Forget }
-		if bi, bj := vacates(moveFiles[i].Type), vacates(moveFiles[j].Type); bi != bj {
-			return bi
+	// S002's unrelated pairs: the folder's commit would re-home a forgotten
+	// row onto the stranger's file, so it must not run if a forget failed
+	// (S031, F3). One ProtectedBy per action: the forgets chain, each on the
+	// one before, and the commit depends on the last.
+	for i := range forgets {
+		if i > 0 {
+			forgets[i].ProtectedBy = forgets[i-1].RelPath
 		}
-		return moveFilesLess(i, j)
-	})
+	}
+	for i, m := range moveLocalDirs {
+		for _, f := range forgets {
+			if strings.HasPrefix(f.RelPath, m.RelPath+"/") {
+				moveLocalDirs[i].ProtectedBy = forgets[len(forgets)-1].RelPath
+			}
+		}
+	}
+	// File moves run in dependency order (§4.5, S031), not in path order: a
+	// move into a path another action empties runs after it — chains of any
+	// length — and a cycle (a swap, a rotation) goes through a temporary name.
+	moveFiles, transfers = breakMoveCycles(moveFiles, transfers, in)
+	moveFiles = orderMoves(moveFiles)
 	sort.SliceStable(transfers, func(i, j int) bool { return transfers[i].RelPath < transfers[j].RelPath })
 	sort.SliceStable(deletes, func(i, j int) bool {
 		if d1, d2 := depth(deletes[i].RelPath), depth(deletes[j].RelPath); d1 != d2 {

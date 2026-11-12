@@ -46,4 +46,42 @@ excludes:   S020 (folder deleted here vs renamed there). How strong rename evide
 closes:
 paused_by:
 author:     Opus subagent, coordinated by Claude (agent); started 2026-11-12 at Max's direction (DEC-002)
-done:
+done:       2026-11-12 — two rounds by one Opus subagent, an independent check after
+            each, coordinated and committed by Claude (agent). Allocated as S027 on the
+            Mac; renumbered S031 at the merge with the `pop-os` session (`a76875c`).
+            Built: **rule O1** (`reconcile.ValidateLocalOverwrites`, specs §4.5) — the
+            plan is simulated on the scan, and an action may replace a local file only
+            if its bytes are kept (a Drive item's, a baseline row's synced content, or a
+            download of this plan); a violation refuses the whole plan before anything
+            runs and counts toward `stuck`; checked in `runPlan`, by the engine before
+            `Apply`, and in the fuzz oracle. **Occupants** resolved after pass 1: no
+            move is pinned to an occupant; it leaves first (own move, bin, conflict
+            copy) or the incoming row waits (held row → reported skip); pinned
+            downloads only over the row's own synced, kept bytes. **Order**: the
+            file-moves stage sorted topologically (`moveorder.go`); cycles through a
+            temporary conflict-copy name; a commit's destination freed in the baseline
+            first; `Forget` is a protector, forgets chained (F3). Round 2 (regression
+            found by the check — rename on both sides + new file at the old name on
+            both, refused every cycle): a released file is new to pass 2, the
+            created-on-both-sides rule applies; a second pre-existing class fixed on
+            the way (moved-row download onto an untracked file → overlap refusal).
+            Accepts: F4 flat and deeper, F1, F2, F3, chain, swap, rotation, every
+            interruption of the swap and the chain — red first, now passing, reconcile
+            and engine (testing.md S031.1–S031.22). `TestPlanFuzz` is new and
+            permanent (random inputs → both validators + a model executor; deep run
+            100k per shape: zero refusals, zero losses).
+            DEVIATION from `accepts`, DEC-010: "all five sweeps stay green" holds with
+            the checkpoint list the step started with (re-run on the final tree). The
+            step added `move_before_commit` and `forget_before_commit`; with them
+            200×150 is red on seeds 66, 91, 130 and crash=1 ×200 on 52, 56, 92, 122,
+            128, 162 — nine pre-existing failures (same on `e27c8bc` + the two
+            checkpoints), → S035. `TestS002SwapUnderADoneFolderMoveMakesNoCopy`
+            re-targeted with Max's consent (DEC-010).
+            Not closed: S035 (lost move commit); S036 (overlap refusals in wider
+            shapes, 1,014 of 60,000, pre-existing); a Drive-side window from reading
+            (two items under one name after a death between a remote move and the
+            trash of the occupant — MANUAL §8). Rule O1 cannot see identity (right
+            bytes, wrong Drive item) — that rests on ordering and `ProtectedBy`.
+            Never run: real Drive, Linux runtime (Linux build+vet only).
+            Docs: MANUAL §6/§7/§8, specs §4.5/§4.6/§8.2/§16, README and CLAUDE.md
+            (`SYNCKEEPER_PLANFUZZ_RUNS`).

@@ -46,6 +46,8 @@ const (
 	CPQuarantineBeforeMove = "quarantine_before_move" // quarantine decided, file untouched
 	CPTrashBeforeCommit    = "trash_before_commit"    // content in the bin, rows not yet dropped
 	CPMkdirBeforeCommit    = "mkdir_before_commit"    // folder exists on Drive, DB does not know (W17)
+	CPMoveBeforeCommit     = "move_before_commit"     // local rename done, row still at the old path (S031)
+	CPForgetBeforeCommit   = "forget_before_commit"   // a forget's row drop fails (S031)
 )
 
 func checkpoint(name string) error {
@@ -385,16 +387,19 @@ func (x *Executor) versionOf(fileID string, planned int64) int64 {
 	return planned
 }
 
-// noteFailure records a failed protector — a conflict backup, a local move, or
-// a remote one — so actions that depend on it are refused for the rest of the
-// run (invariant 7). The remote arm exists for W18-E's init merge: the losing
-// Drive file steps aside by rename, and if that rename fails, uploading the
-// local winner under the same name would put two items under one name in one
-// Drive folder (the W17 shape). Only actions the planner explicitly marked
-// ProtectedBy are affected, so this widens nothing else.
+// noteFailure records a failed protector — a conflict backup, a local move, a
+// remote one, or a forget — so actions that depend on it are refused for the
+// rest of the run (invariant 7). The remote arm exists for W18-E's init merge:
+// the losing Drive file steps aside by rename, and if that rename fails,
+// uploading the local winner under the same name would put two items under
+// one name in one Drive folder (the W17 shape). The forget arm exists for
+// S002's unrelated pair (S031, F3): a folder's commit that would otherwise
+// re-home the row onto a stranger's file depends on the row being dropped
+// first. Only actions the planner explicitly marked ProtectedBy are affected,
+// so this widens nothing else.
 func (x *Executor) noteFailure(a reconcile.Action) {
 	switch a.Type {
-	case reconcile.ConflictBackup, reconcile.MoveLocal, reconcile.MoveRemote:
+	case reconcile.ConflictBackup, reconcile.MoveLocal, reconcile.MoveRemote, reconcile.Forget:
 	default:
 		return
 	}
@@ -443,6 +448,9 @@ func (x *Executor) execute(ctx context.Context, opID int64, a reconcile.Action) 
 	case reconcile.QuarantineLocal:
 		return x.trashLocal(opID, a)
 	case reconcile.Forget:
+		if err := checkpoint(CPForgetBeforeCommit); err != nil {
+			return err
+		}
 		return x.DB.CompleteOp(opID, func(tx *sql.Tx) error {
 			return statedb.DeleteItemByID(tx, a.FileID)
 		})
@@ -518,12 +526,16 @@ func (x *Executor) moveLocal(opID int64, a reconcile.Action) error {
 	// moves): the rename may only land where the plan expects. A destination
 	// occupied by a file the plan did not account for — a racing local write,
 	// or content only reconcile knew to preserve — must never be silently
-	// clobbered. LocalExists is set only when reconcile saw a destination
-	// occupant whose bytes are safe on Drive (e.g. a swap); the pinned stat
-	// then guarantees a racing write is refused instead of lost. Absence is
-	// fine even when an occupant was expected — a sibling move may have
-	// vacated it first.
+	// clobbered. Reconcile never pins a remote-driven move to an occupant: the
+	// occupant leaves first by an earlier action of the plan, or the move waits
+	// (S031). LocalExists is set only on a case-only rename, whose
+	// "destination" is the source itself; the pinned stat then guarantees a
+	// racing write is refused instead of lost. Absence is fine even when an
+	// occupant was expected.
 	if err := guardedRename(from, to, "move destination "+a.NewRelPath, expFromAction(a), allowVanished); err != nil {
+		return err
+	}
+	if err := checkpoint(CPMoveBeforeCommit); err != nil {
 		return err
 	}
 	x.renamePathIDs(a.RelPath, a.NewRelPath)

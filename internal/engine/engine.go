@@ -133,6 +133,10 @@ type Result struct {
 	DeletedRemote  int
 	LargeDeletion  bool
 	QuarantineFell int // items that could not reach the bin and went to the quarantine
+
+	// input is what the plan was built from: the fuzzer's oracle re-checks
+	// §4.5 rule O1 against it.
+	input reconcile.Input
 }
 
 // Sync runs one full cycle.
@@ -199,7 +203,7 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	// alive on Drive; reconcile holds their baseline rows harmless (R19).
 	opts.Stage.set(StagePlanning)
 	shadowed := expandShadowed(baseItems, remoteSkips)
-	plan, planSkips := reconcile.Plan(reconcile.Input{
+	in := reconcile.Input{
 		Base:           base,
 		Local:          local,
 		Remote:         remote,
@@ -220,9 +224,10 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 		UnreadableDirs:  unreadableDirs(localSkips),
 		UnreadableFiles: unreadableFiles(localSkips),
 		PreferNewer:     opts.PreferNewer,
-	})
+	}
+	plan, planSkips := reconcile.Plan(in)
 	e.warnUnreadable(localSkips)
-	res := &Result{Plan: plan}
+	res := &Result{Plan: plan, input: in}
 	res.Skips = append(res.Skips, remoteSkips...)
 	res.Skips = append(res.Skips, localSkips...)
 	res.Skips = append(res.Skips, planSkips...)
@@ -282,6 +287,12 @@ func (e *Engine) Sync(ctx context.Context, opts Options) (*Result, error) {
 	// instrumented for a display (decisions.md 2026-07-28).
 	opts.Stage.set(StageTransferring)
 	opts.Stage.setActions(len(plan))
+	// §4.5 rule O1 (S031), on the plan that executes: no action replaces a
+	// local file whose bytes are not kept. Like the executor's transfer-stage
+	// check, a refusal runs nothing.
+	if err := reconcile.ValidateLocalOverwrites(in, plan); err != nil {
+		return res, err
+	}
 	sum, err := x.Apply(ctx, plan)
 	if err != nil {
 		return res, err

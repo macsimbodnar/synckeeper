@@ -373,15 +373,23 @@ func TestS002MovedOverDeletedOtherContentConflicts(t *testing.T) {
 // through the done move — tracked, its bytes on Drive — so the swap's own rule
 // applies, as without the folder rename. Was (round 1): N/x.txt read as
 // untracked, a conflict backup and an upload duplicating x's bytes on Drive.
+//
+// Expected steps re-targeted 2026-11-12 (S031, DEC-010): the swap goes through
+// a temporary name, each move after the one that empties its destination. The
+// list asserted before — g.txt renamed straight over N/x.txt, then N/x.txt
+// back to g.txt — moved the wrong file second. What this test is for is
+// unchanged: no ConflictBackup, no Upload.
 func TestS002SwapUnderADoneFolderMoveMakesNoCopy(t *testing.T) {
+	tmp := "g" + conflictSuffix + ".txt"
 	runPlan(t, Input{
 		Base:   map[string]BaseItem{"D": baseDir("FD"), "D/x.txt": baseFile("X", "MX", 3), "g.txt": baseFile("G", "MG", 4)},
 		Local:  map[string]LocalItem{"N": locDir(), "N/x.txt": locFile("MX", 3), "g.txt": locFile("MG", 4)},
 		Remote: map[string]RemoteItem{"N": remDir("FD", 2), "N/x.txt": remFile("G", "MG", 4, 2), "g.txt": remFile("X", "MX", 3, 2)},
 	}, []step{
 		{t: MoveLocal, rel: "D", newRel: "N"},
-		{t: MoveLocal, rel: "g.txt", newRel: "N/x.txt"},
+		{t: MoveLocal, rel: "g.txt", newRel: tmp},
 		{t: MoveLocal, rel: "N/x.txt", newRel: "g.txt"},
+		{t: MoveLocal, rel: tmp, newRel: "N/x.txt"},
 		{t: Record, rel: "N/x.txt", fileID: "G"},
 		{t: Record, rel: "g.txt", fileID: "X"},
 	})

@@ -222,12 +222,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 			rec.cycleDone(res, dur, err, ModeBackoff, time.Now().Add(backoff), false, "")
 			rec.recordError(err)
 			slog.Error("sync cycle failed; will retry", "err", err, "backoff", backoff)
-			var refused *reconcile.TransferOverlapError
+			var refused reconcile.RefusedPlan
 			if errors.As(err, &refused) && live.noteRefused(start, refused) == 2 {
 				// Said once per run, where it starts: from here on each cycle
 				// only repeats the line above.
 				slog.Error("syncing is stuck: the plan was refused two cycles in a row and nothing syncs until it changes; "+
-					"a Synckeeper bug — report it with this log", "paths", refused.Paths)
+					"a Synckeeper bug — report it with this log", "paths", refused.RefusedPaths())
 			}
 			var stopped bool
 			// Published either side of the wait so the dashboard can name it:

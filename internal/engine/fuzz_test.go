@@ -11,7 +11,10 @@ package engine
 // Oracle (all exact and non-flaky — see decisions.md 2026-07-23 "W4"):
 //   - §4.5 structural invariant: every plan the engine returns passes
 //     reconcile.ValidateTransferStage (the engine also enforces this inside
-//     executor.Apply, so a violation surfaces as a sync error too).
+//     executor.Apply, so a violation surfaces as a sync error too), and
+//     reconcile.ValidateLocalOverwrites against the input it was built from
+//     (rule O1, S031: no local file whose bytes are not kept is replaced; the
+//     engine enforces it before Apply).
 //   - Eventual convergence + idempotence: within a bounded number of no-op
 //     rounds all machines reach a zero-action, zero-failure fixed point.
 //     Silent loss or corruption shows up here as machines that never agree or
@@ -124,7 +127,9 @@ var crashCheckpoints = []string{
 	executor.CPDownloadTempWritten,
 	executor.CPDownloadBeforeCommit,
 	executor.CPQuarantineBeforeMove,
-	executor.CPMkdirBeforeCommit, // W17: a folder on Drive with no row yet
+	executor.CPMkdirBeforeCommit,  // W17: a folder on Drive with no row yet
+	executor.CPMoveBeforeCommit,   // S031: renamed on disk, row at the old path (a chain or swap cut between steps)
+	executor.CPForgetBeforeCommit, // S031: a forget's row drop fails; what depends on it must not run
 }
 
 func TestFuzzConvergence(t *testing.T) {
@@ -441,6 +446,9 @@ func (fz *fuzzer) syncWithheldFeed(m *machine) {
 func (fz *fuzzer) checkPlan(m *machine, res *Result) {
 	if err := reconcile.ValidateTransferStage(res.Plan); err != nil {
 		fz.dumpAndFail("[%s] plan violates §4.5: %v%s", m.name, err, fz.machineDump(m, res))
+	}
+	if err := reconcile.ValidateLocalOverwrites(res.input, res.Plan); err != nil {
+		fz.dumpAndFail("[%s] plan violates §4.5 rule O1: %v%s", m.name, err, fz.machineDump(m, res))
 	}
 }
 

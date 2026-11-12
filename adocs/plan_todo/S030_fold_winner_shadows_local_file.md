@@ -23,9 +23,10 @@ accepts:    Reproduced first, on a real case-insensitive directory: `pop-os` has
             `mkdir <dir>/d && chattr +F <dir>/d` (subdirs inherit; verified 2026-11-12) —
             or on APFS. A failing test, then the fix: the folding machine plans no action
             that targets a path held by a different local file under the same fold key;
-            the winner is a reported skip (or the baselined file keeps winning — the
-            choice of rule is Max's), the existing file is untouched, and the cycle has
-            no failed action. Directory flavour noted, not built (parked "directory
+            the winner is a reported skip — DEC-011 (Max, 2026-11-12): named as a
+            name conflict, a distinct typed skip kind carrying both names so a later
+            UI can show it, surfaced wherever skips surface today — the existing file
+            is untouched, and the cycle has no failed action. Directory flavour noted, not built (parked "directory
             arm"). MANUAL §8 row removed in the fix's commit; §9 mixed case-sensitivity
             bullet re-checked.
 touches:    internal/remotedelta and/or internal/reconcile; tests; MANUAL.md

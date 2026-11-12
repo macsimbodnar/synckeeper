@@ -10,7 +10,12 @@ goal:       How much evidence makes a folder "the same folder, renamed"? Today o
             identical NON-EMPTY file does: a template-derived project dropped in at the
             renamed folder's name with the same LICENSE or `.gitignore` and a same-named
             but different README is accepted, and the README is uploaded over Drive's.
-accepts:    Max picks the standard first. Options named so far: (a) keep "one non-empty
+accepts:    DECIDED — DEC-012 (2026-11-12, by the coordinating agent under Max's
+            delegation): more than half of the folder's non-empty files, as of the
+            last sync, found in the candidate at the same relative path with their
+            synced content; empty files count on neither side; both detectors. Below
+            that: old folder deleted (bin), new folder new, nothing updated in place.
+            Options that were on the table: (a) keep "one non-empty
             paired child", and apply the non-empty guard to `detectLocalDirMoves` too;
             (b) require a share of the folder's files to pair (say most of them);
             (c) inside a renamed folder, a same-named file whose bytes match neither
@@ -20,7 +25,8 @@ accepts:    Max picks the standard first. Options named so far: (a) keep "one no
             the current standard), MANUAL §6.
 touches:    internal/reconcile, internal/engine (fuzz oracle), MANUAL.md, adocs/specs.md,
             adocs/testing.md
-excludes:   Nothing is built before the standard is chosen.
+excludes:   S020's outcome (rename on Drive beats local delete) — only the evidence
+            standard changes here.
 closes:
 paused_by:
 author:

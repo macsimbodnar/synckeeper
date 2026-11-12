@@ -50,6 +50,11 @@ func runPlan(t *testing.T, in Input, want []step) {
 	if err := ValidateTransferStage(got); err != nil {
 		t.Fatalf("plan violates the transfer-stage invariant: %v\nplan: %+v", err, got)
 	}
+	// Property net (S031, §4.5 rule O1): no action replaces a local file
+	// whose bytes are not kept.
+	if err := ValidateLocalOverwrites(in, got); err != nil {
+		t.Fatalf("plan violates rule O1: %v\nplan: %+v", err, got)
+	}
 	if len(got) != len(want) {
 		t.Fatalf("plan length = %d, want %d\ngot: %+v", len(got), len(want), got)
 	}
