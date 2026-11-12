@@ -21,6 +21,7 @@ func JSONView(s Snapshot) map[string]any {
 		"guard_reason":    s.Daemon.GuardReason,
 		"last_error":      s.Daemon.LastError,
 		"last_error_auth": s.Daemon.LastErrorAuth,
+		"standstill":      s.Standstill, // null unless the running daemon reports one (S002)
 	}
 	if cs, ok := ParseCycle(s.Daemon.LastCycleJSON); ok {
 		daemon["last_cycle"] = cs

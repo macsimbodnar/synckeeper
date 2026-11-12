@@ -75,7 +75,23 @@ type Snapshot struct {
 	Autostart    service.State
 	AutostartErr error
 
+	// Standstill is the running daemon's report that its plan has been refused
+	// cycle after cycle (§4.5, S002); nil when it is not, or when no running
+	// daemon said so — it lives in the daemon's memory, not in the DB.
+	Standstill *Standstill
+
 	Activity []statedb.Activity
+}
+
+// Standstill is a running daemon's last two or more cycles in a row having
+// their plan refused by the §4.5 check. The refusal
+// executes nothing, so the daemon syncs nothing in either direction until the
+// plan changes; retrying plans the same thing. Published by `stat` (§8.2).
+type Standstill struct {
+	Since  int64    `json:"since"`  // unix seconds of the run's first refused cycle
+	Cycles int      `json:"cycles"` // refused cycles in a row, 2 or more
+	Paths  []string `json:"paths"`  // what the latest refused plan overlapped on
+	Reason string   `json:"reason"` // the latest refusal's own message
 }
 
 // Input is what Gather needs: the opened read-only DB and the resolved paths,
@@ -97,6 +113,11 @@ type Input struct {
 
 	// ActivityLimit defaults to DefaultActivityLimit.
 	ActivityLimit int
+
+	// Standstill is what the running daemon published over `stat`, nil when
+	// none or when no daemon answered; kept only while the daemon is judged
+	// running.
+	Standstill *Standstill
 
 	// Seams; nil means the real implementation.
 	Now           func() time.Time
@@ -133,6 +154,9 @@ func Gather(in Input) Snapshot {
 	ds, err := in.DB.GetDaemonStatus()
 	s.Daemon = ds
 	s.State = DaemonState(ds, err == nil, alive, s.Now, in.StalenessWindow)
+	if s.State == StateRunning {
+		s.Standstill = in.Standstill
+	}
 
 	if rootID, err := in.DB.GetMeta(statedb.MetaRootFolderID); err == nil {
 		s.RootID = rootID

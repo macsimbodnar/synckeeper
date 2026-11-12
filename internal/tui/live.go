@@ -1,6 +1,10 @@
 package tui
 
-import "time"
+import (
+	"time"
+
+	"github.com/macsimbodnar/synckeeper/internal/status"
+)
 
 // Live is the in-memory detail only the running daemon knows (W15-U5, the
 // `stat` control command). It is optional by construction: a daemon too old to
@@ -52,6 +56,11 @@ type Live struct {
 	// the size of the plan once it is known.
 	Stage        string
 	StageActions int
+
+	// Standstill is the daemon's report that its plan has been refused cycle
+	// after cycle (S002). Carried here only to reach status.Gather, which owns
+	// it: the attention block reads the status snapshot, like `status --plain`.
+	Standstill *status.Standstill
 }
 
 // backendLabel names the watch backend for humans. Empty when there is none to

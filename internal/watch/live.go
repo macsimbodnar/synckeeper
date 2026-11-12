@@ -1,10 +1,13 @@
 package watch
 
 import (
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/macsimbodnar/synckeeper/internal/engine"
+	"github.com/macsimbodnar/synckeeper/internal/reconcile"
+	"github.com/macsimbodnar/synckeeper/internal/status"
 )
 
 // liveState is what the daemon knows and the state DB does not: whether a cycle
@@ -56,10 +59,28 @@ type liveState struct {
 	backingOff bool
 	retryAt    time.Time
 
+	// refused is the run of cycles in a row whose plan ValidateTransferStage
+	// refused (S002). A refusal executes nothing and changes no state, so the
+	// next cycle plans the same thing: from the second one on the daemon is at
+	// a standstill, which `status` must name rather than leave to a `last
+	// error` that merely repeats. Any refusal extends the run, whatever its
+	// message: a conflict copy's name carries a per-second timestamp, so the
+	// same stuck plan can be refused in different words every cycle. Memory
+	// only: after a restart the first two cycles find it again.
+	refused refusalRun
+
 	// stage is the running cycle's own reporter, owned by the engine package.
 	// Read straight through: it has its own lock, and copying the string here
 	// per cycle would only add a way for the two to disagree.
 	stage *engine.StageReporter
+}
+
+// refusalRun is liveState.refused.
+type refusalRun struct {
+	reason string    // the latest cycle's message
+	paths  []string  // the latest cycle's paths
+	since  time.Time // the run's first refused cycle
+	cycles int
 }
 
 // LiveSnapshot is the wire shape of `stat`. Exported because the client decodes
@@ -115,6 +136,11 @@ type LiveSnapshot struct {
 	// deliberately no done-of-total counter (decisions.md 2026-07-28).
 	Stage        string `json:"stage"`
 	StageActions int    `json:"stage_actions"`
+
+	// Standstill is set while the last two or more cycles in a row had their
+	// plan refused (§4.5): nothing syncs in either
+	// direction until the plan changes. Additive, like EventOverflows.
+	Standstill *status.Standstill `json:"standstill,omitempty"`
 }
 
 func newLiveState(poll, debounce time.Duration) *liveState {
@@ -193,6 +219,28 @@ func (l *liveState) cycleBegin(at time.Time, number int) {
 	l.wakePending, l.pendingChanges = false, 0
 }
 
+// noteRefused records a cycle whose plan §4.5 refused and returns the run's
+// length. The run keeps its start; paths and message are the latest cycle's.
+func (l *liveState) noteRefused(at time.Time, e *reconcile.TransferOverlapError) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.refused.cycles == 0 {
+		l.refused.since = at
+	}
+	l.refused.cycles++
+	l.refused.reason, l.refused.paths = e.Error(), slices.Clone(e.Paths)
+	return l.refused.cycles
+}
+
+// notePlanned records a cycle that completed: its plan was not refused, so the
+// run, if any, is over. A cycle that failed for any other reason (Drive
+// unreachable, say) calls neither — it says nothing about the plan.
+func (l *liveState) notePlanned() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.refused = refusalRun{}
+}
+
 func (l *liveState) cycleEnd() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -231,6 +279,12 @@ func (l *liveState) snapshot(now time.Time) LiveSnapshot {
 		s.CycleStartedAt = l.cycleStartedAt.Unix()
 		s.CycleElapsedMS = now.Sub(l.cycleStartedAt).Milliseconds()
 		s.Stage, s.StageActions = l.stage.Read()
+	}
+	// One refusal is an ordinary failed cycle, retried; the second in a row
+	// proves the retry changes nothing.
+	if r := l.refused; r.cycles >= 2 {
+		s.Standstill = &status.Standstill{Since: r.since.Unix(), Cycles: r.cycles,
+			Paths: slices.Clone(r.paths), Reason: r.reason}
 	}
 	return s
 }

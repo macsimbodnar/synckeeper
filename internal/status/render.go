@@ -35,6 +35,9 @@ func PrintHuman(w io.Writer, s Snapshot) {
 		if ds.GuardBlocked {
 			fmt.Fprintf(w, "guard:         BLOCKED — %s\n", ds.GuardReason)
 		}
+		if st := s.Standstill; st != nil {
+			fmt.Fprintf(w, "stuck:         SYNCING STOPPED %s — %s\n", StandstillLine(s.Now, *st), StandstillHint)
+		}
 		if ds.LastError != "" {
 			// Flattened here too: rows written before the daemon learned to
 			// flatten them are still in the ring, and a `last error:` that runs

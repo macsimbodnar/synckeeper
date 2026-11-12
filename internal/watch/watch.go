@@ -9,6 +9,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/macsimbodnar/synckeeper/internal/control"
 	"github.com/macsimbodnar/synckeeper/internal/engine"
+	"github.com/macsimbodnar/synckeeper/internal/reconcile"
 	"github.com/macsimbodnar/synckeeper/internal/trash"
 )
 
@@ -36,6 +38,10 @@ type Watcher struct {
 	// rebuildCadence overrides rebuildEvery when nonzero, so tests can
 	// reach the rebuild path without driving 500 cycles.
 	rebuildCadence int
+
+	// syncCycle replaces Eng.Sync when set, so a test can hand the loop an
+	// outcome without a planner bug to produce it (S002's refused plan).
+	syncCycle func(context.Context, engine.Options) (*engine.Result, error)
 
 	// watchLimitHit records that a watch registration failed for want of kernel
 	// watch slots (ENOSPC), not descriptors — on Linux the per-user
@@ -199,7 +205,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// in status (spec §8.1).
 		opts.DeferMassDelete = true
 		start := time.Now()
-		res, err := w.Eng.Sync(ctx, opts)
+		runCycle := w.Eng.Sync
+		if w.syncCycle != nil {
+			runCycle = w.syncCycle
+		}
+		res, err := runCycle(ctx, opts)
 		dur := time.Since(start)
 		switch {
 		case ctx.Err() != nil:
@@ -212,6 +222,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 			rec.cycleDone(res, dur, err, ModeBackoff, time.Now().Add(backoff), false, "")
 			rec.recordError(err)
 			slog.Error("sync cycle failed; will retry", "err", err, "backoff", backoff)
+			var refused *reconcile.TransferOverlapError
+			if errors.As(err, &refused) && live.noteRefused(start, refused) == 2 {
+				// Said once per run, where it starts: from here on each cycle
+				// only repeats the line above.
+				slog.Error("syncing is stuck: the plan was refused two cycles in a row and nothing syncs until it changes; "+
+					"a Synckeeper bug — report it with this log", "paths", refused.Paths)
+			}
 			var stopped bool
 			// Published either side of the wait so the dashboard can name it:
 			// inside it the poll deadline is a fiction, because the loop is not
@@ -233,6 +250,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 		default:
 			backoff = w.Poll
+			live.notePlanned()
 			if len(res.Plan) > 0 {
 				slog.Info("sync cycle", "actions", len(res.Plan), "executed", res.Executed, "failed", res.Failed)
 			} else {

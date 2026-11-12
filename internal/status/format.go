@@ -35,6 +35,24 @@ func Until(now time.Time, unixSecs int64) string {
 	return "in " + Dur(d)
 }
 
+// StandstillLine states a standstill on one line — how long, how many cycles,
+// which paths — for `status` and the dashboard alike, so the two cannot word it
+// differently. StandstillHint is what the user can do about it.
+func StandstillLine(now time.Time, st Standstill) string {
+	paths := make([]string, len(st.Paths))
+	for i, p := range st.Paths {
+		paths[i] = fmt.Sprintf("%q", p)
+	}
+	return fmt.Sprintf("for %s, %d cycles in a row: the plan is refused (§4.5) on %s; nothing syncs in either direction",
+		Dur(now.Sub(time.Unix(st.Since, 0))), st.Cycles, strings.Join(paths, " and "))
+}
+
+// StandstillHint is true of every refusal: the check runs before any action,
+// so nothing is touched, and the next cycle plans the same thing. No cure is
+// named because none is known to work for every route (S002: "edit or touch
+// the file" did not help the folder-rename one).
+const StandstillHint = "no file is touched while it lasts and retrying won't clear it — a Synckeeper bug: report it with the daemon log"
+
 // Dur renders a duration coarsely: seconds, minutes, hours, or days.
 func Dur(d time.Duration) string {
 	switch {

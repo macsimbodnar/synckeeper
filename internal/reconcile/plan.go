@@ -212,7 +212,63 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 	}
 	rewriteRD := mkRewrite(remoteDirMoves)
-	localDirMoves := detectLocalDirMoves(in, remByID, baseIDs, rewriteRD, hold)
+	// A remote-driven move the disk already shows: the source is gone locally
+	// and a folder sits at the destination — the user made the same rename, or
+	// a crashed MoveLocal did (R16). Its MoveLocal still runs, as a DB commit;
+	// until then the baseline's children live locally under the destination.
+	// Reading them at their baseline paths found nothing, so pass 1 restored
+	// them with a download while pass 2 uploaded the same files as new (S002).
+	var doneDirMoves []dirMove
+	for _, m := range remoteDirMoves {
+		if _, here := in.Local[m.from]; here {
+			continue
+		}
+		if _, here := in.Local[rewriteRD(m.from)]; here {
+			continue
+		}
+		if _, tracked := in.Base[m.to]; tracked {
+			continue
+		}
+		if l, ok := in.Local[m.to]; ok && l.IsDir {
+			doneDirMoves = append(doneDirMoves, m)
+		}
+	}
+	rewriteDone := mkRewrite(doneDirMoves)
+	// The done move is read from names alone: D gone, a folder at N. That is
+	// enough to commit the folder's row, never to let N's files stand for D's.
+	// A file at N stands for D's file only on evidence, by §16.7's standard
+	// for a local folder rename: its bytes are the baseline's or Drive's, or —
+	// for an edit — some non-empty file of the folder still carries its
+	// baseline bytes (a paired child). An empty file proves nothing: every new
+	// package has an empty __init__.py, every placeholder folder a .gitkeep.
+	// Without evidence the two are strangers that share a name (D deleted here,
+	// an unrelated N made or renamed into place), and pass 1 never lets one
+	// stand for the other.
+	doneEvidenced := map[string]bool{}
+	for q, b := range in.Base {
+		if b.IsDir || b.Size <= 0 {
+			continue
+		}
+		for _, m := range doneDirMoves {
+			if !strings.HasPrefix(q, m.from+"/") {
+				continue
+			}
+			if l, ok := in.Local[rewriteDone(q)]; ok && !l.IsDir && l.MD5 == b.MD5 && l.Size == b.Size {
+				doneEvidenced[m.from] = true
+			}
+		}
+	}
+	doneMoveOf := func(p string) (dirMove, bool) {
+		var best dirMove
+		found := false
+		for _, m := range doneDirMoves {
+			if strings.HasPrefix(p, m.from+"/") && (!found || len(m.from) > len(best.from)) {
+				best, found = m, true
+			}
+		}
+		return best, found
+	}
+	localDirMoves := detectLocalDirMoves(in, remByID, baseIDs, rewriteRD, rewriteDone, hold)
 
 	// rewrite maps a baseline path to its post-plan LOCAL location, applying
 	// the longest strictly-containing moved ancestor from either detector.
@@ -222,27 +278,45 @@ func Plan(in Input) ([]Action, []Skip) {
 	// where the user's rename already put a baseline row's local file, and
 	// where a current remote path will sit after the planned reparent.
 	rewriteLD := mkRewrite(localDirMoves)
+	// rewriteLocal maps a baseline path to where its item sits on disk NOW:
+	// the user's renames (local-driven) and the remote renames the disk
+	// already shows. Every lookup of a baseline row in in.Local goes through
+	// it; rewriteLD stays the remote side's map, since the done moves are
+	// already on Drive too.
+	rewriteLocal := mkRewrite(localDirMoves, doneDirMoves)
 	localMoveDstOf := map[string]string{}
-	for _, m := range localDirMoves {
+	for _, m := range slices.Concat(localDirMoves, doneDirMoves) {
 		localMoveDstOf[m.from] = m.to
 	}
-	// invLD maps a new local path back through the local-driven moves —
-	// exact destination included — to the baseline path that explains it.
-	invLD := func(q string) string {
+	// invMoves maps a path back through moves — exact destination included —
+	// to the baseline path that explains it.
+	invMoves := func(q string, lists ...[]dirMove) string {
 		best := -1
 		out := q
-		for _, m := range localDirMoves {
-			switch {
-			case q == m.to && len(m.to) > best:
-				best = len(m.to)
-				out = m.from
-			case strings.HasPrefix(q, m.to+"/") && len(m.to) > best:
-				best = len(m.to)
-				out = m.from + q[len(m.to):]
+		for _, list := range lists {
+			for _, m := range list {
+				switch {
+				case q == m.to && len(m.to) > best:
+					best = len(m.to)
+					out = m.from
+				case strings.HasPrefix(q, m.to+"/") && len(m.to) > best:
+					best = len(m.to)
+					out = m.from + q[len(m.to):]
+				}
 			}
 		}
 		return out
 	}
+	// invLD: the Drive path whose item lands at q once the planned reparents
+	// run — the inverse of rewriteLD. A lookup on Drive for a path the plan
+	// will write goes through it (S002).
+	invLD := func(q string) string { return invMoves(q, localDirMoves) }
+	// invLocal: the baseline path that explains the local path q.
+	invLocal := func(q string) string { return invMoves(q, localDirMoves, doneDirMoves) }
+	// localAtPost: where the local item sits now that lands at q once the
+	// planned folder moves run — through the remote-driven moves not yet on
+	// disk, then forward to the disk's current layout.
+	localAtPost := func(q string) string { return rewriteLocal(invMoves(q, remoteDirMoves)) }
 
 	for _, m := range remoteDirMoves {
 		// The dir's own move, expressed from wherever its moved ancestors
@@ -299,7 +373,7 @@ func Plan(in Input) ([]Action, []Skip) {
 			if to, ok := localMoveDstOf[q]; ok {
 				return to
 			}
-			return rewriteLD(q)
+			return rewriteLocal(q)
 		}
 		lockedDir := map[string]string{} // folded unreadable dir → dir
 		for d := range in.UnreadableDirs {
@@ -316,7 +390,7 @@ func Plan(in Input) ([]Action, []Skip) {
 		type stat struct{ size, mtime int64 }
 		renamedTo := map[stat]string{} // unreadable untracked file, by stat
 		for _, u := range slices.Sorted(maps.Keys(in.UnreadableFiles)) {
-			if _, tracked := in.Base[invLD(u)]; tracked {
+			if _, tracked := in.Base[invLocal(u)]; tracked {
 				continue // has its own row: held at its path, renames nothing
 			}
 			st := in.UnreadableFiles[u]
@@ -373,6 +447,75 @@ func Plan(in Input) ([]Action, []Skip) {
 		return i < len(heldLocal) && strings.HasPrefix(heldLocal[i], prefix)
 	}
 
+	// takenOver: a baseline file X whose Drive item is gone, at the path where
+	// another row's Drive item now sits and where that row's local file is
+	// too — the same file moved over X on both sides (S002, cause D). X's own
+	// row decides nothing: the local file there is the other row's, met by
+	// R25's branch below, and that commit drops X's row (one row per path).
+	// Without this, X's row resurrected the file as an upload while the other
+	// row downloaded onto it: §4.5 refused the plan every cycle.
+	goneFromDrive := func(x string) bool {
+		b, ok := in.Base[x]
+		if !ok || b.IsDir || in.ShadowedRemote[b.FileID] || in.UnreadableLocal[b.FileID] {
+			return false
+		}
+		if _, isHeld := held[x]; isHeld {
+			return false
+		}
+		_, onDrive := remByID[b.FileID]
+		return !onDrive
+	}
+	takenOver := map[string]bool{}
+	for _, q := range slices.Sorted(maps.Keys(in.Base)) {
+		b := in.Base[q]
+		if b.IsDir || in.ShadowedRemote[b.FileID] || in.UnreadableLocal[b.FileID] {
+			continue
+		}
+		if _, isHeld := held[q]; isHeld {
+			continue
+		}
+		ra, ok := remByID[b.FileID]
+		if !ok {
+			continue
+		}
+		if _, here := in.Local[rewriteLocal(q)]; here {
+			continue
+		}
+		pathNow := rewriteLD(ra.path)
+		if pathNow == rewrite(q) {
+			continue
+		}
+		lp := localAtPost(pathNow)
+		x := invLocal(lp)
+		if ln, ok := in.Local[lp]; !ok || ln.IsDir || x == q || !goneFromDrive(x) {
+			continue
+		}
+		if _, tracked := in.Base[pathNow]; tracked && pathNow != x {
+			continue
+		}
+		takenOver[x] = true
+	}
+
+	// vacateFirst: occupants of a local move's destination whose own row's
+	// action must change because the move takes their path (S002, W2). Applied
+	// after pass 1, whichever of the two rows it reached first.
+	const (
+		vacateBin    = 1 // the row's QuarantineLocal runs in the moves stage, before the move
+		vacateCopied = 2 // the row's resurrecting Upload is the conflict copy's; drop its own
+	)
+	type vacate struct {
+		kind int
+		at   string // where the occupant sits when the moves stage reaches it
+	}
+	vacateFirst := map[string]vacate{}
+	// forgets: rows of an unrelated pair under a done folder move; they run
+	// first in the plan, before the folder's commit (S002).
+	var forgets []Action
+	// released: a local file a done move would explain that pass 1 found to
+	// be new (the row's file sits at Drive's path); pass 2 treats it as new.
+	// deferred: local files left alone this cycle (an unrelated pair).
+	released, deferred := map[string]bool{}, map[string]bool{}
+
 	// --- Pass 1: baseline files ---------------------------------------
 	for _, p := range slices.Sorted(maps.Keys(in.Base)) {
 		b := in.Base[p]
@@ -406,7 +549,10 @@ func Plan(in Input) ([]Action, []Skip) {
 			skips = append(skips, Skip{RelPath: p, Reason: why})
 			continue
 		}
-		localPath := rewriteLD(p)
+		if takenOver[p] {
+			continue // its local file is another row's, moved over it (cause D)
+		}
+		localPath := rewriteLocal(p)
 		ra, remOK := remByID[b.FileID]
 		loc, locOK := in.Local[localPath]
 		if locOK && loc.IsDir {
@@ -432,16 +578,55 @@ func Plan(in Input) ([]Action, []Skip) {
 		// pathNow while pass 2 uploads the "new" local file at the same path,
 		// and §4.5 refuses the whole plan every cycle: a permanent wedge (found
 		// by the W4 fuzzer, R25).
+		// The local file is the one that lands at pathNow once the planned
+		// folder moves run: under a folder Drive renamed and the disk has not
+		// yet, it still sits at the old folder's path (S002). It must be one no
+		// baseline row explains — that one is its own row's file.
+		if m, viaDone := doneMoveOf(p); viaDone && locOK && remOK && loc.MD5 != b.MD5 && loc.MD5 != ra.item.MD5 {
+			// Under a remote folder rename the disk already shows, N/rel is
+			// D/rel's file by name only, and its bytes are neither side's.
+			// Drive renamed the file too: if the file at Drive's path carries
+			// the row's bytes, that is the row's file (both machines renamed
+			// it), met by R25's branch below; N/rel is then a new file.
+			alt := localAtPost(pathNow)
+			_, altIsBase := in.Base[invLocal(alt)]
+			_, pathNowTracked := in.Base[pathNow]
+			if l2, ok := in.Local[alt]; ok && remoteMoved && !l2.IsDir && !altIsBase && !pathNowTracked &&
+				(l2.MD5 == b.MD5 || l2.MD5 == ra.item.MD5) {
+				released[localPath] = true
+				locOK = false
+			} else if !doneEvidenced[m.from] {
+				// No evidence the two are one file: they are strangers. The row
+				// stops claiming Drive's item, before the folder's commit in
+				// the same plan, and the files stay untouched this cycle. From
+				// then on Drive's item is Drive-only and the local file new:
+				// §4.2's both-new rows keep both (a conflict copy), and no
+				// interruption can leave a row that reads as a local deletion —
+				// none claims Drive's item.
+				forgets = append(forgets, Action{Type: Forget, RelPath: p, FileID: b.FileID})
+				deferred[alt] = true
+				continue
+			}
+		}
+		lp := localAtPost(pathNow)
+		over := invLocal(lp) // the baseline row the local file would otherwise be
 		_, pathNowIsBase := in.Base[pathNow]
-		if !locOK && remoteMoved && !pathNowIsBase {
-			if ln, ok := in.Local[pathNow]; ok && !ln.IsDir {
-				resolvedLocal[pathNow] = true
+		_, lpIsBase := in.Base[over]
+		movedOver := lpIsBase && takenOver[over] && (!pathNowIsBase || pathNow == over)
+		if !locOK && remoteMoved && (!pathNowIsBase && !lpIsBase || movedOver) {
+			if ln, ok := in.Local[lp]; ok && !ln.IsDir {
+				resolvedLocal[lp] = true
 				// A double rename is not by itself a conflict: the baseline
 				// still says which side changed the content (§4.2, S023). Each
 				// transfer below commits its row keyed on the file id, which
 				// re-homes it here and drops the old path, as the Record does.
 				localChanged := ln.MD5 != b.MD5
 				remoteContentChanged := ra.item.MD5 != b.DriveMD5
+				// Moved over another file (cause D), the local bytes only say
+				// whose they are when they match one side exactly; anything
+				// else is an edit of one of the two, no telling which.
+				overUntouched := movedOver && ln.MD5 == in.Base[over].MD5
+				overEdited := movedOver && localChanged && !overUntouched
 				switch {
 				case ln.MD5 == ra.item.MD5:
 					// Same content on both sides: the move is done end to end,
@@ -450,7 +635,15 @@ func Plan(in Input) ([]Action, []Skip) {
 					transfers = append(transfers, Action{Type: Record, RelPath: pathNow, FileID: b.FileID,
 						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
 						LocalExists: true, LocalSize: ln.Size, LocalMtimeNS: ln.MtimeNS})
-				case localChanged && !remoteContentChanged:
+				case overUntouched:
+					// The file moved over is unchanged here and gone from Drive
+					// (§4.2: removed); this row's item was deleted here and moved
+					// there (§4.2: downloaded) — the download replaces it in
+					// place, pinned to the scanned stat (§7).
+					transfers = append(transfers, Action{Type: Download, RelPath: pathNow, FileID: b.FileID,
+						MD5: ra.item.MD5, Size: ra.item.Size, Version: ra.item.Version,
+						LocalExists: true, LocalSize: ln.Size, LocalMtimeNS: ln.MtimeNS})
+				case localChanged && !remoteContentChanged && !overEdited:
 					// Drive only renamed it: a conflict here would give Drive's
 					// older bytes the name — after S011, a partial upload of
 					// this very file.
@@ -489,19 +682,46 @@ func Plan(in Input) ([]Action, []Skip) {
 		if remoteMoved && locOK && !trueConflict {
 			mv := Action{Type: MoveLocal, RelPath: expected, NewRelPath: pathNow, FileID: b.FileID}
 			// The move's destination may already be occupied locally. Never let
-			// the rename silently clobber it (invariant 7).
-			if occ, occupied := in.Local[pathNow]; occupied && pathNow != expected {
-				_, tracked := in.Base[pathNow]
+			// the rename silently clobber it (invariant 7). The occupant is what
+			// sits there once the folder moves run: under a folder Drive renamed
+			// it is still at the old folder's path (S002).
+			occAt := localAtPost(pathNow)
+			if occ, occupied := in.Local[occAt]; occupied && pathNow != expected {
+				// The occupant's own row, read through the folder moves the disk
+				// already shows: under a done move N/x is row D/x's file (S002).
+				owner := invLocal(occAt)
+				ob, tracked := in.Base[owner]
+				_, ownerOnDrive := remByID[ob.FileID]
+				_, ownerHeld := held[owner]
+				// Its row's Drive item is gone: its bytes are not "safe on
+				// Drive", so it is never clobbered.
+				ownerGone := tracked && !ob.IsDir && !ownerOnDrive && !in.ShadowedRemote[ob.FileID] &&
+					!in.UnreadableLocal[ob.FileID] && !ownerHeld
 				switch {
-				case !occ.IsDir && !tracked:
-					// Untracked local-only file: its only copy lives here.
+				case !occ.IsDir && ownerGone && occ.MD5 == ob.MD5:
+					// Unchanged here, deleted on Drive: §4.2 bins it. The bin runs
+					// before the move instead of after it (see vacateFirst), and
+					// the move expects the path empty — a bin that fails leaves
+					// the file there, and the move is refused (§7).
+					vacateFirst[occAt] = vacate{vacateBin, pathNow}
+				case !occ.IsDir && (!tracked || ownerGone):
+					// Untracked local-only file, or a tracked one edited here
+					// whose Drive item is gone: its only copy lives here.
 					// Preserve it as a conflict copy before the move vacates the
-					// path, and refuse the move if that backup fails.
+					// path, and refuse the move if that backup fails. The copy's
+					// upload is the edit's resurrection (edit beats delete).
 					cp := conflicts.Path(pathNow, in.Machine, in.Now)
 					moves = append(moves, Action{Type: ConflictBackup, RelPath: pathNow, NewRelPath: cp})
 					transfers = append(transfers, Action{Type: Upload, RelPath: cp, ProtectedBy: pathNow})
 					mv.ProtectedBy = pathNow
-					backedUp[pathNow] = true
+					backedUp[occAt] = true
+					if ownerGone {
+						vacateFirst[occAt] = vacate{vacateCopied, pathNow}
+						// The row has nothing left: its Drive item is gone, its
+						// bytes go to the copy. Dropped before the move, so the
+						// move's commit finds the path free in the baseline.
+						moves = append(moves, Action{Type: Forget, RelPath: owner, FileID: ob.FileID})
+					}
 				case !occ.IsDir && tracked:
 					// Tracked content (bytes safe on Drive, e.g. a swap): the
 					// executor may clobber it, but must first confirm it is
@@ -532,14 +752,18 @@ func Plan(in Input) ([]Action, []Skip) {
 			}
 
 		case !remOK: // remote deleted, local exists
-			newRem, replaced := newRemoteAt(localPath)
+			// The replacement is looked up where Drive holds it now: under a
+			// folder renamed here it is still at the old folder's path until
+			// the reparent runs (S002).
+			replacedAt := invLD(localPath)
+			newRem, replaced := newRemoteAt(replacedAt)
 			switch {
 			case localChanged && replaced && newRem.MD5 == loc.MD5:
 				// Same new content arrived on both sides independently.
 				transfers = append(transfers, Action{Type: Record, RelPath: localPath, FileID: newRem.FileID,
 					MD5: newRem.MD5, Size: newRem.Size, Version: newRem.Version,
 					LocalExists: true, LocalSize: loc.Size, LocalMtimeNS: loc.MtimeNS})
-				claimed[localPath] = true
+				claimed[replacedAt] = true
 			case localChanged && replaced:
 				cp := conflicts.Path(localPath, in.Machine, in.Now)
 				moves = append(moves, Action{Type: ConflictBackup, RelPath: localPath, NewRelPath: cp})
@@ -548,7 +772,7 @@ func Plan(in Input) ([]Action, []Skip) {
 					Action{Type: Download, RelPath: localPath, FileID: newRem.FileID,
 						MD5: newRem.MD5, Size: newRem.Size, Version: newRem.Version,
 						ProtectedBy: localPath})
-				claimed[localPath] = true
+				claimed[replacedAt] = true
 			case localChanged:
 				// Resurrect: edit beats delete; re-upload as a new file.
 				transfers = append(transfers, Action{Type: Upload, RelPath: localPath})
@@ -614,15 +838,40 @@ func Plan(in Input) ([]Action, []Skip) {
 		}
 	}
 
+	if len(vacateFirst) > 0 {
+		keep := deletes[:0]
+		for _, a := range deletes {
+			if v := vacateFirst[a.RelPath]; a.Type == QuarantineLocal && !a.IsDir && v.kind == vacateBin {
+				// Where the hoisted folder moves have put it by then.
+				a.RelPath = v.at
+				moves = append(moves, a)
+				continue
+			}
+			keep = append(keep, a)
+		}
+		deletes = keep
+		kept := transfers[:0]
+		for _, a := range transfers {
+			if a.Type == Upload && a.FileID == "" && vacateFirst[a.RelPath].kind == vacateCopied {
+				continue
+			}
+			kept = append(kept, a)
+		}
+		transfers = kept
+	}
+
 	// --- Pass 2: new local paths ---------------------------------------
 	pairedSrc := map[string]bool{} // baseline path consumed as a move source
 	for _, p := range slices.Sorted(maps.Keys(in.Local)) {
 		if _, inBase := in.Base[p]; inBase {
 			continue
 		}
-		if q := invLD(p); q != p {
+		if deferred[p] {
+			continue // an unrelated pair's file: next cycle, as a new file
+		}
+		if q := invLocal(p); q != p && !released[p] {
 			if _, inBase := in.Base[q]; inBase {
-				continue // explained by a local-driven dir move; pass 1 handled the row
+				continue // explained by a dir move the disk shows; pass 1 handled the row
 			}
 		}
 		if backedUp[p] {
@@ -637,9 +886,12 @@ func Plan(in Input) ([]Action, []Skip) {
 		// action runs (§4.2, R11): under a remotely-moved ancestor the new
 		// local file meets its remote counterpart at the POST-move path —
 		// looking up the pre-move path silently skipped the both-new rows
-		// and emitted an upload and a download onto one rel_path.
+		// and emitted an upload and a download onto one rel_path. The same
+		// holds the other way (S002): under a folder renamed here, the Drive
+		// item that lands at target is still at the old folder's path.
+		rt := invLD(target)
 		if loc.IsDir {
-			if r, ok := newRemoteAt(target); ok {
+			if r, ok := newRemoteAt(rt); ok {
 				if r.IsDir {
 					transfers = append(transfers, Action{Type: Record, RelPath: target, FileID: r.FileID,
 						IsDir: true, Version: r.Version})
@@ -650,22 +902,22 @@ func Plan(in Input) ([]Action, []Skip) {
 					skips = append(skips, Skip{RelPath: target,
 						Reason: "type clash: folder here, file in Drive; not synced"})
 				}
-				claimed[target] = true
-			} else if _, taken := in.Remote[target]; !taken {
+				claimed[rt] = true
+			} else if _, taken := in.Remote[rt]; !taken {
 				mkdirs = append(mkdirs, Action{Type: MkdirRemote, RelPath: target, IsDir: true})
 			}
 			continue
 		}
-		if r, ok := newRemoteAt(target); ok && r.IsDir {
+		if r, ok := newRemoteAt(rt); ok && r.IsDir {
 			// C5 (R22): a new remote FOLDER where the local side has a new
 			// file. Was: a blind upload minted a same-name file beside the
 			// folder on Drive while MkdirLocal failed on the file forever.
 			skips = append(skips, Skip{RelPath: target,
 				Reason: "type clash: file here, folder in Drive; not synced"})
-			claimed[target] = true
+			claimed[rt] = true
 			continue
 		}
-		if r, ok := newRemoteAt(target); ok && !r.IsDir {
+		if r, ok := newRemoteAt(rt); ok && !r.IsDir {
 			switch {
 			case r.MD5 == loc.MD5:
 				// Adopt: identical content already on both sides.
@@ -693,14 +945,15 @@ func Plan(in Input) ([]Action, []Skip) {
 						MD5: r.MD5, Size: r.Size, Version: r.Version,
 						ProtectedBy: target})
 			}
-			claimed[target] = true
+			claimed[rt] = true
 			continue
 		}
-		if rp, r, ok := newRemoteAtFold(target); ok && !r.IsDir {
+		if drp, r, ok := newRemoteAtFold(rt); ok && !r.IsDir {
 			// Fold-equal both-new pair (C2, R19): one path on disk, so the
 			// ordinary §4.2 rows fire, remote winning the canonical byte
 			// form. Was: a blind Upload minted a case-duplicate on Drive
 			// and the snapshot collapse later quarantined the local file.
+			rp := rewriteLD(drp) // where the Drive item sits once the reparents run
 			switch {
 			case r.MD5 == loc.MD5:
 				// Adopt via a case-only rename to the remote byte form.
@@ -733,7 +986,7 @@ func Plan(in Input) ([]Action, []Skip) {
 						MD5: r.MD5, Size: r.Size, Version: r.Version,
 						ProtectedBy: target})
 			}
-			claimed[rp] = true
+			claimed[drp] = true
 			continue
 		}
 		// Move pairing: a deleted baseline file with identical content
@@ -869,7 +1122,7 @@ func Plan(in Input) ([]Action, []Skip) {
 		// A local-driven move source (or a dir inside one) lives on at its
 		// post-rename location; judging it at the baseline path would read
 		// the user's rename as a deletion.
-		lp := rewriteLD(p)
+		lp := rewriteLocal(p)
 		if to, ok := localMoveDstOf[p]; ok {
 			lp = to
 		}
@@ -970,12 +1223,14 @@ func Plan(in Input) ([]Action, []Skip) {
 	}
 	sort.SliceStable(moveLocalDirs, byDepthThenPath(moveLocalDirs))
 	sort.SliceStable(moveRemoteDirs, byDepthThenPath(moveRemoteDirs))
-	// Conflict backups vacate a path before the move that fills it, so they
-	// must precede the file moves within the stage (a move may be ProtectedBy a
-	// backup that reclaims its destination).
+	// Conflict backups — and the bins vacateFirst moves here — vacate a path
+	// before the move that fills it, so they must precede the file moves
+	// within the stage (a move may be ProtectedBy a backup that reclaims its
+	// destination, or expect the path a bin emptied).
 	moveFilesLess := byDepthThenPath(moveFiles)
 	sort.SliceStable(moveFiles, func(i, j int) bool {
-		if bi, bj := moveFiles[i].Type == ConflictBackup, moveFiles[j].Type == ConflictBackup; bi != bj {
+		vacates := func(t Type) bool { return t == ConflictBackup || t == QuarantineLocal || t == Forget }
+		if bi, bj := vacates(moveFiles[i].Type), vacates(moveFiles[j].Type); bi != bj {
 			return bi
 		}
 		return moveFilesLess(i, j)
@@ -1010,6 +1265,7 @@ func Plan(in Input) ([]Action, []Skip) {
 	}
 
 	plan := make([]Action, 0, len(mkdirs)+len(moves)+len(transfers)+len(deletes))
+	plan = append(plan, forgets...)
 	plan = append(plan, moveLocalDirs...)
 	plan = append(plan, mkdirsPre...)
 	plan = append(plan, moveRemoteDirs...)
@@ -1060,9 +1316,11 @@ func mkRewrite(lists ...[]dirMove) func(string) string {
 // The pairing here is a prediction of the pass-1/pass-2 pairing, evaluated
 // before the collapse changes what those passes see; once a dir collapses,
 // its children become ordinary post-move rows and never re-enter pairing.
-func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[string]bool, rewriteRD func(string) string, hold *holds) []dirMove {
+func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[string]bool, rewriteRD, rewriteDone func(string) string, hold *holds) []dirMove {
 	// Move-source candidates exactly as pass 1 admits them: baseline files
-	// deleted locally whose remote is unchanged (content and position).
+	// deleted locally whose remote is unchanged (content and position). A
+	// file under a remote folder rename the disk already shows is found
+	// there (rewriteDone), not deleted.
 	type cand struct{ path string }
 	srcByKey := map[string][]cand{}
 	candidates := 0
@@ -1071,7 +1329,7 @@ func detectLocalDirMoves(in Input, remByID map[string]remoteRef, baseIDs map[str
 		if b.IsDir {
 			continue
 		}
-		if _, ok := in.Local[p]; ok {
+		if _, ok := in.Local[rewriteDone(p)]; ok {
 			continue
 		}
 		if _, held := hold.at(p); held {

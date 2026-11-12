@@ -76,6 +76,9 @@ func gatherStatus(env *readEnv) status.Snapshot {
 }
 
 func gatherStatusN(env *readEnv, activityRows int) status.Snapshot {
+	// `stat` rather than `ping`: one round trip answers both whether a daemon
+	// runs and whether it is at a standstill, which lives only in its memory.
+	live, _, running := fetchLive()
 	return status.Gather(status.Input{
 		DB:              env.db,
 		ConfigDir:       env.configDir,
@@ -84,7 +87,8 @@ func gatherStatusN(env *readEnv, activityRows int) status.Snapshot {
 		MachineName:     env.cfg.Engine.MachineName,
 		StalenessWindow: stalenessWindow,
 		ActivityLimit:   activityRows,
-		DaemonAlive:     daemonAlive,
+		DaemonAlive:     func() bool { return running },
+		Standstill:      live.Standstill,
 	})
 }
 
@@ -114,6 +118,7 @@ func runDashboard(cmd *cobra.Command, env *readEnv, interval time.Duration) erro
 				StalenessWindow: stalenessWindow,
 				ActivityLimit:   dashboardActivityRows,
 				DaemonAlive:     func() bool { return running },
+				Standstill:      live.Standstill,
 			})
 			if !haveLive {
 				live = tui.Live{}
@@ -181,6 +186,7 @@ func fetchLive() (live tui.Live, haveLive, running bool) {
 		CycleRunning:   s.CycleRunning,
 		CycleElapsed:   time.Duration(s.CycleElapsedMS) * time.Millisecond,
 		CycleNumber:    s.CycleNumber,
+		Standstill:     s.Standstill,
 	}
 	if s.NextTickAt > 0 {
 		live.NextTickAt = time.Unix(s.NextTickAt, 0)

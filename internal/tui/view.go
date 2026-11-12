@@ -423,6 +423,12 @@ func (m Model) attention(t theme, w int) []string {
 	if s.TokenRejected {
 		out = append(out, t.bad("⚠ credentials expired")+" — run `synckeeper login`; syncing is stopped until you do")
 	}
+	// Above the error it explains: a refused plan repeats as an ordinary
+	// `last error`, and only this line says the retries cannot help (S002).
+	if st := s.Standstill; st != nil {
+		out = append(out, t.bad("⚠ syncing is stuck")+" — "+truncate(status.StandstillLine(s.Now, *st), max(0, w-24)))
+		out = append(out, t.muted("  "+truncate(status.StandstillHint, max(0, w-4))))
+	}
 	if s.Daemon.LastError != "" {
 		out = append(out, t.bad("⚠ last error")+" — "+truncate(s.Daemon.LastError, max(0, w-18)))
 	}

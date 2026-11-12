@@ -6,7 +6,7 @@ Built for one user, durability first: three-way reconcile against a local SQLite
 
 **Installing and using it → [MANUAL.md](MANUAL.md).** This file is developer-facing and carries no usage instructions.
 
-**Status:** build-out phases (0–7) retired; daily-usable on macOS and Linux. Current: S001 (Linux port close-out), then S002 (the R25 rename wedge) and S003 (daemon surfaces skips) — [adocs/status.md](adocs/status.md).
+**Status:** build-out phases (0–7) retired; daily-usable on macOS and Linux. Current work and order: [adocs/status.md](adocs/status.md), [adocs/plan.md](adocs/plan.md).
 
 ## Docs
 
