@@ -50,5 +50,5 @@ excludes:   the directory arm (parked, decisions.md "W1.9.1"/"W1.8.8"); normaliz
             folding unless the same fix covers it for free.
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-12 (DEC-002)
 done:
