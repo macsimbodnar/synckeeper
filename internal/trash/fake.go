@@ -59,7 +59,7 @@ func (f *Fake) MoveToTrash(path string) error {
 	return nil
 }
 
-func (f *Fake) Available() bool { return !f.Unavailable }
+func (f *Fake) AvailableFor(string) bool { return !f.Unavailable }
 
 func (f *Fake) Describe() string {
 	if f.Unavailable {

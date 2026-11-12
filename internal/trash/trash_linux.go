@@ -135,15 +135,21 @@ func trashInfo(path string, when time.Time) string {
 // relTo is the volume root the recorded path must be relative to, empty for
 // the home trash.
 func trashDirFor(abs string) (dir, relTo string, err error) {
+	return trashDirIn(filepath.Dir(abs))
+}
+
+// trashDirIn is trashDirFor for any item directly inside parent — the form
+// availableFor needs, since it probes before any item exists.
+func trashDirIn(parent string) (dir, relTo string, err error) {
 	home := homeTrashDir()
 	if home != "" {
 		// Compare against an existing ancestor: the trash dir itself may not
 		// exist yet, and a missing path has no device.
-		if sameDevice(existingAncestor(home), filepath.Dir(abs)) {
+		if sameDevice(existingAncestor(home), parent) {
 			return home, "", nil
 		}
 	}
-	mount, err := mountPointOf(abs)
+	mount, err := mountPointOf(parent)
 	if err != nil {
 		if home == "" {
 			return "", "", ErrUnavailable
@@ -231,6 +237,30 @@ func available() bool {
 		return fi.IsDir()
 	}
 	return os.MkdirAll(dir, 0o700) == nil
+}
+
+// availableFor probes the trash an item inside dir would really reach: on
+// another filesystem that is <mount>/.Trash-$uid, which a root-owned mount
+// root makes impossible to create (S016, audit F11). It creates the trash's
+// two halves exactly as moveToTrash would, then checks it may write into
+// them — an existing trash owned by someone else passes MkdirAll.
+func availableFor(dir string) bool {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	tdir, _, err := trashDirIn(abs)
+	if err != nil {
+		return false
+	}
+	const wOK, xOK = 0x2, 0x1 // access(2) mode bits; syscall does not name them
+	for _, half := range []string{"files", "info"} {
+		p := filepath.Join(tdir, half)
+		if os.MkdirAll(p, 0o700) != nil || syscall.Access(p, wOK|xOK) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func describe() string {
