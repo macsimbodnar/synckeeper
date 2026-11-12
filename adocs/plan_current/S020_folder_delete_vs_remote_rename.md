@@ -25,5 +25,5 @@ excludes:   Rule decided by Max 2026-11-11 (DEC-006): the remote rename beats th
             nothing is trashed on Drive.
 closes:
 paused_by:
-author:
+author:     Opus subagent, coordinated by Claude (agent); started 2026-11-12 (DEC-002)
 done:

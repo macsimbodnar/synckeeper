@@ -25,7 +25,7 @@ Updated: 2026-11-12 14:05, by Claude (agent) on the Mac, at Max's direction
 - **Waiting on Max:** nothing. To do on his side: `git push`; later, upgrade the machines (`doctor --repair` once each).
 - **Next by plan order:** **S020** (rename on Drive beats local delete, DEC-006), S017, S022, S032, S037 (agents, Mac); S019 and S015 (live Drive, this Mac's token, a throwaway Drive folder only); S030, S029, S028; S034. Nothing left needs `pop-os` except S028 (Linux-only display) and S029's Linux arm.
 - **Last done:** S036, S035, S031 (2026-11-12, Mac); S033 (closed as a duplicate of S027); S001, S027, S016 (2026-11-12, `pop-os`); S002 (2026-11-12, Mac). Before them S007–S011, S013, S014, S018, S021, S023, S026 (2026-11-11).
-- **In `plan_current/`:** nothing.
+- **In `plan_current/`:** S020 (started 2026-11-12, Opus subagent).
 - **Blocked:** none.
 - **Parked:**
   - **L2b — log rotation — is flagged and unowned.** Named in S001's `excludes:` as "not yet a decision". Now more real than before: L2 took the Linux log out of journald, so journald's rotation no longer applies and growth is unbounded on **both** platforms (the launchd log always was). MANUAL states the fact; no policy invented. Proposal on the table: rotate at ~10 MB keeping one previous file, checked at daemon start and per cycle.
