@@ -14,7 +14,9 @@ package reconcile
 // download-onto-an-occupant overlap. S036 adds the wide shape — two folder
 // levels, held rows, local renames over synced files (pfGenWide) — and one
 // more check on the clean run: an update_remote uploads the file that sat at
-// its row's path or at Drive's path, folder renames aside (pfCanon).
+// its row's path or at Drive's path, folder renames aside (pfCanon). S020
+// deletes a folder here in the folder and wide shapes (pfDropLocal): the outer
+// or the inner one, renamed on Drive or not.
 //
 // Default budget keeps the package fast; SYNCKEEPER_PLANFUZZ_RUNS=100000 is
 // the deep run (per shape: flat, folder and wide).
@@ -359,7 +361,21 @@ func pfGenFolder(r *rand.Rand) Input {
 			in.Local["N/new.txt"] = LocalItem{MD5: "NN", Size: 77, MtimeNS: 5001}
 		}
 	}
+	// S020: the folder deleted here — while Drive renamed it, or not; with
+	// the merge's N above, an unrelated folder at Drive's new name.
+	if r.Intn(4) == 0 {
+		pfDropLocal(&in, localDir)
+	}
 	return in
+}
+
+// pfDropLocal deletes dir and everything under it from the local scan.
+func pfDropLocal(in *Input, dir string) {
+	for _, q := range slices.Sorted(maps.Keys(in.Local)) {
+		if q == dir || strings.HasPrefix(q, dir+"/") {
+			delete(in.Local, q)
+		}
+	}
 }
 
 // pfDriveAndLocal fills Remote and Local from Base. at(slot, dir) places a
@@ -613,6 +629,14 @@ func pfGenWide(r *rand.Rand) Input {
 		}
 		in.Local[s] = LocalItem{MD5: md5, Size: size, MtimeNS: mt}
 		lused[s] = true
+	}
+	// S020: the outer or the inner folder deleted here, whichever renames
+	// Drive made.
+	switch r.Intn(6) {
+	case 0:
+		pfDropLocal(&in, lD)
+	case 1:
+		pfDropLocal(&in, lD+"/"+lE)
 	}
 	return in
 }

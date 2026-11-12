@@ -18,6 +18,19 @@ goal:       On a case-insensitive sync folder, a Drive newcomer that wins the fo
             detail. Pre-existing since the 2026-07-14 case-collision decision; R19's
             tests cover the shadowed row with no winner present. Found by the fast check
             of S001's close-out (Mac + Linux now share one Drive folder in the field).
+            ALSO THIS STEP (added 2026-11-12, same family — a folding machine planning an
+            action onto a path held by a different local file under the same fold key):
+            (b) machines b, c synced; c renames `db/f0.txt` → `da/f0.txt`; b, on a
+            folding disk, writes a new `da/F0.txt`. b uploads `da/F0.txt` (Drive now
+            holds both names) and fails `move_local db/f0.txt -> da/f0.txt` ("a file
+            appeared after the scan") every cycle; c never gets `da/F0.txt`. Nothing
+            lost. Reproduced on `5a935a5` (coordinator, S020's close-out). **It makes
+            the deep engine fuzz red at HEAD since S020: `SYNCKEEPER_FUZZ_RUNS=200
+            SYNCKEEPER_FUZZ_STEPS=150`, seed 102** (`dir44/F0.txt` vs `dir44/f0.txt`,
+            no convergence) — S020 changed that seed's path, not the defect.
+            (c) crash=1 ×200 seed 155, flaky (1 of 6 runs at `e27c8bc`): Drive holds
+            fold-equal `dir5/F0.txt` and `dir5/f0.txt`, a folding machine plans
+            `download dir5/f0.txt` every round — this step's main shape.
 accepts:    Reproduced first, on a real case-insensitive directory: `pop-os` has one
             without sudo — `unshare -Urm`, `mount -t tmpfs -o casefold tmpfs <dir>`,
             `mkdir <dir>/d && chattr +F <dir>/d` (subdirs inherit; verified 2026-11-12) —
@@ -26,8 +39,11 @@ accepts:    Reproduced first, on a real case-insensitive directory: `pop-os` has
             the winner is a reported skip — DEC-011 (Max, 2026-11-12): named as a
             name conflict, a distinct typed skip kind carrying both names so a later
             UI can show it, surfaced wherever skips surface today — the existing file
-            is untouched, and the cycle has no failed action. Directory flavour noted, not built (parked "directory
-            arm"). MANUAL §8 row removed in the fix's commit; §9 mixed case-sensitivity
+            is untouched, and the cycle has no failed action. Shape (b): the local
+            newcomer and the incoming move meet the same rule — no upload that mints a
+            case-sibling of a name Drive holds or this plan moves there; reported
+            skip; zero failed actions; the 200×150 sweep green again (seed 102).
+            Directory flavour: S038. MANUAL §8 row removed in the fix's commit; §9 mixed case-sensitivity
             bullet re-checked.
 touches:    internal/remotedelta and/or internal/reconcile; tests; MANUAL.md
 excludes:   the directory arm (parked, decisions.md "W1.9.1"/"W1.8.8"); normalization

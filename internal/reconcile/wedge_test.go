@@ -108,9 +108,11 @@ func TestS002UnrelatedFolderAtTheRenamedNameKeepsBoth(t *testing.T) {
 // — D's file overwritten with E's. Now the row is forgotten first; E's bytes
 // stay at N/index.txt this cycle and become the conflict copy beside D's file
 // next cycle, so E/index.txt's own Drive item can go with the folder E moved
-// away here (to Drive's bin; its bytes are still here). D/other.txt is trashed: D's
-// deletion here meets Drive's rename — S020's shape (the rename is decided to
-// win, not built yet), unchanged by S002.
+// away here (to Drive's bin; its bytes are still here). D/other.txt comes back
+// at N/other.txt: D's deletion here meets Drive's rename, and the rename wins
+// (S020, DEC-006). Re-targeted 2026-11-12 with S020 — until then this test
+// pinned `trash_remote D/other.txt`, noted here as "decided to win, not built
+// yet".
 func TestS002OtherFolderRenamedOntoTheRenamedNameKeepsBoth(t *testing.T) {
 	in := Input{
 		Base: map[string]BaseItem{
@@ -127,8 +129,8 @@ func TestS002OtherFolderRenamedOntoTheRenamedNameKeepsBoth(t *testing.T) {
 	runPlan(t, in, []step{
 		{t: Forget, rel: "D/index.txt", fileID: "F1"},
 		{t: MoveLocal, rel: "D", newRel: "N"},
+		{t: Download, rel: "N/other.txt", fileID: "F2"},
 		{t: TrashRemote, rel: "E/index.txt", fileID: "F3"},
-		{t: TrashRemote, rel: "D/other.txt", fileID: "F2"},
 		{t: TrashRemote, rel: "E", fileID: "FE"},
 	})
 }
