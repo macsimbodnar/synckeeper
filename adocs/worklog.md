@@ -1137,3 +1137,7 @@ Append-only, chronological record of **what agents actually did in this repo, ke
 > "ok, fai commit di tutto in modo che possa fare push e continuare su mac. segnala il bug o problema trovato."
 - Tree was already clean (`d66108e`); six commits unpushed since `5c1a807`.
 - status.md: a "FOR THE SESSION ON MAC" block — pull to `d66108e`, resume S002, S030's rule awaits Max, S030 can be reproduced on APFS.
+
+### 2026-11-12 09:57 — close-out check
+> "hai registrato tutto? posso chiudere questa sessione?"
+- Checked: tree clean before this entry, no test process left running; all results live in the repo (testing.md S016/S027/S001 rows, S028–S030 step files, status.md Mac handoff). Raw logs stay in the session scratchpad only.
