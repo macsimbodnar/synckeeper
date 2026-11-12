@@ -277,19 +277,59 @@ func Plan(in Input) ([]Action, []Skip) {
 	// until then the baseline's children live locally under the destination.
 	// Reading them at their baseline paths found nothing, so pass 1 restored
 	// them with a download while pass 2 uploaded the same files as new (S002).
+	//
+	// Both ends are looked up where they sit on disk now (§4.2), outer moves
+	// first: under a moved ancestor the disk has not followed yet, the
+	// destination is still under the ancestor's old name — Drive renamed D to
+	// N and D/E to N/F, this disk only E to F: the move is done, at D/F (S036;
+	// was: looked up at N/F only, the rows under it restored by downloads at
+	// N/F while D/F's files went up as new at the same paths — §4.5 refused the
+	// plan every cycle). Its `to` is then that disk path.
 	var doneDirMoves []dirMove
-	for _, m := range remoteDirMoves {
-		if _, here := in.Local[m.from]; here {
-			continue
+	{
+		byDepth := slices.Clone(remoteDirMoves)
+		slices.SortFunc(byDepth, func(a, b dirMove) int {
+			if c := strings.Count(a.from, "/") - strings.Count(b.from, "/"); c != 0 {
+				return c
+			}
+			return strings.Compare(a.from, b.from)
+		})
+		// outerFrom: the baseline path whose item lands at q once the remote
+		// folder moves strictly above q run.
+		outerFrom := func(q string) string {
+			best, out := -1, q
+			for _, m := range remoteDirMoves {
+				if strings.HasPrefix(q, m.to+"/") && len(m.to) > best {
+					best, out = len(m.to), m.from+q[len(m.to):]
+				}
+			}
+			return out
 		}
-		if _, here := in.Local[rewriteRD(m.from)]; here {
-			continue
-		}
-		if _, tracked := in.Base[m.to]; tracked {
-			continue
-		}
-		if l, ok := in.Local[m.to]; ok && l.IsDir {
-			doneDirMoves = append(doneDirMoves, m)
+		for _, m := range byDepth {
+			soFar := mkRewrite(doneDirMoves)
+			if _, here := in.Local[m.from]; here {
+				continue
+			}
+			if _, here := in.Local[rewriteRD(m.from)]; here {
+				continue
+			}
+			if _, here := in.Local[soFar(m.from)]; here {
+				continue
+			}
+			if _, tracked := in.Base[m.to]; tracked {
+				continue
+			}
+			if at := soFar(outerFrom(m.to)); at != m.to {
+				// A folder with a row of its own there is not the renamed one.
+				_, tracked := in.Base[at]
+				if l, ok := in.Local[at]; ok && l.IsDir && !tracked {
+					doneDirMoves = append(doneDirMoves, dirMove{from: m.from, to: at})
+					continue
+				}
+			}
+			if l, ok := in.Local[m.to]; ok && l.IsDir {
+				doneDirMoves = append(doneDirMoves, m)
+			}
 		}
 	}
 	rewriteDone := mkRewrite(doneDirMoves)
@@ -1072,6 +1112,12 @@ func Plan(in Input) ([]Action, []Skip) {
 	// folder) is something new here.
 	var emptiedByMoves func(dir string) bool
 	emptiedByMoves = func(dir string) bool {
+		if _, ok := hold.under(dir); ok {
+			// A symlink, non-regular or unreadable file the scan does not
+			// read is something here too (S036; was: the removal planned
+			// anyway and failed "directory not empty", then a new folder).
+			return false
+		}
 		movedOut := map[string]bool{}
 		for _, m := range moves {
 			if m.Type == MoveLocal {
@@ -1276,7 +1322,8 @@ func Plan(in Input) ([]Action, []Skip) {
 	// commit failed (`UNIQUE constraint failed: items.rel_path`), and the next
 	// cycle met the moved bytes under the other row's name — read as an edit
 	// of that file (the swap, a chain interrupted between two moves).
-	leaves := map[string]bool{} // rows the moves stage takes off their path
+	leaves := map[string]bool{}      // rows the moves stage takes off their path
+	forgetFirst := map[string]bool{} // rows forgotten below, before a move's commit
 	for _, m := range slices.Concat(forgets, moves) {
 		switch {
 		case m.Type == Forget || m.Type == QuarantineLocal:
@@ -1300,6 +1347,18 @@ func Plan(in Input) ([]Action, []Skip) {
 		moves = append(moves, Action{Type: Forget, RelPath: q, FileID: id, ProtectedBy: m.ProtectedBy})
 		moves[i].ProtectedBy = q
 		leaves[id] = true
+		forgetFirst[id] = true
+	}
+	if len(forgetFirst) > 0 {
+		// A row gone on both sides was forgotten in the deletes stage too: it
+		// leaves once, here (S036; was: `forget` twice in one plan).
+		keep := deletes[:0]
+		for _, a := range deletes {
+			if !(a.Type == Forget && !a.IsDir && forgetFirst[a.FileID]) {
+				keep = append(keep, a)
+			}
+		}
+		deletes = keep
 	}
 
 	// --- Pass 3: new remote items not yet claimed ----------------------

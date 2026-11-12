@@ -11,16 +11,20 @@ package reconcile
 // bin. S035 adds the folder merge's start state (Drive renamed D to N, N and
 // D both here). Adapted from the independent check's harness; it found the round-2
 // regression (a pinned download onto a released file) and the pre-existing
-// download-onto-an-occupant overlap.
+// download-onto-an-occupant overlap. S036 adds the wide shape — two folder
+// levels, held rows, local renames over synced files (pfGenWide) — and one
+// more check on the clean run: an update_remote uploads the file that sat at
+// its row's path or at Drive's path, folder renames aside (pfCanon).
 //
 // Default budget keeps the package fast; SYNCKEEPER_PLANFUZZ_RUNS=100000 is
-// the deep run (per shape: flat and folder).
+// the deep run (per shape: flat, folder and wide).
 
 import (
 	"fmt"
 	"maps"
 	"math/rand"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,7 +41,7 @@ func TestPlanFuzz(t *testing.T) {
 	for _, shape := range []struct {
 		name string
 		gen  func(*rand.Rand) Input
-	}{{"flat", pfGenFlat}, {"folder", pfGenFolder}} {
+	}{{"flat", pfGenFlat}, {"folder", pfGenFolder}, {"wide", pfGenWide}} {
 		t.Run(shape.name, func(t *testing.T) {
 			failures := 0
 			for seed := 0; seed < runs && failures < 3; seed++ {
@@ -120,6 +124,32 @@ func pfCheck(in Input) string {
 type pfFile struct {
 	md5         string
 	size, mtime int64
+	origin      string // the scan path it came from; "" for a download
+}
+
+// pfCanon names a path by the baseline names of its folders, so a file is
+// recognised at a path whatever folder renames lie between (D/E/f, N/F/f).
+// The generators never reuse a folder name, so a name map suffices.
+func pfCanon(in Input) func(string) string {
+	alias := map[string]string{}
+	remByID := map[string]string{}
+	for p, r := range in.Remote {
+		remByID[r.FileID] = p
+	}
+	for q, b := range in.Base {
+		if rp, ok := remByID[b.FileID]; ok && b.IsDir {
+			alias[path.Base(rp)] = path.Base(q)
+		}
+	}
+	return func(q string) string {
+		segs := strings.Split(q, "/")
+		for i := range len(segs) - 1 {
+			if a, ok := alias[segs[i]]; ok {
+				segs[i] = a
+			}
+		}
+		return strings.Join(segs, "/")
+	}
 }
 
 // pfRun models the executor on the scan's files: the §7 gate (pinned stat or
@@ -132,8 +162,16 @@ func pfRun(in Input, plan []Action, fail, commitFail map[int]bool, crashAfter in
 	disk := map[string]pfFile{}
 	for p, l := range in.Local {
 		if !l.IsDir {
-			disk[p] = pfFile{l.MD5, l.Size, l.MtimeNS}
+			disk[p] = pfFile{l.MD5, l.Size, l.MtimeNS, p}
 		}
+	}
+	canon := pfCanon(in)
+	basePath, drivePath := map[string]string{}, map[string]string{}
+	for p, b := range in.Base {
+		basePath[b.FileID] = p
+	}
+	for p, r := range in.Remote {
+		drivePath[r.FileID] = p
 	}
 	saved := map[string]bool{}
 	failed := map[string]bool{}
@@ -199,10 +237,21 @@ func pfRun(in Input, plan []Action, fail, commitFail map[int]bool, crashAfter in
 				continue
 			}
 			dl++
-			disk[a.RelPath] = pfFile{a.MD5, a.Size, dl}
+			disk[a.RelPath] = pfFile{a.MD5, a.Size, dl, ""}
 		case Upload, UpdateRemote:
-			if f, ok := disk[a.RelPath]; ok {
-				saved[f.md5] = true
+			f, ok := disk[a.RelPath]
+			if !ok {
+				continue
+			}
+			saved[f.md5] = true
+			// A new revision of a Drive item is the file of its row — found
+			// at the row's path, or where Drive moved the item (S023: a file
+			// at Drive's new name is the row's) — never another file moved
+			// there by a wrong move.
+			if a.Type == UpdateRemote && f.origin != "" && bad == "" {
+				if o := canon(f.origin); o != canon(basePath[a.FileID]) && o != canon(drivePath[a.FileID]) {
+					bad = fmt.Sprintf("update_remote %s (id %s) uploads the file from %s", a.RelPath, a.FileID, f.origin)
+				}
 			}
 		case Record:
 			if f, ok := disk[a.RelPath]; !a.IsDir && ok && f.size == a.LocalSize && f.mtime == a.LocalMtimeNS && f.md5 != a.MD5 && bad == "" {
@@ -412,4 +461,158 @@ func pfDriveAndLocal(r *rand.Rand, in *Input, slots []string, at func(string, st
 		in.Local[s] = LocalItem{MD5: md5, Size: size, MtimeNS: mt}
 		lused[s] = true
 	}
+}
+
+// pfGenWide (S036, from the independent check's harness): folder D with
+// subfolder E. Drive may rename D to N and E to F, and this disk may have
+// made each rename too, or not; some rows are held (their Drive item shadowed
+// by a duplicate, or their file unreadable here); a local rename may replace
+// a synced file; up to five synced files among six slots, edits on both sides.
+// It found S036.1 (the inner rename done here, the outer not: 1,014 of 60,000
+// inputs refused).
+func pfGenWide(r *rand.Rand) Input {
+	in := Input{Base: map[string]BaseItem{"D": {FileID: "FD", IsDir: true, DriveVersion: 1},
+		"D/E": {FileID: "FE", IsDir: true, DriveVersion: 1}},
+		Local: map[string]LocalItem{}, Remote: map[string]RemoteItem{},
+		ShadowedRemote: map[string]bool{}, UnreadableLocal: map[string]bool{}}
+	slots := []string{"D/E/a.txt", "D/E/b.txt", "D/c.txt", "D/d.txt", "g.txt", "h.txt"}
+	perm := r.Perm(len(slots))
+	for i, n := 0, 2+r.Intn(4); i < n; i++ {
+		id, md5 := "I"+strconv.Itoa(i), "B"+strconv.Itoa(i)
+		in.Base[slots[perm[i]]] = BaseItem{FileID: id, Size: int64(10 + i), MD5: md5, MtimeNS: 1000, DriveMD5: md5, DriveVersion: 1}
+	}
+	dD, dE := "D", "E"
+	if r.Intn(2) == 0 {
+		dD = "N"
+	}
+	if r.Intn(2) == 0 {
+		dE = "F"
+	}
+	lD, lE := "D", "E"
+	if dD == "N" && r.Intn(2) == 0 {
+		lD = "N"
+	}
+	if dE == "F" && r.Intn(2) == 0 {
+		lE = "F"
+	}
+	in.Remote[dD] = RemoteItem{FileID: "FD", IsDir: true, Version: 2}
+	in.Remote[dD+"/"+dE] = RemoteItem{FileID: "FE", IsDir: true, Version: 2}
+	in.Local[lD] = LocalItem{IsDir: true}
+	in.Local[lD+"/"+lE] = LocalItem{IsDir: true}
+	at := func(s, d, e string) string {
+		if rest, ok := strings.CutPrefix(s, "D/E/"); ok {
+			return d + "/" + e + "/" + rest
+		}
+		if rest, ok := strings.CutPrefix(s, "D/"); ok {
+			return d + "/" + rest
+		}
+		return s
+	}
+	files := func() []string {
+		var out []string
+		for _, p := range slices.Sorted(maps.Keys(in.Base)) {
+			if !in.Base[p].IsDir {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	used := map[string]bool{}
+	for _, p := range files() {
+		b := in.Base[p]
+		x := r.Intn(100)
+		if x < 10 {
+			continue // deleted on Drive
+		}
+		if x < 15 {
+			in.ShadowedRemote[b.FileID] = true // a duplicate hides it
+			continue
+		}
+		dst := p
+		if r.Intn(100) < 55 {
+			dst = slots[r.Intn(len(slots))]
+		}
+		dst = at(dst, dD, dE)
+		if used[dst] {
+			if dst = at(p, dD, dE); used[dst] {
+				continue
+			}
+		}
+		used[dst] = true
+		md5, size := b.MD5, b.Size
+		if r.Intn(100) < 25 {
+			md5, size = "D"+b.FileID, b.Size+100
+		}
+		in.Remote[dst] = RemoteItem{FileID: b.FileID, MD5: md5, Size: size, Version: 2}
+	}
+	for k, s := range slots {
+		if s = at(s, dD, dE); !used[s] && r.Intn(100) < 12 {
+			in.Remote[s] = RemoteItem{FileID: "R" + strconv.Itoa(k), MD5: "RN" + strconv.Itoa(k), Size: int64(200 + k), Version: 1}
+			used[s] = true
+		}
+	}
+	lused := map[string]bool{}
+	mt := int64(2000)
+	for _, p := range files() {
+		b := in.Base[p]
+		lp := at(p, lD, lE)
+		switch x := r.Intn(100); {
+		case x < 10:
+			continue // deleted here
+		case x < 13:
+			in.UnreadableLocal[b.FileID] = true
+			continue
+		case x < 40:
+			mt++
+			in.Local[lp] = LocalItem{MD5: "L" + b.FileID, Size: b.Size + 50, MtimeNS: mt}
+		default:
+			in.Local[lp] = LocalItem{MD5: b.MD5, Size: b.Size, MtimeNS: 1000}
+		}
+		lused[lp] = true
+	}
+	for _, p := range slices.Sorted(maps.Keys(in.Local)) {
+		if in.Local[p].IsDir || r.Intn(100) >= 15 {
+			continue
+		}
+		n := at(slots[r.Intn(len(slots))], lD, lE)
+		if n == p {
+			continue
+		}
+		if !lused[n] || r.Intn(3) == 0 { // may rename over a synced file
+			in.Local[n] = in.Local[p]
+			delete(in.Local, p)
+			lused[n], lused[p] = true, false
+		}
+	}
+	for k, s := range slots {
+		if s = at(s, lD, lE); lused[s] || r.Intn(100) > 25 {
+			continue
+		}
+		mt++
+		var md5 string
+		var size int64
+		switch r.Intn(3) {
+		case 0:
+			md5, size = "N"+strconv.Itoa(k), int64(300+k)
+		case 1:
+			var rs []RemoteItem
+			for _, q := range slices.Sorted(maps.Keys(in.Remote)) {
+				if !in.Remote[q].IsDir {
+					rs = append(rs, in.Remote[q])
+				}
+			}
+			if len(rs) == 0 {
+				continue
+			}
+			x := rs[r.Intn(len(rs))]
+			md5, size = x.MD5, x.Size
+		default:
+			bs := files()
+			x := in.Base[bs[r.Intn(len(bs))]]
+			md5, size = x.MD5, x.Size
+		}
+		in.Local[s] = LocalItem{MD5: md5, Size: size, MtimeNS: mt}
+		lused[s] = true
+	}
+	return in
 }

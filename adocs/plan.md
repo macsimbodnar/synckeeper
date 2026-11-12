@@ -13,11 +13,11 @@ Work finished before 2026-09-03 predates this plan structure: it is recorded as 
 
 ## Open
 
-1. S036  Plans still refused every cycle in wider shapes — two folder levels, held rows, long chains (PRE-EXISTING; 1,014 of 60,000 generated inputs)
-2. S020  A folder renamed on Drive beats its local deletion (DEC-006)
-3. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
-4. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
-5. S032  How strong must rename evidence be — one identical file is enough today (DEC-012: most of the folder's non-empty files must be found unchanged)
+1. S020  A folder renamed on Drive beats its local deletion (DEC-006)
+2. S017  The sync folder is identified by a hidden marker file — a different or unmounted folder is refused, not read as emptied (DEC-005)
+3. S022  One failing action no longer switches off quarantine purge, deletion report and activity detail (DEC-008)
+4. S032  How strong must rename evidence be — one identical file is enough today (DEC-012: most of the folder's non-empty files must be found unchanged)
+5. S037  Actions planned at a path the same plan moves away fail once, then the next cycle is right (four folder-rename shapes; nothing lost)
 6. S019  Remote-write gate on real Drive: live verification, narrower window (live runs authorized by Max 2026-11-11)
 7. S015  `watch`/`sync` never check the Drive root (audit F10; live confirmation first — authorized)
 8. S030  Case-insensitive folder: a Drive newcomer winning the fold wedges a download against the file on disk (found 2026-11-12) — rule decided, DEC-011: a reported skip, named as a name conflict
@@ -47,10 +47,10 @@ Not steps, and not forgotten. Reopening either is a decision.
 
 Last five; the full record is `plan_done/`.
 
+- S036  A subfolder renamed here inside a folder renamed on Drive is recognized as the same rename — the one cause behind 1,014 of 60,000 refused plans; the wide generator is a permanent shape of `TestPlanFuzz` — fixed 2026-11-12 (residual S037)
 - S035  A local rename or download whose commit is lost is recorded on recovery; a Drive folder arriving where a folder still sits here is merged; a deleted-and-remade folder no longer doubles on Drive — fixed 2026-11-12 (nine fuzz seeds, four causes; both 200-seed sweeps green again)
 - S031  The moves stage: no local file replaced unless its bytes are kept (rule O1, checked on every plan), file moves in dependency order, swaps through a temporary name — fixed 2026-11-12 (pre-existing data loss; residuals S035, S036; DEC-010)
 - S033  A flaky `-race` failure in `internal/tui` — closed 2026-11-12 as a duplicate of S027 (fixed on `pop-os`); 50 `-race` runs green on the Mac
 - S001  Finish the Linux port — L8 hardware gates passed on `pop-os` (2 h soak converged on 16,419 files), L7 docs — done 2026-11-12
-- S027  `go test -race` green on Linux: the dashboard's cancellation takes bubbletea's graceful path — fixed 2026-11-12 on `pop-os`
 
 Earlier work: [plan_history.md](plan_history.md), W1–W21.
